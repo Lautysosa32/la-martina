@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: #fcf9f8;
+  --color-surface-dim: #dcd9d9;
+  --color-surface-bright: #fcf9f8;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f6f3f2;
+  --color-surface-container: #f0eded;
+  --color-surface-container-high: #eae7e7;
+  --color-surface-container-highest: #e5e2e1;
+  --color-on-surface: #1c1b1b;
+  --color-on-surface-variant: #5e3f3b;
+  --color-inverse-surface: #313030;
+  --color-inverse-on-surface: #f3f0ef;
+  --color-outline: #936e6a;
+  --color-outline-variant: #e8bcb7;
+  --color-surface-tint: #c00012;
+  --color-primary: #b40010;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #e10b1a;
+  --color-on-primary-container: #fff3f2;
+  --color-inverse-primary: #ffb4ab;
+  --color-secondary: #6d5e00;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #fddc03;
+  --color-on-secondary-container: #706000;
+  --color-tertiary: #ab210f;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #ce3b26;
+  --color-on-tertiary-container: #fff4f2;
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+  --color-primary-fixed: #ffdad6;
+  --color-primary-fixed-dim: #ffb4ab;
+  --color-on-primary-fixed: #410002;
+  --color-on-primary-fixed-variant: #93000b;
+  --color-secondary-fixed: #ffe24d;
+  --color-secondary-fixed-dim: #e4c600;
+  --color-on-secondary-fixed: #211b00;
+  --color-on-secondary-fixed-variant: #524600;
+  --color-tertiary-fixed: #ffdad4;
+  --color-tertiary-fixed-dim: #ffb4a6;
+  --color-on-tertiary-fixed: #400200;
+  --color-on-tertiary-fixed-variant: #910c00;
+  --color-background: #fcf9f8;
+  --color-on-background: #1c1b1b;
+  --color-surface-variant: #e5e2e1;
+
+  --font-display-xl: Epilogue, ui-sans-serif, system-ui, sans-serif;
+  --font-headline-lg: Epilogue, ui-sans-serif, system-ui, sans-serif;
+  --font-headline-md: Epilogue, ui-sans-serif, system-ui, sans-serif;
+  --font-body-lg: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-body-md: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-label-sm: "Work Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-price-display: Epilogue, ui-sans-serif, system-ui, sans-serif;
+
+  --text-display-xl: 48px;
+  --text-display-xl--font-weight: 700;
+  --text-display-xl--line-height: 1.1;
+
+  --text-headline-lg: 32px;
+  --text-headline-lg--font-weight: 600;
+  --text-headline-lg--line-height: 1.2;
+
+  --text-headline-md: 24px;
+  --text-headline-md--font-weight: 600;
+  --text-headline-md--line-height: 1.3;
+
+  --text-body-lg: 18px;
+  --text-body-lg--font-weight: 400;
+  --text-body-lg--line-height: 1.6;
+
+  --text-body-md: 16px;
+  --text-body-md--font-weight: 400;
+  --text-body-md--line-height: 1.5;
+
+  --text-label-sm: 14px;
+  --text-label-sm--font-weight: 600;
+  --text-label-sm--line-height: 1.2;
+  --text-label-sm--letter-spacing: 0.02em;
+
+  --text-price-display: 22px;
+  --text-price-display--font-weight: 700;
+  --text-price-display--line-height: 1.0;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-full: 9999px;
+
+  --spacing-unit: 8px;
+  --spacing-container-max: 1280px;
+  --spacing-gutter: 24px;
+  --spacing-margin-mobile: 16px;
+  --spacing-margin-desktop: 40px;
+  --spacing-section-gap: 80px;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-on-background);
+  font-family: var(--font-body-md);
+  margin: 0;
+}
+
+.ambient-shadow {
+  box-shadow: 0 4px 20px rgba(26, 26, 26, 0.05);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.material-symbols-outlined.fill {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media print {
+  /* Hide the entire React root */
+  #root {
+    display: none !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Only show portals (like our printable modal) */
+  .printable-area {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 15mm !important;
+    box-shadow: none !important;
+    border: none !important;
+    visibility: visible !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Avoid page breaks inside the report */
+  .printable-area > div {
+    page-break-inside: avoid;
+  }
+}

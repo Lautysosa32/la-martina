@@ -1,0 +1,21 @@
+ barcode ;Productos ;marca;Categor�a;precio;stock;foto_url;foto_estado
+ 7.791.120.032.561 ;Arroz largo fino 53 x500gr;53;Almacen;550.01;1;;sin_imagen
+ 7.791.120.032.554 ;Arroz largo fino 53 x1kg;53;Almacen;1090.00;2;;sin_imagen
+ 7.790.139.002.886 ;Fernet 1882 x450cc;1882;Almacen;5797.00;3;;sin_imagen
+ 7.798.167.041.334 ;Fernet con cola 1882 x473cc;1882;Almacen;1542.99;4;;sin_imagen
+ 7.798.167.043.741 ;Fernet 1882 x1 lt;1882;Almacen;8238.00;5;;sin_imagen
+ 7.792.798.013.951 ;Cerveza 1890 rubia lata x473cc;1890;Almacen;1817.00;6;;sin_imagen
+ 7.790.154.000.485 ;Sidra 1930 demi sec x750cc;1930;Almacen;4633.01;7;;sin_imagen
+ 7.790.154.008.078 ;Sidra 1930 dolce x750cc;1930;Almacen;5148.01;8;;sin_imagen
+ 7.790.154.008.122 ;Sidra 1930 pera x750cc;1930;Almacen;5148.01;9;;sin_imagen
+ 7.790.260.013.065 ;Licor 3 PLUMAS chocolate x700cc;3 PLUMAS;Almacen;6658.00;10;;sin_imagen
+ 7.792.200.000.791 ;Sconcitos 9 DE ORO x200gr;9 DE ORO;Almacen;1157.99;11;;sin_imagen
+ 7.792.200.000.128 ;Bizcochos 9 DE ORO agridulce x200gr;9 DE ORO;Almacen;1028.00;12;;sin_imagen
+ 7.792.200.000.159 ;Bizcochos 9 DE ORO clasicos x200gr;9 DE ORO;Almacen;1028.00;13;;sin_imagen
+ 7.792.200.000.319 ;Bizcochos 9 DE ORO azucarados x210gr;9 DE ORO;Almacen;1028.00;14;;sin_imagen
+ 2.086.734 ;Asado Patagonia Meat xkg;A;Almacen;9999.00;15;;sin_imagen
+ 7.791.093.000.024 ;Vino ABEL M. TORINO suc.blancox700cc;ABEL M. TORINO;Almacen;1910.00;16;;sin_imagen
+ 7.791.093.000.017 ;Vino ABEL M. TORINO suc.tinto x700cc;ABEL M. TORINO;Almacen;1910.00;17;;sin_imagen
+ 7.791.093.000.369 ;Vino ABEL M. TORINO abocado x700cc;ABEL M. TORINO;Almacen;1910.00;18;;sin_imagen
+ 7.792.870.019.918 ;Vino ABEL M. TORINO suc.tinto x1.125lt;ABEL M. TORINO;Almacen;2388.00;19;;sin_imagen
+ 7.312.040.017.683 ;Vodka ABSOLUT x700/750cc;ABSOLUT;Almacen;22555.00;20;;sin_imagen
