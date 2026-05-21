@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { products as catalogProducts, categories as catalogCategories, Product, Category } from '../data/mockData';
-import { useAuth } from './AuthContext';
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -351,7 +350,6 @@ const generateSeedOrders = (prods: Product[]): AdminOrder[] => {
 // ─── Provider ──────────────────────────────────────────────
 
 export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const auth = useAuth();
   const [adminProducts, setAdminProducts] = useState<Product[]>(() => {
     // Reset if catalog version changed (removes stale offer data)
     const version = 'v3';

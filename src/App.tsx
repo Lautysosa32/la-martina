@@ -4,6 +4,8 @@
  */
 
 import { Routes, Route } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useAuthStore } from './stores/useAuthStore';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
@@ -25,8 +27,19 @@ import { Customers } from './pages/Admin/Customers';
 import { POS } from './pages/Admin/POS';
 import { Billing } from './pages/Admin/Billing';
 import { Settings } from './pages/Admin/Settings';
+import { AdminLogin } from './pages/AdminLogin';
 
 export default function App() {
+  const initializeAuth = useAuthStore((state) => state.initializeAuth);
+  const isAuthInitialized = useAuthStore((state) => state.initialized);
+
+  useEffect(() => {
+    initializeAuth();
+  }, [initializeAuth]);
+
+  // Optionally, you can show a global loader here while `isAuthInitialized` is false,
+  // but for now we just render the app so we don't break existing routing.
+
   return (
     <div className="flex flex-col min-h-screen">
       <Routes>
@@ -43,6 +56,7 @@ export default function App() {
         <Route path="/delivery" element={<><Header /><main className="flex-grow pt-[64px]"><Delivery /></main><Footer /></>} />
 
         {/* Rutas Administrativas */}
+        <Route path="/admin/login" element={<AdminLogin />} />
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<Dashboard />} />
           <Route path="inventory" element={<Inventory />} />

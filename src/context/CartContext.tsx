@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { Product } from '../data/mockData';
-import { useAuth } from './AuthContext';
+import { useAuth } from '../stores/useAuthStore';
 import { useAdmin } from './AdminContext';
 
 export interface CartItem extends Product {

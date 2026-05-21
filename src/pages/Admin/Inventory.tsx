@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Product, Category } from '../../data/mockData';
+import { Category } from '../../data/mockData';
+import { Product } from '../../types/product.types';
 import { useAdmin } from '../../context/AdminContext';
+import { useProductStore } from '../../stores/useProductStore';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -13,12 +15,21 @@ interface SortConfig {
 
 export const Inventory: React.FC = () => {
   const {
-    adminProducts, adminCategories, adminTags,
-    stockMap, updateStock, addProduct, updateProduct, deleteProduct, bulkUpdatePrice,
+    adminCategories, adminTags,
     addCategory, updateCategory, deleteCategory,
     addTag, updateTag, deleteTag,
-    findProductByBarcode, searchProductExternal
-  , formatCurrency, bulkAddProducts} = useAdmin();
+    searchProductExternal, formatCurrency
+  } = useAdmin();
+
+  const {
+    products: adminProducts, loading: productsLoading, error: productsError, fetchProducts,
+    addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkAddProducts,
+    getProductByBarcode: findProductByBarcode
+  } = useProductStore();
+
+  useEffect(() => {
+    fetchProducts();
+  }, [fetchProducts]);
 
   const [scannerActive, setScannerActive] = useState(false);
   const [isSearchingExternal, setIsSearchingExternal] = useState(false);
@@ -178,7 +189,7 @@ export const Inventory: React.FC = () => {
         for (const config of sortConfigs) {
           let valA: any = a[config.key as keyof Product] ?? '';
           let valB: any = b[config.key as keyof Product] ?? '';
-          if (config.key === 'stock') { valA = stockMap[a.id] ?? 0; valB = stockMap[b.id] ?? 0; }
+          if (config.key === 'stock') { valA = a.stock ?? 0; valB = b.stock ?? 0; }
           if (valA < valB) return config.direction === 'asc' ? -1 : 1;
           if (valA > valB) return config.direction === 'asc' ? 1 : -1;
         }
@@ -186,7 +197,7 @@ export const Inventory: React.FC = () => {
       });
     }
     return result;
-  }, [adminProducts, activeTab, searchQuery, sortConfigs, stockMap]);
+  }, [adminProducts, activeTab, searchQuery, sortConfigs]);
 
   const allSelected = sortedProducts.length > 0 && sortedProducts.every(p => selectedIds.includes(p.id));
   const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -198,7 +209,7 @@ export const Inventory: React.FC = () => {
         id: product.id, name: product.name, brand: product.brand || '', categoryId: product.categoryId,
         price: product.price.toString(), image: product.image || '', format: product.format || '',
         badge: product.badge || '', originalPrice: product.originalPrice?.toString() || '',
-        stock: (stockMap[product.id] ?? 0).toString(),
+        stock: (product.stock ?? 0).toString(),
         minStock: (product.minStock ?? 15).toString(),
         barcode: product.barcode || ''
       });
@@ -213,7 +224,7 @@ export const Inventory: React.FC = () => {
     setShowProductModal({ show: true, mode, product });
   };
 
-  const handleSaveProduct = () => {
+  const handleSaveProduct = async () => {
     // Validar unicidad del barcode
     if (productForm.barcode) {
       const existing = findProductByBarcode(productForm.barcode);
@@ -223,17 +234,23 @@ export const Inventory: React.FC = () => {
       }
     }
     setBarcodeError(null);
-    const data: Product = {
-      id: showProductModal.mode === 'edit' ? productForm.id : 'p_' + Date.now(),
+    const stockVal = parseInt(productForm.stock) || 0;
+    const data: any = {
+      ...(showProductModal.mode === 'edit' ? { id: productForm.id } : {}),
       name: productForm.name, brand: productForm.brand, categoryId: productForm.categoryId,
       price: parseInt(productForm.price) || 0, image: productForm.image, format: productForm.format,
       badge: productForm.badge, originalPrice: productForm.originalPrice ? parseInt(productForm.originalPrice) : undefined,
       minStock: productForm.minStock !== '' ? parseInt(productForm.minStock) : 15,
-      barcode: productForm.barcode || undefined
+      barcode: productForm.barcode || undefined,
+      stock: stockVal
     };
-    if (showProductModal.mode === 'edit') updateProduct(data.id, data);
-    else addProduct(data);
-    updateStock(data.id, parseInt(productForm.stock) || 0);
+    
+    if (showProductModal.mode === 'edit') {
+      await updateProduct(data.id, data);
+    } else {
+      await addProduct(data);
+    }
+    
     setShowProductModal({ show: false, mode: 'new' });
   };
 
@@ -353,8 +370,8 @@ export const Inventory: React.FC = () => {
     }));
   };
 
-  const handleConfirmImport = () => {
-    const newProducts: Product[] = importData.valid.map(item => {
+  const handleConfirmImport = async () => {
+    const newProducts: any[] = importData.valid.map(item => {
       // Mapear categoría
       const cat = adminCategories.find(c =>
         c.id.toLowerCase() === item.category.toLowerCase() ||
@@ -362,23 +379,18 @@ export const Inventory: React.FC = () => {
       );
 
       return {
-        id: item.id,
         name: item.name,
         brand: item.brand,
         categoryId: cat?.id || adminCategories[0]?.id || 'almacen',
         price: item.price,
         image: item.image || 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?q=80&w=200&auto=format&fit=crop',
         format: '',
-        barcode: item.barcode || undefined
+        barcode: item.barcode || undefined,
+        stock: item.stock
       };
     });
 
-    const stockUpdates: Record<string, number> = {};
-    importData.valid.forEach(item => {
-      stockUpdates[item.id] = item.stock;
-    });
-
-    bulkAddProducts(newProducts, stockUpdates);
+    await bulkAddProducts(newProducts);
     setShowImportReview(false);
     setImportData({ valid: [], errors: [], duplicates: [], incomplete: [] });
   };
@@ -391,7 +403,7 @@ export const Inventory: React.FC = () => {
       `"${p.brand}"`,
       `"${adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId}"`,
       p.price,
-      stockMap[p.id] ?? 0
+      p.stock ?? 0
     ]);
 
     const csvContent = "\uFEFF" + [headers, ...rows].map(e => e.join(",")).join("\n");
@@ -487,8 +499,18 @@ export const Inventory: React.FC = () => {
         </div>
       )}
 
+      {productsError && (
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded-2xl p-4 flex items-start gap-3 mt-4 animate-in slide-in-from-top-2">
+          <span className="material-symbols-outlined text-red-600 shrink-0">error</span>
+          <div>
+            <p className="font-bold text-sm">Error en la base de datos de Supabase</p>
+            <p className="text-xs text-red-700 mt-1">{productsError}</p>
+          </div>
+        </div>
+      )}
+
       {/* Table Card */}
-      <div className="bg-white rounded-[2.5rem] shadow-sm border border-outline-variant/5 overflow-hidden w-full">
+      <div className="bg-white rounded-[2.5rem] shadow-sm border border-outline-variant/5 overflow-hidden w-full mt-4">
         <div className="p-5 border-b border-outline-variant/10 flex flex-col md:flex-row justify-between gap-4 items-center">
           <div className="relative flex-1 max-w-sm w-full">
             <input type="text" placeholder="Buscar por nombre, marca o código de barras..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="bg-surface-container-low border-none rounded-2xl px-5 py-3 pl-11 w-full text-sm outline-none focus:ring-2 ring-primary/10 transition-all" />
@@ -546,57 +568,80 @@ export const Inventory: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/10 text-sm">
-              {sortedProducts.map(product => {
-                const stock = stockMap[product.id] ?? 0;
-                const checked = selectedIds.includes(product.id);
-                return (
-                  <tr key={product.id} className={`transition-colors ${checked ? 'bg-primary/[0.03]' : 'hover:bg-surface-container-lowest'}`}>
-                    <td className="px-8 py-4 text-center"><input type="checkbox" checked={checked} onChange={() => toggleSelect(product.id)} className="accent-primary w-4 h-4 cursor-pointer" /></td>
-                    <td className="px-8 py-4">
-                      <div className="flex items-center gap-4 min-w-0">
-                        <div className="w-12 h-12 bg-surface-container-low rounded-xl p-1.5 shrink-0 flex items-center justify-center">
-                          <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
-                        </div>
-                        <div className="flex flex-col min-w-0 pr-2">
-                          <p className="font-bold text-on-background text-[15px] leading-tight whitespace-normal break-words">{product.name}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <p className="text-[10px] text-on-surface-variant font-black uppercase tracking-wider bg-surface-container-low px-1.5 py-0.5 rounded-md truncate">{product.brand}</p>
-                            {product.barcode && (
-                              <span className="text-[9px] text-on-surface-variant/40 font-mono font-medium">#{product.barcode}</span>
-                            )}
+              {productsLoading && sortedProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-8 py-16 text-center text-on-surface-variant">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <span className="material-symbols-outlined text-4xl animate-spin text-primary">sync</span>
+                      <p className="font-bold">Cargando productos desde Supabase...</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : sortedProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-8 py-16 text-center text-on-surface-variant">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <span className="material-symbols-outlined text-4xl text-on-surface-variant/40">inventory_2</span>
+                      <p className="font-bold">No se encontraron productos</p>
+                      <p className="text-xs text-on-surface-variant/60">
+                        {productsError ? 'Ocurrió un error al conectar con Supabase. Revisa el banner de arriba.' : 'Agrega un nuevo producto para comenzar.'}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                sortedProducts.map(product => {
+                  const stock = product.stock ?? 0;
+                  const checked = selectedIds.includes(product.id);
+                  return (
+                    <tr key={product.id} className={`transition-colors ${checked ? 'bg-primary/[0.03]' : 'hover:bg-surface-container-lowest'}`}>
+                      <td className="px-8 py-4 text-center"><input type="checkbox" checked={checked} onChange={() => toggleSelect(product.id)} className="accent-primary w-4 h-4 cursor-pointer" /></td>
+                      <td className="px-8 py-4">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className="w-12 h-12 bg-surface-container-low rounded-xl p-1.5 shrink-0 flex items-center justify-center">
+                            <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
+                          </div>
+                          <div className="flex flex-col min-w-0 pr-2">
+                            <p className="font-bold text-on-background text-[15px] leading-tight whitespace-normal break-words">{product.name}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <p className="text-[10px] text-on-surface-variant font-black uppercase tracking-wider bg-surface-container-low px-1.5 py-0.5 rounded-md truncate">{product.brand}</p>
+                              {product.barcode && (
+                                <span className="text-[9px] text-on-surface-variant/40 font-mono font-medium">#{product.barcode}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-8 py-4">
-                      <span className="bg-surface-container-low px-3 py-1.5 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
-                        {adminCategories.find(c => c.id === product.categoryId)?.title || product.categoryId}
-                      </span>
-                    </td>
-                    <td className="px-8 py-4">
-                      <div className="flex flex-col">
-                        <span className={`font-black text-base ${stock === 0 ? 'text-error' : stock < (product.minStock ?? 20) ? 'text-orange-500' : 'text-on-background'}`}>
-                          {stock}
+                      </td>
+                      <td className="px-8 py-4">
+                        <span className="bg-surface-container-low px-3 py-1.5 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
+                          {adminCategories.find(c => c.id === product.categoryId)?.title || product.categoryId}
                         </span>
-                        {stock < (product.minStock ?? 20) && stock > 0 && (
-                          <span className="text-[9px] font-black text-orange-400 uppercase tracking-tighter leading-none mt-0.5">Bajo Stock</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-8 py-4 font-black text-primary text-lg whitespace-nowrap tracking-tight">${formatCurrency(product.price)}</td>
-                    <td className="px-8 py-4">
-                      <div className="flex items-center justify-center gap-2">
-                        <button onClick={() => openProductModal('edit', product)} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-primary hover:text-white transition-all shadow-sm">
-                          <span className="material-symbols-outlined text-[20px]">edit</span>
-                        </button>
-                        <button onClick={() => setDeleteConfirm({ id: product.id, type: 'product' })} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-error hover:text-white transition-all shadow-sm">
-                          <span className="material-symbols-outlined text-[20px]">delete</span>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td className="px-8 py-4">
+                        <div className="flex flex-col">
+                          <span className={`font-black text-base ${stock === 0 ? 'text-error' : stock < (product.minStock ?? 20) ? 'text-orange-500' : 'text-on-background'}`}>
+                            {stock}
+                          </span>
+                          {stock < (product.minStock ?? 20) && stock > 0 && (
+                            <span className="text-[9px] font-black text-orange-400 uppercase tracking-tighter leading-none mt-0.5">Bajo Stock</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-8 py-4 font-black text-primary text-lg whitespace-nowrap tracking-tight">${formatCurrency(product.price)}</td>
+                      <td className="px-8 py-4">
+                        <div className="flex items-center justify-center gap-2">
+                          <button onClick={() => openProductModal('edit', product)} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-primary hover:text-white transition-all shadow-sm">
+                            <span className="material-symbols-outlined text-[20px]">edit</span>
+                          </button>
+                          <button onClick={() => setDeleteConfirm({ id: product.id, type: 'product' })} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-error hover:text-white transition-all shadow-sm">
+                            <span className="material-symbols-outlined text-[20px]">delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
