@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { products as catalogProducts, categories as catalogCategories, Product, Category } from '../data/mockData';
+import { useProductStore } from '../stores/useProductStore';
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -374,6 +375,21 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const saved = localStorage.getItem('la-martina-admin-products');
     return saved ? JSON.parse(saved) : catalogProducts;
   });
+
+  // Sincronización con Supabase (Zustand)
+  const storeProducts = useProductStore((state) => state.products);
+  const storeLoading = useProductStore((state) => state.loading);
+  const storeFetch = useProductStore((state) => state.fetchProducts);
+
+  useEffect(() => {
+    storeFetch();
+  }, [storeFetch]);
+
+  useEffect(() => {
+    if (!storeLoading) {
+      setAdminProducts(storeProducts as any);
+    }
+  }, [storeProducts, storeLoading]);
 
   const [adminCategories, setAdminCategories] = useState<Category[]>(() => {
     const saved = localStorage.getItem('la-martina-admin-categories');
