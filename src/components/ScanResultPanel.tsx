@@ -10,7 +10,7 @@ interface ScanResultPanelProps {
   isSearching: boolean;
   onEditProduct: (product: Product) => void;
   onUpdateStock: (productId: string, newStock: number) => Promise<boolean>;
-  onCreateProduct: (barcode: string) => void;
+  onCreateProduct: (barcode: string, prefilledProduct?: Product) => void;
   onScanAgain: () => void;
 }
 
@@ -28,6 +28,8 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
   const [stockInput, setStockInput] = useState<number>(0);
   const [isUpdatingStock, setIsUpdatingStock] = useState<boolean>(false);
   const [stockSuccess, setStockSuccess] = useState<boolean>(false);
+
+  const isExternal = !!(product && !product.id);
 
   // Sync stock input when product changes
   useEffect(() => {
@@ -138,97 +140,130 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
                     {product.name}
                   </h4>
                   <div className="flex items-center gap-2 mb-2">
-                    {getStockBadge(product.stock, product.minStock)}
+                    {isExternal ? (
+                      <span className="text-[10px] font-bold text-primary bg-primary/10 px-3 py-1 rounded-full uppercase tracking-wider">
+                        Externo (No Registrado)
+                      </span>
+                    ) : (
+                      getStockBadge(product.stock, product.minStock)
+                    )}
                   </div>
                   <p className="font-black text-on-surface text-lg">
-                    ${product.price.toLocaleString('es-AR')}
+                    {isExternal ? 'Precio no asignado' : `$${product.price.toLocaleString('es-AR')}`}
                   </p>
                 </div>
               </div>
 
+              {/* Informative block for external product */}
+              {isExternal && (
+                <div className="flex gap-2 items-start bg-primary/5 p-3.5 rounded-2xl border border-primary/10 text-primary">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">info</span>
+                  <p className="text-[11px] leading-normal font-medium text-left">
+                    Este producto fue encontrado en la base de datos global pero no está registrado en tu tienda. Haz clic en <strong>Registrar y crear producto</strong> para darlo de alta en tu inventario.
+                  </p>
+                </div>
+              )}
+
               {/* Quick Actions according to permissions */}
               <div className="flex flex-col gap-4">
-                {/* Stock Modifier */}
-                <PermissionGuard permission="products.change_stock">
-                  <div className="bg-surface-container-low p-4 rounded-3xl border border-outline-variant/10">
-                    <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest block mb-3 text-center">
-                      Modificación rápida de stock
-                    </span>
-                    <div className="flex items-center justify-center gap-3">
-                      <button
-                        onClick={() => handleStockAdjust(-5)}
-                        className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-sm transition-all cursor-pointer select-none"
-                      >
-                        -5
-                      </button>
-                      <button
-                        onClick={() => handleStockAdjust(-1)}
-                        className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-lg transition-all cursor-pointer select-none"
-                      >
-                        -1
-                      </button>
-                      
-                      <input
-                        type="number"
-                        value={stockInput}
-                        onChange={(e) => setStockInput(Math.max(0, parseInt(e.target.value) || 0))}
-                        className="w-16 h-10 bg-white border border-outline-variant/20 rounded-2xl text-center font-bold text-base outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                      />
+                {/* Stock Modifier - Only if it's local (not external) */}
+                {!isExternal && (
+                  <PermissionGuard permission="products.change_stock">
+                    <div className="bg-surface-container-low p-4 rounded-3xl border border-outline-variant/10">
+                      <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest block mb-3 text-center">
+                        Modificación rápida de stock
+                      </span>
+                      <div className="flex items-center justify-center gap-3">
+                        <button
+                          onClick={() => handleStockAdjust(-5)}
+                          className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-sm transition-all cursor-pointer select-none"
+                        >
+                          -5
+                        </button>
+                        <button
+                          onClick={() => handleStockAdjust(-1)}
+                          className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-lg transition-all cursor-pointer select-none"
+                        >
+                          -1
+                        </button>
+                        
+                        <input
+                          type="number"
+                          value={stockInput}
+                          onChange={(e) => setStockInput(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-16 h-10 bg-white border border-outline-variant/20 rounded-2xl text-center font-bold text-base outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        />
 
-                      <button
-                        onClick={() => handleStockAdjust(1)}
-                        className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-lg transition-all cursor-pointer select-none"
-                      >
-                        +1
-                      </button>
-                      <button
-                        onClick={() => handleStockAdjust(5)}
-                        className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-sm transition-all cursor-pointer select-none"
-                      >
-                        +5
-                      </button>
+                        <button
+                          onClick={() => handleStockAdjust(1)}
+                          className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-lg transition-all cursor-pointer select-none"
+                        >
+                          +1
+                        </button>
+                        <button
+                          onClick={() => handleStockAdjust(5)}
+                          className="w-10 h-10 rounded-2xl bg-surface-container-high hover:bg-surface-container-highest active:scale-95 flex items-center justify-center text-on-surface font-bold text-sm transition-all cursor-pointer select-none"
+                        >
+                          +5
+                        </button>
+                      </div>
+
+                      <div className="mt-4 flex justify-center">
+                        <button
+                          onClick={handleSaveStock}
+                          disabled={isUpdatingStock || product.stock === stockInput}
+                          className={`w-full max-w-[200px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-full font-bold text-xs transition-all shadow-sm cursor-pointer select-none ${
+                            stockSuccess
+                              ? 'bg-green-600 text-white hover:bg-green-700'
+                              : product.stock === stockInput
+                              ? 'bg-surface-container-highest text-on-surface-variant/40 border border-outline-variant/10 cursor-not-allowed'
+                              : 'bg-primary text-white hover:bg-primary-hover active:scale-95'
+                          }`}
+                        >
+                          {isUpdatingStock ? (
+                            <span className="material-symbols-outlined text-[16px] animate-spin">
+                              sync
+                            </span>
+                          ) : stockSuccess ? (
+                            <span className="material-symbols-outlined text-[16px]">check</span>
+                          ) : (
+                            <span className="material-symbols-outlined text-[16px]">save</span>
+                          )}
+                          {stockSuccess ? '¡Guardado!' : 'Guardar stock'}
+                        </button>
+                      </div>
                     </div>
+                  </PermissionGuard>
+                )}
 
-                    <div className="mt-4 flex justify-center">
-                      <button
-                        onClick={handleSaveStock}
-                        disabled={isUpdatingStock || product.stock === stockInput}
-                        className={`w-full max-w-[200px] flex items-center justify-center gap-2 py-2.5 px-4 rounded-full font-bold text-xs transition-all shadow-sm cursor-pointer select-none ${
-                          stockSuccess
-                            ? 'bg-green-600 text-white hover:bg-green-700'
-                            : product.stock === stockInput
-                            ? 'bg-surface-container-highest text-on-surface-variant/40 border border-outline-variant/10 cursor-not-allowed'
-                            : 'bg-primary text-white hover:bg-primary-hover active:scale-95'
-                        }`}
-                      >
-                        {isUpdatingStock ? (
-                          <span className="material-symbols-outlined text-[16px] animate-spin">
-                            sync
-                          </span>
-                        ) : stockSuccess ? (
-                          <span className="material-symbols-outlined text-[16px]">check</span>
-                        ) : (
-                          <span className="material-symbols-outlined text-[16px]">save</span>
-                        )}
-                        {stockSuccess ? '¡Guardado!' : 'Guardar stock'}
-                      </button>
-                    </div>
-                  </div>
-                </PermissionGuard>
-
-                {/* Edit Button */}
-                <PermissionGuard permission="products.update">
-                  <button
-                    onClick={() => {
-                      onEditProduct(product);
-                      onClose();
-                    }}
-                    className="w-full flex items-center justify-center gap-2 border-2 border-primary/20 text-primary font-bold py-3 px-4 rounded-full text-xs hover:bg-primary/5 active:scale-98 transition-all cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">edit</span>
-                    Editar datos del producto
-                  </button>
-                </PermissionGuard>
+                {/* Edit Button or Create Button */}
+                {isExternal ? (
+                  <PermissionGuard permission="products.create">
+                    <button
+                      onClick={() => {
+                        onCreateProduct(scannedCode, product);
+                        onClose();
+                      }}
+                      className="w-full flex items-center justify-center gap-2 bg-primary text-white font-bold py-3.5 px-4 rounded-full text-xs hover:bg-primary-hover active:scale-95 transition-all shadow-md cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">add_circle</span>
+                      Registrar y crear producto
+                    </button>
+                  </PermissionGuard>
+                ) : (
+                  <PermissionGuard permission="products.update">
+                    <button
+                      onClick={() => {
+                        onEditProduct(product);
+                        onClose();
+                      }}
+                      className="w-full flex items-center justify-center gap-2 border-2 border-primary/20 text-primary font-bold py-3 px-4 rounded-full text-xs hover:bg-primary/5 active:scale-98 transition-all cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">edit</span>
+                      Editar datos del producto
+                    </button>
+                  </PermissionGuard>
+                )}
               </div>
             </div>
           ) : (

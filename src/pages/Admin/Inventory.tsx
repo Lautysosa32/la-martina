@@ -1186,7 +1186,7 @@ export const Inventory: React.FC = () => {
         isSearching={!!scanResult?.isSearching}
         onEditProduct={(product) => openProductModal('edit', product)}
         onUpdateStock={handleCameraUpdateStock}
-        onCreateProduct={(barcode) => openProductModal('new', undefined, barcode)}
+        onCreateProduct={(barcode, prefilled) => openProductModal('new', prefilled, barcode)}
         onScanAgain={() => {
           setScanResult(null);
           setCameraScannerOpen(true);
