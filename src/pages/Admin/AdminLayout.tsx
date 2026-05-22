@@ -32,7 +32,15 @@ export const AdminLayout: React.FC = () => {
   const { orders, lowStockCount, privacyMode, togglePrivacyMode, formatCurrency } = useAdmin();
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const session = useAuthStore((state) => state.session);
   const initialized = useAuthStore((state) => state.initialized);
@@ -47,7 +55,9 @@ export const AdminLayout: React.FC = () => {
     return hasPermission(item.requiredPermission);
   });
 
-  // La sesión y permisos ya fueron validados por AuthGuard en App.tsx
+  // Bottom nav: show first 4 accessible items (most important)
+  const bottomNavItems = visibleNavItems.slice(0, 4);
+
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -68,6 +78,21 @@ export const AdminLayout: React.FC = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Close mobile menu on route change
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Prevent body scroll when mobile menu open
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [isMobileMenuOpen]);
+
   const q = searchQuery.toLowerCase().trim();
 
   const matchedProducts = q.length >= 2
@@ -80,17 +105,21 @@ export const AdminLayout: React.FC = () => {
 
   const hasResults = matchedProducts.length > 0 || matchedOrders.length > 0;
 
+  const currentPageLabel = visibleNavItems.find(n => n.path === location.pathname)?.label || 'Admin';
+  const newOrdersCount = orders.filter(o => o.status === 'Nuevo').length;
+
   return (
     <div className="min-h-screen bg-[#f8f9fa] flex font-body-md overflow-x-hidden w-full">
-      {/* Sidebar */}
-      <aside className="w-[260px] bg-white border-r border-outline-variant/10 flex flex-col fixed h-full z-30">
+
+      {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
+      <aside className="hidden lg:flex w-[260px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
         <div className="p-8">
           <div className="flex items-center justify-between">
             <Link to="/" className="flex flex-col">
               <span className="text-[22px] font-bold text-primary leading-tight">La Martina</span>
               <span className="text-[11px] font-bold text-on-surface-variant/60 uppercase tracking-[0.2em]">Admin Suite</span>
             </Link>
-            <button 
+            <button
               onClick={togglePrivacyMode}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${privacyMode ? 'bg-primary/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container-low'}`}
               title={privacyMode ? "Ocultar números activado" : "Ocultar números desactivado"}
@@ -110,17 +139,16 @@ export const AdminLayout: React.FC = () => {
                 key={item.id}
                 to={item.path}
                 className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm relative ${
-                  isActive 
-                    ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20') 
+                  isActive
+                    ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
                     : 'text-on-surface-variant hover:bg-surface-container-low'
                 }`}
               >
                 <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
                 {item.label}
-                {/* Badges */}
-                {item.id === 'orders' && orders.filter(o => o.status === 'Nuevo').length > 0 && (
+                {item.id === 'orders' && newOrdersCount > 0 && (
                   <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-error text-white'}`}>
-                    {orders.filter(o => o.status === 'Nuevo').length}
+                    {newOrdersCount}
                   </span>
                 )}
                 {item.id === 'inventory' && lowStockCount > 0 && (
@@ -134,14 +162,14 @@ export const AdminLayout: React.FC = () => {
         </nav>
 
         <div className="p-4 border-t border-outline-variant/10 space-y-2">
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-on-surface-variant font-bold text-sm hover:bg-surface-container-low transition-all"
           >
             <span className="material-symbols-outlined text-[22px]">storefront</span>
             Ir a la Tienda
           </Link>
-          <button 
+          <button
             onClick={handleSignOut}
             className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-error font-bold text-sm hover:bg-red-50 hover:text-error transition-all"
           >
@@ -151,21 +179,138 @@ export const AdminLayout: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main className="flex-1 ml-[260px] min-w-0 overflow-x-hidden p-8">
-        <header className="flex justify-between items-center mb-10 gap-4 min-w-0">
-          <h1 className="text-[28px] font-bold text-on-background capitalize shrink-0">
-            {visibleNavItems.find(n => n.path === location.pathname)?.label || 'Admin'}
+      {/* ── MOBILE DRAWER OVERLAY ── */}
+      {isMobileMenuOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* ── MOBILE DRAWER PANEL ── */}
+      <aside
+        className={`lg:hidden fixed top-0 left-0 h-full w-[280px] bg-white z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out ${
+          isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="p-6 border-b border-outline-variant/10">
+          <div className="flex items-center justify-between">
+            <Link to="/" className="flex flex-col" onClick={() => setIsMobileMenuOpen(false)}>
+              <span className="text-[20px] font-bold text-primary leading-tight">La Martina</span>
+              <span className="text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-[0.2em]">Admin Suite</span>
+            </Link>
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="w-9 h-9 rounded-full bg-surface-container-low flex items-center justify-center"
+            >
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+          {/* Profile mini in drawer */}
+          <div className="flex items-center gap-3 mt-5 p-3 bg-surface-container-lowest rounded-2xl">
+            <div className="w-9 h-9 bg-primary text-white rounded-xl flex items-center justify-center font-bold text-sm shrink-0">
+              {employeeProfile?.name ? employeeProfile.name.substring(0, 2).toUpperCase() : 'A'}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold leading-none truncate">{employeeProfile?.name || 'Administrador'}</p>
+              <p className="text-[10px] text-on-surface-variant font-medium capitalize mt-0.5">
+                {employeeProfile?.role === 'super_admin' ? 'Super Admin' :
+                 employeeProfile?.role === 'owner' ? 'Dueño' :
+                 employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+          {visibleNavItems.map((item) => {
+            const isActive = location.pathname === item.path;
+            return (
+              <Link
+                key={item.id}
+                to={item.path}
+                className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-bold text-sm relative ${
+                  isActive
+                    ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
+                    : 'text-on-surface-variant hover:bg-surface-container-low'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
+                {item.label}
+                {item.id === 'orders' && newOrdersCount > 0 && (
+                  <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-error text-white'}`}>
+                    {newOrdersCount}
+                  </span>
+                )}
+                {item.id === 'inventory' && lowStockCount > 0 && (
+                  <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-orange-500 text-white'}`}>
+                    {lowStockCount}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-outline-variant/10 space-y-1">
+          <Link
+            to="/"
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-on-surface-variant font-bold text-sm hover:bg-surface-container-low transition-all"
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            <span className="material-symbols-outlined text-[22px]">storefront</span>
+            Ir a la Tienda
+          </Link>
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-error font-bold text-sm hover:bg-red-50 transition-all"
+          >
+            <span className="material-symbols-outlined text-[22px]">logout</span>
+            Cerrar Sesión
+          </button>
+        </div>
+      </aside>
+
+      {/* ── MAIN CONTENT ── */}
+      <main className="flex-1 lg:ml-[260px] min-w-0 overflow-x-hidden flex flex-col">
+
+        {/* ── MOBILE TOP HEADER (hidden on desktop) ── */}
+        <header className="lg:hidden sticky top-0 z-20 bg-white border-b border-outline-variant/10 flex items-center justify-between px-4 h-14 shrink-0">
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-surface-container-low transition-all"
+          >
+            <span className="material-symbols-outlined text-[24px]">menu</span>
+          </button>
+          <span className="text-base font-black text-[#e3001b] tracking-wider">La Martina</span>
+          <div className="flex items-center gap-2">
+            <button className="w-10 h-10 rounded-xl flex items-center justify-center relative hover:bg-surface-container-low transition-all">
+              <span className="material-symbols-outlined text-[22px]">notifications</span>
+              {newOrdersCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-error rounded-full text-white text-[9px] font-bold flex items-center justify-center">
+                  {newOrdersCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </header>
+
+        {/* ── DESKTOP HEADER ── */}
+        <header className="hidden lg:flex justify-between items-center mb-10 gap-4 min-w-0 p-8 pb-0">
+          <h1 className="text-[28px] font-black text-[#e3001b] shrink-0 tracking-wider">
+            La Martina
           </h1>
-          
-          <div id="admin-header-portal" className="flex-grow flex items-center justify-start px-4"></div>
+
+          {!isMobile && (
+            <div id="admin-header-portal" className="flex-grow flex items-center justify-start px-4"></div>
+          )}
 
           <div className="flex items-center gap-4 min-w-0 shrink">
             {/* Search */}
             <div className="relative" ref={searchRef}>
-              <input 
-                type="text" 
-                placeholder="Buscar pedidos, productos..." 
+              <input
+                type="text"
+                placeholder="Buscar pedidos, productos..."
                 value={searchQuery}
                 onChange={(e) => { setSearchQuery(e.target.value); setIsSearchOpen(true); }}
                 onFocus={() => setIsSearchOpen(true)}
@@ -229,9 +374,9 @@ export const AdminLayout: React.FC = () => {
             {/* Notifications */}
             <button className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-outline-variant/10 shadow-sm relative">
               <span className="material-symbols-outlined">notifications</span>
-              {orders.filter(o => o.status === 'Nuevo').length > 0 && (
+              {newOrdersCount > 0 && (
                 <span className="absolute top-2 right-2 w-5 h-5 bg-error rounded-full text-white text-[10px] font-bold flex items-center justify-center">
-                  {orders.filter(o => o.status === 'Nuevo').length}
+                  {newOrdersCount}
                 </span>
               )}
             </button>
@@ -244,8 +389,8 @@ export const AdminLayout: React.FC = () => {
               <div>
                 <p className="text-xs font-bold leading-none">{employeeProfile?.name || 'Administrador'}</p>
                 <p className="text-[10px] text-on-surface-variant font-medium capitalize">
-                  {employeeProfile?.role === 'super_admin' ? 'Super Admin' : 
-                   employeeProfile?.role === 'owner' ? 'Dueño' : 
+                  {employeeProfile?.role === 'super_admin' ? 'Super Admin' :
+                   employeeProfile?.role === 'owner' ? 'Dueño' :
                    employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
                 </p>
               </div>
@@ -253,8 +398,56 @@ export const AdminLayout: React.FC = () => {
           </div>
         </header>
 
-        <Outlet />
+        {/* ── PAGE CONTENT ── */}
+        <div className="flex-1 p-4 md:p-6 lg:p-8 lg:pt-8 pb-24 lg:pb-8">
+          {isMobile && (
+            <div id="admin-header-portal" className="lg:hidden mb-4 flex items-center gap-3 min-h-0"></div>
+          )}
+          <Outlet />
+        </div>
       </main>
+
+      {/* ── MOBILE BOTTOM NAV ── */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-outline-variant/10 flex items-center justify-around px-2 h-16 safe-area-pb">
+        {bottomNavItems.map((item) => {
+          const isActive = location.pathname === item.path;
+          const badgeCount = item.id === 'orders' ? newOrdersCount : item.id === 'inventory' ? lowStockCount : 0;
+          return (
+            <Link
+              key={item.id}
+              to={item.path}
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-xl transition-all relative ${
+                isActive ? 'text-primary' : 'text-on-surface-variant'
+              }`}
+            >
+              <span className={`material-symbols-outlined text-[24px] transition-all ${isActive ? 'text-primary' : ''}`}>
+                {item.icon}
+              </span>
+              <span className={`text-[10px] font-bold leading-none ${isActive ? 'text-primary' : 'text-on-surface-variant/70'}`}>
+                {item.label}
+              </span>
+              {badgeCount > 0 && (
+                <span className="absolute top-1 right-3 w-4 h-4 bg-error rounded-full text-white text-[9px] font-bold flex items-center justify-center">
+                  {badgeCount > 9 ? '9+' : badgeCount}
+                </span>
+              )}
+              {isActive && (
+                <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-5 h-0.5 bg-primary rounded-full" />
+              )}
+            </Link>
+          );
+        })}
+        {/* "Más" button if there are more than 4 nav items */}
+        {visibleNavItems.length > 4 && (
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-xl text-on-surface-variant transition-all"
+          >
+            <span className="material-symbols-outlined text-[24px]">more_horiz</span>
+            <span className="text-[10px] font-bold leading-none text-on-surface-variant/70">Más</span>
+          </button>
+        )}
+      </nav>
     </div>
   );
 };

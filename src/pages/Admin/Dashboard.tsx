@@ -181,6 +181,7 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
+      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Dashboard</h1>
       <AdminPeriodSelector 
         period={period} 
         setPeriod={setPeriod} 
@@ -188,33 +189,33 @@ export const Dashboard: React.FC = () => {
         setCustomRange={setCustomRange} 
       />
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-6">
         {stats.map((stat, idx) => (
-          <div key={idx} className="bg-white p-6 rounded-[2rem] shadow-sm border border-outline-variant/5 flex flex-col gap-4 hover:shadow-md transition-shadow">
+          <div key={idx} className="bg-white p-4 md:p-6 rounded-2xl md:rounded-[2rem] shadow-sm border border-outline-variant/5 flex flex-col gap-3 hover:shadow-md transition-shadow">
             <div className="flex justify-between items-start">
-              <div className={`w-12 h-12 ${stat.color} rounded-2xl flex items-center justify-center`}>
-                <span className="material-symbols-outlined text-[28px]">{stat.icon}</span>
+              <div className={`w-10 h-10 md:w-12 md:h-12 ${stat.color} rounded-xl md:rounded-2xl flex items-center justify-center`}>
+                <span className="material-symbols-outlined text-[22px] md:text-[28px]">{stat.icon}</span>
               </div>
-              <span className={`text-xs font-bold px-2 py-1 rounded-lg ${
+              <span className={`text-[10px] md:text-xs font-bold px-2 py-0.5 md:py-1 rounded-lg ${
                 stat.change === 'Crítico' ? 'bg-error/10 text-error' : 'bg-surface-container-low text-on-surface-variant'
               }`}>
                 {stat.change}
               </span>
             </div>
             <div>
-              <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">{stat.label}</p>
-              <p className="text-2xl font-bold text-on-background">{stat.value}</p>
+              <p className="text-[10px] md:text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1 leading-tight">{stat.label}</p>
+              <p className="text-xl md:text-2xl font-bold text-on-background">{stat.value}</p>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Recent Orders Table */}
-        <div className="lg:col-span-2 bg-white rounded-[2rem] shadow-sm border border-outline-variant/5 overflow-hidden">
-          <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center">
-            <h2 className="text-xl font-bold">Pedidos Recientes</h2>
-            <button 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-8">
+        {/* Recent Orders */}
+        <div className="lg:col-span-2 bg-white rounded-2xl md:rounded-[2rem] shadow-sm border border-outline-variant/5 overflow-hidden">
+          <div className="px-5 py-4 md:p-8 border-b border-outline-variant/10 flex justify-between items-center">
+            <h2 className="text-base md:text-xl font-bold">Pedidos Recientes</h2>
+            <button
               onClick={() => navigate('/admin/orders')}
               className="text-primary text-sm font-bold hover:underline"
             >
@@ -223,37 +224,56 @@ export const Dashboard: React.FC = () => {
           </div>
 
           {recentOrders.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
-                    <th className="px-8 py-4">ID Pedido</th>
-                    <th className="px-8 py-4">Cliente</th>
-                    <th className="px-8 py-4">Estado</th>
-                    <th className="px-8 py-4 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-outline-variant/10 text-sm">
-                  {recentOrders.map((order) => (
-                    <tr key={order.id} className="hover:bg-surface-container-lowest transition-colors">
-                      <td className="px-8 py-4 font-bold">#{order.id}</td>
-                      <td className="px-8 py-4 text-on-surface-variant">{order.customer}</td>
-                      <td className="px-8 py-4">
-                        <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${getStatusColor(order.status)}`}>
-                          {order.status}
-                        </span>
-                      </td>
-                      <td className="px-8 py-4 text-right font-bold text-primary">
-                        {canViewFinancial ? `$${formatCurrency(order.total)}` : '***'}
-                      </td>
+            <>
+              {/* Mobile: cards */}
+              <div className="md:hidden divide-y divide-outline-variant/10">
+                {recentOrders.map((order) => (
+                  <div key={order.id} className="flex items-center justify-between px-5 py-3.5 hover:bg-surface-container-lowest transition-colors">
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <p className="text-sm font-bold text-on-background">#{order.id} <span className="font-normal text-on-surface-variant">— {order.customer}</span></p>
+                      <span className={`self-start px-2.5 py-0.5 rounded-full text-[10px] font-bold ${getStatusColor(order.status)}`}>
+                        {order.status}
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-primary shrink-0 ml-3">
+                      {canViewFinancial ? `$${formatCurrency(order.total)}` : '***'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {/* Desktop: table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
+                      <th className="px-8 py-4">ID Pedido</th>
+                      <th className="px-8 py-4">Cliente</th>
+                      <th className="px-8 py-4">Estado</th>
+                      <th className="px-8 py-4 text-right">Total</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant/10 text-sm">
+                    {recentOrders.map((order) => (
+                      <tr key={order.id} className="hover:bg-surface-container-lowest transition-colors">
+                        <td className="px-8 py-4 font-bold">#{order.id}</td>
+                        <td className="px-8 py-4 text-on-surface-variant">{order.customer}</td>
+                        <td className="px-8 py-4">
+                          <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${getStatusColor(order.status)}`}>
+                            {order.status}
+                          </span>
+                        </td>
+                        <td className="px-8 py-4 text-right font-bold text-primary">
+                          {canViewFinancial ? `$${formatCurrency(order.total)}` : '***'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
-            <div className="p-12 text-center">
-              <span className="material-symbols-outlined text-5xl text-on-surface-variant/20 mb-4">receipt_long</span>
+            <div className="p-10 md:p-12 text-center">
+              <span className="material-symbols-outlined text-5xl text-on-surface-variant/20 mb-4 block">receipt_long</span>
               <p className="text-on-surface-variant font-medium">Aún no hay pedidos.</p>
               <p className="text-on-surface-variant/60 text-sm mt-1">Los pedidos de clientes aparecerán acá en tiempo real.</p>
             </div>
@@ -261,8 +281,8 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Inventory Alerts */}
-        <div className="bg-white rounded-[2rem] shadow-sm border border-outline-variant/5 flex flex-col h-full max-h-[640px]">
-          <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center">
+        <div className="bg-white rounded-2xl md:rounded-[2rem] shadow-sm border border-outline-variant/5 flex flex-col h-full md:max-h-[640px]">
+          <div className="px-5 py-4 md:p-8 border-b border-outline-variant/10 flex justify-between items-center">
             <div className="flex items-center gap-3">
               <button 
                 onClick={() => {

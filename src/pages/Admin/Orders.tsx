@@ -84,6 +84,7 @@ export const AdminOrders: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
+      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Pedidos</h1>
       <AdminPeriodSelector
         period={period}
         setPeriod={setPeriod}

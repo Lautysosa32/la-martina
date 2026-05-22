@@ -5,6 +5,7 @@ import { Product } from '../../types/product.types';
 import { useAdmin } from '../../context/AdminContext';
 import { useProductStore } from '../../stores/useProductStore';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
+import { useAuthStore } from '../../stores/useAuthStore';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -27,6 +28,8 @@ export const Inventory: React.FC = () => {
     addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkAddProducts,
     getProductByBarcode: findProductByBarcode
   } = useProductStore();
+
+  const employeeProfile = useAuthStore((state) => state.employeeProfile);
 
   useEffect(() => {
     fetchProducts();
@@ -420,6 +423,7 @@ export const Inventory: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-10 w-full overflow-hidden">
+      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Inventario</h1>
       <input
         type="file"
         ref={fileInputRef}
@@ -437,17 +441,15 @@ export const Inventory: React.FC = () => {
       `}</style>
 
       {/* Header Bar Portal */}
-      {portalTarget && createPortal(
+      {portalTarget && (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || employeeProfile?.role === 'admin') && createPortal(
         <div className="flex items-center gap-3 ml-4">
-          <PermissionGuard permission="products.create">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold px-6 py-2.5 rounded-full transition-colors shadow-sm"
-            >
-              <span className="material-symbols-outlined text-[18px]">upload</span>
-              Importar
-            </button>
-          </PermissionGuard>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold px-6 py-2.5 rounded-full transition-colors shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">upload</span>
+            Importar
+          </button>
           <button
             onClick={handleExportCSV}
             className="flex items-center gap-2 bg-white hover:bg-surface-container-low text-on-surface-variant font-bold px-6 py-2.5 rounded-full border border-outline-variant/20 transition-all shadow-sm"
@@ -461,18 +463,70 @@ export const Inventory: React.FC = () => {
 
       {/* Category Bar - ALTURA UNIFICADA h-12 (48px) */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+        {/* Desktop Category Bar */}
         <div
           ref={categoryScrollRef}
-          className="flex bg-white p-1 rounded-2xl shadow-sm border border-outline-variant/10 overflow-x-auto max-w-full hide-scrollbar h-15 items-center"
+          className="hidden md:flex bg-white p-1 rounded-2xl shadow-sm border border-outline-variant/10 overflow-x-auto max-w-full hide-scrollbar h-15 items-center"
         >
-          <button onClick={() => setActiveTab('all')} className={`h-full px-5 rounded-xl text-sm font-bold transition-all whitespace-nowrap flex items-center ${activeTab === 'all' ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+          <button onClick={() => setActiveTab('all')} className={`h-full px-5 rounded-xl text-base font-bold transition-all whitespace-nowrap flex items-center ${activeTab === 'all' ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
             Todos ({adminProducts.length})
           </button>
           {adminCategories.map(cat => (
-            <button key={cat.id} onClick={() => setActiveTab(cat.id)} className={`h-full px-5 rounded-xl text-sm font-bold transition-all whitespace-nowrap flex items-center ${activeTab === cat.id ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+            <button key={cat.id} onClick={() => setActiveTab(cat.id)} className={`h-full px-5 rounded-xl text-base font-bold transition-all whitespace-nowrap flex items-center ${activeTab === cat.id ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
               {cat.title} ({getProductCountByCat(cat.id)})
             </button>
           ))}
+        </div>
+
+        {/* Mobile Category Grid (Solo Celular) */}
+        <div className="flex md:hidden flex-col gap-2 w-full bg-white p-2 rounded-2xl shadow-sm border border-outline-variant/10">
+          {/* Fila 1: "Todos" arriba al medio */}
+          <div className="flex justify-center w-full">
+            <button
+              onClick={() => setActiveTab('all')}
+              className={`w-2/3 py-2 rounded-xl text-sm font-bold transition-all text-center flex items-center justify-center ${
+                activeTab === 'all'
+                  ? 'bg-primary text-white shadow-md'
+                  : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
+              }`}
+            >
+              Todos ({adminProducts.length})
+            </button>
+          </div>
+
+          {/* Fila 2: Los 3 primeros */}
+          <div className="grid grid-cols-3 gap-2 w-full">
+            {adminCategories.slice(0, 3).map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => setActiveTab(cat.id)}
+                className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${
+                  activeTab === cat.id
+                    ? 'bg-primary text-white shadow-md'
+                    : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
+                }`}
+              >
+                <span className="truncate">{cat.title} ({getProductCountByCat(cat.id)})</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Fila 3: Los últimos 3 */}
+          <div className="grid grid-cols-3 gap-2 w-full">
+            {adminCategories.slice(3, 6).map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => setActiveTab(cat.id)}
+                className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${
+                  activeTab === cat.id
+                    ? 'bg-primary text-white shadow-md'
+                    : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
+                }`}
+              >
+                <span className="truncate">{cat.title} ({getProductCountByCat(cat.id)})</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex gap-2 w-full lg:w-auto h-15">
@@ -541,7 +595,7 @@ export const Inventory: React.FC = () => {
             </span>
           </div>
         </div>
-        <div className="w-full overflow-hidden">
+        <div className="w-full overflow-hidden hidden md:block">
           <table className="w-full text-left table-auto border-collapse">
             <thead>
               <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">
@@ -655,6 +709,60 @@ export const Inventory: React.FC = () => {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile Product List (Solo Celular) */}
+        <div className="block md:hidden divide-y divide-outline-variant/10">
+          {productsLoading && sortedProducts.length === 0 ? (
+            <div className="px-6 py-16 text-center text-on-surface-variant">
+              <div className="flex flex-col items-center justify-center gap-3">
+                <span className="material-symbols-outlined text-4xl animate-spin text-primary">sync</span>
+                <p className="font-bold text-sm">Cargando productos...</p>
+              </div>
+            </div>
+          ) : sortedProducts.length === 0 ? (
+            <div className="px-6 py-16 text-center text-on-surface-variant">
+              <div className="flex flex-col items-center justify-center gap-3">
+                <span className="material-symbols-outlined text-4xl text-on-surface-variant/40">inventory_2</span>
+                <p className="font-bold text-sm">No se encontraron productos</p>
+              </div>
+            </div>
+          ) : (
+            sortedProducts.map(product => {
+              return (
+                <div key={product.id} className="p-4 flex items-center justify-between gap-3 hover:bg-surface-container-lowest transition-colors">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {/* Botón de Edición (Lápiz) */}
+                    <PermissionGuard permission="products.update">
+                      <button
+                        onClick={() => openProductModal('edit', product)}
+                        className="w-10 h-10 rounded-xl flex items-center justify-center bg-primary/5 text-primary hover:bg-primary hover:text-white border border-primary/10 active:scale-95 transition-all shadow-sm shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-[20px]">edit</span>
+                      </button>
+                    </PermissionGuard>
+
+                    {/* Miniatura de Imagen */}
+                    {product.image && (
+                      <div className="w-10 h-10 bg-surface-container-low rounded-xl p-1.5 shrink-0 flex items-center justify-center border border-outline-variant/5">
+                        <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
+                      </div>
+                    )}
+
+                    {/* Nombre */}
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-on-background text-sm leading-snug break-words">{product.name}</p>
+                    </div>
+                  </div>
+
+                  {/* Precio */}
+                  <div className="text-right shrink-0">
+                    <p className="font-black text-primary text-base tracking-tight">${formatCurrency(product.price)}</p>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 

@@ -589,6 +589,7 @@ export const POS: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 flex flex-col pb-20">
+      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Caja</h1>
       {/* Header Portal for Buttons */}
       {headerPortal && createPortal(
         <div className="flex gap-3 items-center">

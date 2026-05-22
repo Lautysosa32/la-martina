@@ -33,6 +33,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     // se le agregan más mediante presets o overrides (allow)
     'dashboard.view_operations',
     'products.view',
+    'products.create',
+    'products.update',
     'orders.view',
     'customers.view'
   ]
