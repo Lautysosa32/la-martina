@@ -12,5 +12,11 @@ const cleanUrl = supabaseUrl?.replace(/\/rest\/v1\/?$/, '');
 
 export const supabase = createClient(
   cleanUrl || '',
-  supabaseAnonKey || ''
+  supabaseAnonKey || '',
+  {
+    auth: {
+      persistSession: true,
+      storage: window.sessionStorage
+    }
+  }
 )

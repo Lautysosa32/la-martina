@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -12,6 +12,14 @@ export function AdminLogin() {
   
   const navigate = useNavigate();
   const signIn = useAuthStore((state) => state.signIn);
+  const session = useAuthStore((state) => state.session);
+  const initialized = useAuthStore((state) => state.initialized);
+
+  useEffect(() => {
+    if (initialized && session) {
+      navigate('/admin', { replace: true });
+    }
+  }, [initialized, session, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

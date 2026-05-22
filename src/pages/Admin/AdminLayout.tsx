@@ -2,16 +2,28 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAdmin } from '../../context/AdminContext';
 import { products } from '../../data/mockData';
+import { useAuthStore } from '../../stores/useAuthStore';
 
-const navItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', path: '/admin' },
-  { id: 'inventory', label: 'Inventario', icon: 'inventory_2', path: '/admin/inventory' },
-  { id: 'orders', label: 'Pedidos', icon: 'shopping_bag', path: '/admin/orders' },
-  { id: 'pos', label: 'Caja', icon: 'point_of_sale', path: '/admin/pos' },
-  { id: 'analytics', label: 'Analíticas', icon: 'analytics', path: '/admin/analytics' },
-  { id: 'customers', label: 'Clientes', icon: 'group', path: '/admin/customers' },
-  { id: 'billing', label: 'Facturación', icon: 'receipt_long', path: '/admin/billing' },
-  { id: 'settings', label: 'Configuración', icon: 'settings', path: '/admin/settings' },
+import { PermissionKey } from '../../types/permissions.types';
+
+type NavItem = {
+  id: string;
+  label: string;
+  icon: string;
+  path: string;
+  requiredPermission?: PermissionKey;
+};
+
+const navItems: NavItem[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', path: '/admin', requiredPermission: 'dashboard.view_operations' },
+  { id: 'inventory', label: 'Inventario', icon: 'inventory_2', path: '/admin/inventory', requiredPermission: 'products.view' },
+  { id: 'orders', label: 'Pedidos', icon: 'shopping_bag', path: '/admin/orders', requiredPermission: 'orders.view' },
+  { id: 'pos', label: 'Caja', icon: 'point_of_sale', path: '/admin/pos', requiredPermission: 'pos.access' },
+  { id: 'analytics', label: 'Analíticas', icon: 'analytics', path: '/admin/analytics', requiredPermission: 'dashboard.view_financial' },
+  { id: 'customers', label: 'Clientes', icon: 'group', path: '/admin/customers', requiredPermission: 'customers.view' },
+  { id: 'employees', label: 'Empleados', icon: 'badge', path: '/admin/employees', requiredPermission: 'employees.view' },
+  { id: 'billing', label: 'Facturación', icon: 'receipt_long', path: '/admin/billing', requiredPermission: 'billing.view' },
+  { id: 'settings', label: 'Configuración', icon: 'settings', path: '/admin/settings', requiredPermission: 'settings.access' },
 ];
 
 export const AdminLayout: React.FC = () => {
@@ -21,6 +33,29 @@ export const AdminLayout: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  const session = useAuthStore((state) => state.session);
+  const initialized = useAuthStore((state) => state.initialized);
+  const loading = useAuthStore((state) => state.loading);
+  const signOut = useAuthStore((state) => state.signOut);
+  const hasPermission = useAuthStore((state) => state.hasPermission);
+  const employeeProfile = useAuthStore((state) => state.employeeProfile);
+
+  const visibleNavItems = navItems.filter(item => {
+    if (!item.requiredPermission) return true;
+    if (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner') return true;
+    return hasPermission(item.requiredPermission);
+  });
+
+  // La sesión y permisos ya fueron validados por AuthGuard en App.tsx
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate('/admin/login', { replace: true });
+    } catch (err) {
+      console.error("Error al cerrar sesión:", err);
+    }
+  };
 
   // Close search dropdown on click outside
   useEffect(() => {
@@ -68,7 +103,7 @@ export const AdminLayout: React.FC = () => {
         </div>
 
         <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <Link
@@ -106,6 +141,13 @@ export const AdminLayout: React.FC = () => {
             <span className="material-symbols-outlined text-[22px]">storefront</span>
             Ir a la Tienda
           </Link>
+          <button 
+            onClick={handleSignOut}
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-error font-bold text-sm hover:bg-red-50 hover:text-error transition-all"
+          >
+            <span className="material-symbols-outlined text-[22px]">logout</span>
+            Cerrar Sesión
+          </button>
         </div>
       </aside>
 
@@ -113,7 +155,7 @@ export const AdminLayout: React.FC = () => {
       <main className="flex-1 ml-[260px] min-w-0 overflow-x-hidden p-8">
         <header className="flex justify-between items-center mb-10 gap-4 min-w-0">
           <h1 className="text-[28px] font-bold text-on-background capitalize shrink-0">
-            {navItems.find(n => n.path === location.pathname)?.label || 'Admin'}
+            {visibleNavItems.find(n => n.path === location.pathname)?.label || 'Admin'}
           </h1>
           
           <div id="admin-header-portal" className="flex-grow flex items-center justify-start px-4"></div>
@@ -196,10 +238,16 @@ export const AdminLayout: React.FC = () => {
 
             {/* Profile */}
             <div className="flex items-center gap-3 ml-4 bg-white p-1.5 pr-4 rounded-2xl border border-outline-variant/10 shadow-sm">
-              <div className="w-9 h-9 bg-primary text-white rounded-xl flex items-center justify-center font-bold text-sm">AL</div>
+              <div className="w-9 h-9 bg-primary text-white rounded-xl flex items-center justify-center font-bold text-sm">
+                {employeeProfile?.name ? employeeProfile.name.substring(0, 2).toUpperCase() : 'A'}
+              </div>
               <div>
-                <p className="text-xs font-bold leading-none">Admin La Martina</p>
-                <p className="text-[10px] text-on-surface-variant font-medium">Dueño</p>
+                <p className="text-xs font-bold leading-none">{employeeProfile?.name || 'Administrador'}</p>
+                <p className="text-[10px] text-on-surface-variant font-medium capitalize">
+                  {employeeProfile?.role === 'super_admin' ? 'Super Admin' : 
+                   employeeProfile?.role === 'owner' ? 'Dueño' : 
+                   employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
+                </p>
               </div>
             </div>
           </div>

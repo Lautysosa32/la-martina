@@ -2,12 +2,17 @@
 import React, { useState, useMemo } from 'react';
 import { useAdmin, AdminOrder } from '../../context/AdminContext';
 import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
+import { PermissionGuard } from '../../components/auth/PermissionGuard';
+import { useAuthStore } from '../../stores/useAuthStore';
 
 export const AdminOrders: React.FC = () => {
   const { orders, updateOrderStatus, updateOrderMethod, getOrderTimestamp , formatCurrency} = useAdmin();
   const [activeStatus, setActiveStatus] = useState('todos');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelModalData, setCancelModalData] = useState<AdminOrder | null>(null);
+
+  const { hasPermission, employeeProfile } = useAuthStore();
+  const canViewRevenue = employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || hasPermission('orders.view_revenue');
 
   const [period, setPeriod] = useState('Últimos 7 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
@@ -96,10 +101,12 @@ export const AdminOrders: React.FC = () => {
           <p className="text-[11px] font-black text-on-surface-variant uppercase tracking-[0.15em] mb-3">En Preparación</p>
           <p className="text-4xl font-bold">{preparingCount}</p>
         </div>
-        <div className="bg-white p-6 rounded-[2.5rem] border border-outline-variant/10 shadow-sm">
-          <p className="text-[11px] font-black text-on-surface-variant uppercase tracking-[0.15em] mb-3">Ingresos Período</p>
-          <p className="text-4xl font-bold text-primary">${formatCurrency(periodRevenue)}</p>
-        </div>
+        <PermissionGuard permission="orders.view_revenue">
+          <div className="bg-white p-6 rounded-[2.5rem] border border-outline-variant/10 shadow-sm">
+            <p className="text-[11px] font-black text-on-surface-variant uppercase tracking-[0.15em] mb-3">Ingresos Período</p>
+            <p className="text-4xl font-bold text-primary">${formatCurrency(periodRevenue)}</p>
+          </div>
+        </PermissionGuard>
       </div>
 
       {/* Orders Table */}
@@ -183,8 +190,10 @@ export const AdminOrders: React.FC = () => {
                       </td>
                       <td className="px-6 py-5 text-right">
                         <div className="flex flex-col items-end">
-                          <span className="font-black text-primary text-base">${formatCurrency(order.total)}</span>
-                          {order.paidAmount !== undefined && order.paidAmount > 0 && order.paymentStatus !== 'Pagado' && (
+                          <span className="font-black text-primary text-base">
+                            {canViewRevenue ? `$${formatCurrency(order.total)}` : '***'}
+                          </span>
+                          {canViewRevenue && order.paidAmount !== undefined && order.paidAmount > 0 && order.paymentStatus !== 'Pagado' && (
                             <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full mt-1">
                               Saldado: ${formatCurrency(order.paidAmount || 0)}
                             </span>
@@ -214,20 +223,24 @@ export const AdminOrders: React.FC = () => {
                           )}
                           {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
                             <>
-                              <button
-                                onClick={() => updateOrderStatus(order.id, nextStatus(order.status))}
-                                className="w-8 h-8 rounded-xl bg-primary/5 text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-all shadow-sm"
-                                title={`Avanzar a: ${nextStatus(order.status)}`}
-                              >
-                                <span className="material-symbols-outlined text-[18px]">fast_forward</span>
-                              </button>
-                              <button
-                                onClick={() => setCancelModalData(order)}
-                                className="w-8 h-8 rounded-xl bg-red-50 text-red-500 flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"
-                                title="Cancelar Pedido"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">close</span>
-                              </button>
+                              <PermissionGuard permission="orders.update_status">
+                                <button
+                                  onClick={() => updateOrderStatus(order.id, nextStatus(order.status))}
+                                  className="w-8 h-8 rounded-xl bg-primary/5 text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-all shadow-sm"
+                                  title={`Avanzar a: ${nextStatus(order.status)}`}
+                                >
+                                  <span className="material-symbols-outlined text-[18px]">fast_forward</span>
+                                </button>
+                              </PermissionGuard>
+                              <PermissionGuard permission="orders.cancel">
+                                <button
+                                  onClick={() => setCancelModalData(order)}
+                                  className="w-8 h-8 rounded-xl bg-red-50 text-red-500 flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                  title="Cancelar Pedido"
+                                >
+                                  <span className="material-symbols-outlined text-[18px]">close</span>
+                                </button>
+                              </PermissionGuard>
                             </>
                           )}
                         </div>
@@ -311,16 +324,17 @@ export const AdminOrders: React.FC = () => {
                                 <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Cambiar Estado</h4>
                                 <div className="flex gap-2 flex-wrap">
                                   {(['Nuevo', 'Preparando', 'En Camino', 'Entregado', 'Cancelado'] as const).map(s => (
-                                    <button
-                                      key={s}
-                                      onClick={() => updateOrderStatus(order.id, s)}
-                                      className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${order.status === s
-                                        ? 'bg-primary text-white border-primary'
-                                        : 'bg-white border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
-                                        }`}
-                                    >
-                                      {s}
-                                    </button>
+                                    <PermissionGuard permission={s === 'Cancelado' ? 'orders.cancel' : 'orders.update_status'} key={s}>
+                                      <button
+                                        onClick={() => updateOrderStatus(order.id, s)}
+                                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${order.status === s
+                                          ? 'bg-primary text-white border-primary'
+                                          : 'bg-white border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
+                                          }`}
+                                      >
+                                        {s}
+                                      </button>
+                                    </PermissionGuard>
                                   ))}
                                 </div>
                               </div>

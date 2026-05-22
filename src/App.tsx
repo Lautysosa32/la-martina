@@ -6,6 +6,7 @@
 import { Routes, Route } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useAuthStore } from './stores/useAuthStore';
+import { AuthGuard } from './components/auth/AuthGuard';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
@@ -24,6 +25,7 @@ import { Inventory } from './pages/Admin/Inventory';
 import { AdminOrders } from './pages/Admin/Orders';
 import { Analytics } from './pages/Admin/Analytics';
 import { Customers } from './pages/Admin/Customers';
+import { Employees } from './pages/Admin/Employees';
 import { POS } from './pages/Admin/POS';
 import { Billing } from './pages/Admin/Billing';
 import { Settings } from './pages/Admin/Settings';
@@ -57,15 +59,16 @@ export default function App() {
 
         {/* Rutas Administrativas */}
         <Route path="/admin/login" element={<AdminLogin />} />
-        <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="inventory" element={<Inventory />} />
-          <Route path="orders" element={<AdminOrders />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="customers" element={<Customers />} />
-          <Route path="pos" element={<POS />} />
-          <Route path="billing" element={<Billing />} />
-          <Route path="settings" element={<Settings />} />
+        <Route path="/admin" element={<AuthGuard><AdminLayout /></AuthGuard>}>
+          <Route index element={<AuthGuard requiredPermission="dashboard.view_operations"><Dashboard /></AuthGuard>} />
+          <Route path="inventory" element={<AuthGuard requiredPermission="products.view"><Inventory /></AuthGuard>} />
+          <Route path="orders" element={<AuthGuard requiredPermission="orders.view"><AdminOrders /></AuthGuard>} />
+          <Route path="analytics" element={<AuthGuard requiredPermission="dashboard.view_financial"><Analytics /></AuthGuard>} />
+          <Route path="customers" element={<AuthGuard requiredPermission="customers.view"><Customers /></AuthGuard>} />
+          <Route path="employees" element={<AuthGuard requiredPermission="employees.view"><Employees /></AuthGuard>} />
+          <Route path="pos" element={<AuthGuard requiredPermission="pos.access"><POS /></AuthGuard>} />
+          <Route path="billing" element={<AuthGuard requiredPermission="billing.view"><Billing /></AuthGuard>} />
+          <Route path="settings" element={<AuthGuard requiredPermission="settings.access"><Settings /></AuthGuard>} />
         </Route>
       </Routes>
     </div>

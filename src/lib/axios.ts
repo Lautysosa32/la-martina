@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { supabase } from './supabase'
+import { useAuthStore } from '../stores/useAuthStore'
 
 const api = axios.create({
   baseURL: `${import.meta.env.VITE_SUPABASE_URL}/rest/v1`,
@@ -9,10 +9,11 @@ const api = axios.create({
   },
 })
 
-api.interceptors.request.use(async (config) => {
+api.interceptors.request.use((config) => {
   try {
-    const { data: { session } } = await supabase.auth.getSession()
-    const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY
+    // Obtenemos el token síncronamente desde el store de Zustand
+    const session = useAuthStore.getState().session;
+    const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

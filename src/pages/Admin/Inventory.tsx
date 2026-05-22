@@ -4,6 +4,7 @@ import { Category } from '../../data/mockData';
 import { Product } from '../../types/product.types';
 import { useAdmin } from '../../context/AdminContext';
 import { useProductStore } from '../../stores/useProductStore';
+import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -438,13 +439,15 @@ export const Inventory: React.FC = () => {
       {/* Header Bar Portal */}
       {portalTarget && createPortal(
         <div className="flex items-center gap-3 ml-4">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold px-6 py-2.5 rounded-full transition-colors shadow-sm"
-          >
-            <span className="material-symbols-outlined text-[18px]">upload</span>
-            Importar
-          </button>
+          <PermissionGuard permission="products.create">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold px-6 py-2.5 rounded-full transition-colors shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[18px]">upload</span>
+              Importar
+            </button>
+          </PermissionGuard>
           <button
             onClick={handleExportCSV}
             className="flex items-center gap-2 bg-white hover:bg-surface-container-low text-on-surface-variant font-bold px-6 py-2.5 rounded-full border border-outline-variant/20 transition-all shadow-sm"
@@ -479,9 +482,11 @@ export const Inventory: React.FC = () => {
           <button onClick={() => setShowManageModal({ show: true, type: 'tag' })} className="h-full flex items-center gap-2 px-3 rounded-2xl bg-white text-on-surface-variant font-bold text-xs border border-outline-variant/20 hover:bg-surface-container-low shadow-sm whitespace-nowrap">
             <span className="material-symbols-outlined text-[15px]">label</span>
           </button>
-          <button onClick={() => openProductModal('new')} className="h-full flex-1 lg:flex-none bg-primary text-white font-bold px-8 rounded-2xl hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 text-sm whitespace-nowrap">
-            <span className="material-symbols-outlined text-[20px]">add</span> Nuevo
-          </button>
+          <PermissionGuard permission="products.create">
+            <button onClick={() => openProductModal('new')} className="h-full flex-1 lg:flex-none bg-primary text-white font-bold px-8 rounded-2xl hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 text-sm whitespace-nowrap">
+              <span className="material-symbols-outlined text-[20px]">add</span> Nuevo
+            </button>
+          </PermissionGuard>
         </div>
       </div>
 
@@ -493,7 +498,9 @@ export const Inventory: React.FC = () => {
             {selectedIds.length} seleccionados
           </p>
           <div className="flex gap-2">
-            <button onClick={() => setShowBulkModal(true)} className="bg-primary text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-primary/90 shadow-md">Ajuste %</button>
+            <PermissionGuard permission="products.change_price">
+              <button onClick={() => setShowBulkModal(true)} className="bg-primary text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-primary/90 shadow-md">Ajuste %</button>
+            </PermissionGuard>
             <button onClick={() => setSelectedIds([])} className="bg-white text-on-surface-variant font-bold text-xs px-4 py-2 rounded-xl border border-outline-variant/20">Limpiar</button>
           </div>
         </div>
@@ -630,12 +637,16 @@ export const Inventory: React.FC = () => {
                       <td className="px-8 py-4 font-black text-primary text-lg whitespace-nowrap tracking-tight">${formatCurrency(product.price)}</td>
                       <td className="px-8 py-4">
                         <div className="flex items-center justify-center gap-2">
-                          <button onClick={() => openProductModal('edit', product)} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-primary hover:text-white transition-all shadow-sm">
-                            <span className="material-symbols-outlined text-[20px]">edit</span>
-                          </button>
-                          <button onClick={() => setDeleteConfirm({ id: product.id, type: 'product' })} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-error hover:text-white transition-all shadow-sm">
-                            <span className="material-symbols-outlined text-[20px]">delete</span>
-                          </button>
+                          <PermissionGuard permission="products.update">
+                            <button onClick={() => openProductModal('edit', product)} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-primary hover:text-white transition-all shadow-sm">
+                              <span className="material-symbols-outlined text-[20px]">edit</span>
+                            </button>
+                          </PermissionGuard>
+                          <PermissionGuard permission="products.delete">
+                            <button onClick={() => setDeleteConfirm({ id: product.id, type: 'product' })} className="w-10 h-10 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-error hover:text-white transition-all shadow-sm">
+                              <span className="material-symbols-outlined text-[20px]">delete</span>
+                            </button>
+                          </PermissionGuard>
                         </div>
                       </td>
                     </tr>

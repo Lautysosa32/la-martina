@@ -11,7 +11,7 @@ export const Analytics: React.FC = () => {
     adminProducts, adminCategories, orders, totalRevenue, activeOffers, offers,
     addOffer, deleteOffer, cashCloses, performCashClose, getCashCloseMovements,
     getTopSellingProducts, getRevenueByCategory, getRevenueByDay, getOrderTimestamp,
-    formatCurrency, customers
+    formatCurrency, customers, cashMovements
   } = useAdmin();
 
   const [period, setPeriod] = useState('Últimos 7 días');
@@ -85,19 +85,48 @@ export const Analytics: React.FC = () => {
       prevTo = currentFrom;
     }
 
-    const current = orders.filter(o => { 
+    // 1. Revenues (Orders total excluding canceled)
+    const currentRevenue = orders.filter(o => { 
       const t = getOrderTimestamp(o); 
       return t >= currentFrom && t <= currentTo && o.status !== 'Cancelado'; 
     }).reduce((s, o) => s + o.total, 0);
 
-    const previous = orders.filter(o => { 
+    const previousRevenue = orders.filter(o => { 
       const t = getOrderTimestamp(o); 
       return t >= prevFrom && t <= prevTo && o.status !== 'Cancelado'; 
     }).reduce((s, o) => s + o.total, 0);
 
-    const diff = previous > 0 ? ((current - previous) / previous) * 100 : null;
-    return { current, previous, diff };
-  }, [orders, analyticsParams, getOrderTimestamp]);
+    const revenueDiff = previousRevenue > 0 ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 : null;
+
+    // 2. Expenses (cashMovements of type 'Egreso' or 'Retiro')
+    const currentExpenses = cashMovements.filter(m => {
+      return m.timestamp >= currentFrom && m.timestamp <= currentTo && (m.type === 'Egreso' || m.type === 'Retiro');
+    }).reduce((s, m) => s + m.amount, 0);
+
+    const previousExpenses = cashMovements.filter(m => {
+      return m.timestamp >= prevFrom && m.timestamp <= prevTo && (m.type === 'Egreso' || m.type === 'Retiro');
+    }).reduce((s, m) => s + m.amount, 0);
+
+    const expensesDiff = previousExpenses > 0 ? ((currentExpenses - previousExpenses) / previousExpenses) * 100 : null;
+
+    // 3. Balance / Net Result
+    const currentResult = currentRevenue - currentExpenses;
+    const previousResult = previousRevenue - previousExpenses;
+    
+    let resultDiff: number | null = null;
+    if (previousResult !== 0) {
+      resultDiff = ((currentResult - previousResult) / Math.abs(previousResult)) * 100;
+    }
+
+    // Net Profit Margin: (Result / Revenue) * 100
+    const netMargin = currentRevenue > 0 ? (currentResult / currentRevenue) * 100 : 0;
+
+    return {
+      revenue: { current: currentRevenue, previous: previousRevenue, diff: revenueDiff },
+      expenses: { current: currentExpenses, previous: previousExpenses, diff: expensesDiff },
+      result: { current: currentResult, previous: previousResult, diff: resultDiff, margin: netMargin }
+    };
+  }, [orders, cashMovements, analyticsParams, getOrderTimestamp]);
 
   const handleAddOffer = () => {
     if (!offerForm.discountValue || !offerForm.endDate) return;
@@ -168,39 +197,142 @@ export const Analytics: React.FC = () => {
         setCustomRange={setCustomRange} 
       />
 
-      {/* Period Comparison Banner */}
-      <div className="bg-white p-6 rounded-[2.5rem] border border-outline-variant/5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em] mb-1">Ingresos del período</p>
-          <p className="text-3xl font-black text-on-background">${formatCurrency(periodComparison.current)}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {periodComparison.diff !== null ? (
-            <div className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl ${periodComparison.diff >= 0 ? 'bg-green-50' : 'bg-error/10'}`}>
-              <span className={`material-symbols-outlined text-[22px] ${periodComparison.diff >= 0 ? 'text-green-600' : 'text-error'}`}>
-                {periodComparison.diff >= 0 ? 'trending_up' : 'trending_down'}
+      {/* Financial Comparison Grid Dashboard */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Card 1: Ingresos */}
+        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md hover:border-outline-variant/20">
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em]">Ingresos del Período</p>
+              <p className="text-3xl font-black text-on-background">${formatCurrency(periodComparison.revenue.current)}</p>
+            </div>
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
+              <span className="material-symbols-outlined text-[24px]">trending_up</span>
+            </div>
+          </div>
+          
+          <div className="mt-6 pt-4 border-t border-outline-variant/5 flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período Anterior</p>
+              <p className="text-sm font-bold text-on-surface-variant/80">${formatCurrency(periodComparison.revenue.previous)}</p>
+            </div>
+            
+            {periodComparison.revenue.diff !== null ? (
+              <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black ${
+                periodComparison.revenue.diff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+              }`}>
+                <span className="material-symbols-outlined text-[16px]">
+                  {periodComparison.revenue.diff >= 0 ? 'arrow_upward' : 'arrow_downward'}
+                </span>
+                <span>
+                  {periodComparison.revenue.diff >= 0 ? '+' : ''}{periodComparison.revenue.diff.toFixed(1)}%
+                </span>
+              </div>
+            ) : (
+              <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2.5 py-1.5 rounded-lg">
+                Sin Comparativa
               </span>
-              <div>
-                <p className={`text-lg font-black leading-none ${periodComparison.diff >= 0 ? 'text-green-600' : 'text-error'}`}>
-                  {periodComparison.diff >= 0 ? '+' : ''}{formatCurrency(parseFloat(periodComparison.diff.toFixed(1)), false)}%
-                </p>
-                <p className="text-[10px] font-bold text-on-surface-variant mt-0.5">vs período anterior</p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-surface-container-low">
-              <span className="material-symbols-outlined text-[22px] text-on-surface-variant">remove</span>
-              <div>
-                <p className="text-sm font-bold text-on-surface-variant">Sin comparativa</p>
-                <p className="text-[10px] text-on-surface-variant/60">No hay datos del período anterior</p>
-              </div>
-            </div>
-          )}
-          <div className="text-right hidden sm:block">
-            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período anterior</p>
-            <p className="text-base font-bold text-on-surface-variant">${formatCurrency(periodComparison.previous)}</p>
+            )}
           </div>
         </div>
+
+        {/* Card 2: Egresos */}
+        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md hover:border-outline-variant/20">
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em]">Egresos del Período</p>
+              <p className="text-3xl font-black text-on-background">${formatCurrency(periodComparison.expenses.current)}</p>
+            </div>
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
+              <span className="material-symbols-outlined text-[24px]">trending_down</span>
+            </div>
+          </div>
+          
+          <div className="mt-6 pt-4 border-t border-outline-variant/5 flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período Anterior</p>
+              <p className="text-sm font-bold text-on-surface-variant/80">${formatCurrency(periodComparison.expenses.previous)}</p>
+            </div>
+            
+            {periodComparison.expenses.diff !== null ? (
+              <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black ${
+                periodComparison.expenses.diff <= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+              }`}>
+                <span className="material-symbols-outlined text-[16px]">
+                  {periodComparison.expenses.diff <= 0 ? 'arrow_downward' : 'arrow_upward'}
+                </span>
+                <span>
+                  {periodComparison.expenses.diff >= 0 ? '+' : ''}{periodComparison.expenses.diff.toFixed(1)}%
+                </span>
+              </div>
+            ) : (
+              <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2.5 py-1.5 rounded-lg">
+                Sin Comparativa
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Card 3: Balance / Resultado Neto */}
+        {(() => {
+          const isPositive = periodComparison.result.current >= 0;
+          return (
+            <div className={`p-6 rounded-[2rem] border shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md ${
+              isPositive 
+                ? 'bg-gradient-to-br from-emerald-50/50 via-green-50/20 to-white border-emerald-500/15' 
+                : 'bg-gradient-to-br from-rose-50/50 via-red-50/20 to-white border-rose-500/15'
+            }`}>
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em]">Balance / Resultado</p>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                      isPositive ? 'bg-emerald-600/10 text-emerald-700' : 'bg-rose-600/10 text-rose-700'
+                    }`}>
+                      {isPositive ? 'Superávit' : 'Déficit'}
+                    </span>
+                  </div>
+                  <p className={`text-3xl font-black ${isPositive ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {isPositive ? '' : '-'}${formatCurrency(Math.abs(periodComparison.result.current))}
+                  </p>
+                </div>
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                  isPositive ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/20'
+                }`}>
+                  <span className="material-symbols-outlined text-[24px]">
+                    {isPositive ? 'account_balance_wallet' : 'money_off'}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="mt-6 pt-4 border-t border-outline-variant/10 flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Margen Neto</p>
+                  <p className={`text-sm font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {periodComparison.result.margin.toFixed(1)}%
+                  </p>
+                </div>
+                
+                {periodComparison.result.diff !== null ? (
+                  <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black ${
+                    periodComparison.result.diff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                  }`}>
+                    <span className="material-symbols-outlined text-[16px]">
+                      {periodComparison.result.diff >= 0 ? 'arrow_upward' : 'arrow_downward'}
+                    </span>
+                    <span>
+                      {periodComparison.result.diff >= 0 ? '+' : ''}{periodComparison.result.diff.toFixed(1)}%
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2.5 py-1.5 rounded-lg">
+                    Sin Comparativa
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

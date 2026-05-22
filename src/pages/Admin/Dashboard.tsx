@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAdmin } from '../../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
+import { useAuthStore } from '../../stores/useAuthStore';
 
 export const Dashboard: React.FC = () => {
   const { 
@@ -10,6 +11,11 @@ export const Dashboard: React.FC = () => {
     privacyMode, formatCurrency
   } = useAdmin();
   const navigate = useNavigate();
+  const hasPermission = useAuthStore((state) => state.hasPermission);
+  const employeeProfile = useAuthStore((state) => state.employeeProfile);
+  
+  const canViewFinancial = employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || hasPermission('dashboard.view_financial');
+
   const [replenishAmounts, setReplenishAmounts] = useState<Record<string, string>>({});
   const [selectedForReport, setSelectedForReport] = useState<Set<string>>(new Set());
   const [dashboardError, setDashboardError] = useState<string | null>(null);
@@ -51,21 +57,28 @@ export const Dashboard: React.FC = () => {
     const revenue = ordersRev + posRev;
     const active = filteredOrders.filter(o => o.status !== 'Entregado' && o.status !== 'Cancelado').length;
     
-    return [
-      { 
-        label: 'Ventas por Caja (POS)', 
-        value: `$${formatCurrency(posRev)}`, 
-        change: 'Ventas en local', 
-        icon: 'point_of_sale', 
-        color: 'bg-orange-100 text-orange-600' 
-      },
-      { 
-        label: 'Ventas por Pedidos', 
-        value: `$${formatCurrency(ordersRev)}`, 
-        change: 'Web / WhatsApp', 
-        icon: 'local_shipping', 
-        color: 'bg-indigo-100 text-indigo-600' 
-      },
+    const baseStats = [];
+    
+    if (canViewFinancial) {
+      baseStats.push(
+        { 
+          label: 'Ventas por Caja (POS)', 
+          value: `$${formatCurrency(posRev)}`, 
+          change: 'Ventas en local', 
+          icon: 'point_of_sale', 
+          color: 'bg-orange-100 text-orange-600' 
+        },
+        { 
+          label: 'Ventas por Pedidos', 
+          value: `$${formatCurrency(ordersRev)}`, 
+          change: 'Web / WhatsApp', 
+          icon: 'local_shipping', 
+          color: 'bg-indigo-100 text-indigo-600' 
+        }
+      );
+    }
+
+    baseStats.push(
       { 
         label: 'Pedidos Activos', 
         value: formatCurrency(active, false), 
@@ -79,16 +92,21 @@ export const Dashboard: React.FC = () => {
         change: lowStockCount > 5 ? 'Crítico' : lowStockCount > 0 ? 'Moderado' : 'OK', 
         icon: 'warning', 
         color: lowStockCount > 5 ? 'bg-error/10 text-error' : 'bg-orange-100 text-orange-600'
-      },
-      { 
+      }
+    );
+
+    if (canViewFinancial) {
+      baseStats.push({ 
         label: 'Deuda en la Calle', 
         value: `$${formatCurrency(totalDebtInStreet)}`, 
         change: 'Total Cta. Corriente', 
         icon: 'menu_book', 
         color: 'bg-red-50 text-red-600' 
-      },
-    ];
-  }, [filteredOrders, lowStockCount, privacyMode]);
+      });
+    }
+
+    return baseStats;
+  }, [filteredOrders, lowStockCount, privacyMode, canViewFinancial]);
 
   // Sync selection with low stock products (default to all selected)
   useEffect(() => {
@@ -225,7 +243,9 @@ export const Dashboard: React.FC = () => {
                           {order.status}
                         </span>
                       </td>
-                      <td className="px-8 py-4 text-right font-bold text-primary">${formatCurrency(order.total)}</td>
+                      <td className="px-8 py-4 text-right font-bold text-primary">
+                        {canViewFinancial ? `$${formatCurrency(order.total)}` : '***'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
