@@ -15,6 +15,7 @@ interface ProductState {
   getProductByBarcode: (barcode: string) => Product | undefined;
   bulkAddProducts: (products: CreateProductInput[]) => Promise<boolean>;
   bulkUpdatePrice: (ids: string[], percentage: number) => Promise<boolean>;
+  clearError: () => void;
 }
 
 const getErrorMessage = (err: any, defaultMessage: string): string => {
@@ -181,5 +182,7 @@ export const useProductStore = create<ProductState>((set, get) => ({
       set({ products: previousProducts, error: getErrorMessage(err, 'Error actualizando precios masivamente') });
       return false;
     }
-  }
+  },
+
+  clearError: () => set({ error: null })
 }));

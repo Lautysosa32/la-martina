@@ -28,7 +28,7 @@ export const Inventory: React.FC = () => {
   const {
     products: adminProducts, loading: productsLoading, error: productsError, fetchProducts,
     addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkAddProducts,
-    getProductByBarcode: findProductByBarcode
+    getProductByBarcode: findProductByBarcode, clearError
   } = useProductStore();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
@@ -100,6 +100,7 @@ export const Inventory: React.FC = () => {
   }, []);
 
   const handleCameraBarcode = async (code: string) => {
+    clearError();
     setCameraScannerOpen(false);
     setScanResult({
       show: true,
@@ -179,6 +180,7 @@ export const Inventory: React.FC = () => {
   };
 
   const processBarcode = async (code: string) => {
+    clearError();
     console.log("Procesando código:", code);
     setScannerActive(true);
     setTimeout(() => setScannerActive(false), 2000);
@@ -645,12 +647,20 @@ export const Inventory: React.FC = () => {
       )}
 
       {productsError && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded-2xl p-4 flex items-start gap-3 mt-4 animate-in slide-in-from-top-2">
-          <span className="material-symbols-outlined text-red-600 shrink-0">error</span>
-          <div>
-            <p className="font-bold text-sm">Error en la base de datos de Supabase</p>
-            <p className="text-xs text-red-700 mt-1">{productsError}</p>
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded-2xl p-4 flex items-start gap-3 justify-between mt-4 animate-in slide-in-from-top-2">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-red-600 shrink-0">error</span>
+            <div>
+              <p className="font-bold text-sm">Error en la base de datos de Supabase</p>
+              <p className="text-xs text-red-700 mt-1">{productsError}</p>
+            </div>
           </div>
+          <button 
+            onClick={() => clearError()} 
+            className="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100/50 cursor-pointer flex items-center justify-center transition-all"
+          >
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
         </div>
       )}
 
@@ -676,7 +686,7 @@ export const Inventory: React.FC = () => {
             
             {/* Botón de Escáner por Cámara */}
             <button
-              onClick={() => setCameraScannerOpen(true)}
+              onClick={() => { clearError(); setCameraScannerOpen(true); }}
               className="bg-primary hover:bg-primary-hover text-white font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 active:scale-95 transition-all text-xs shadow-md shadow-primary/25 cursor-pointer"
             >
               <span className="material-symbols-outlined text-[16px]">photo_camera</span>
