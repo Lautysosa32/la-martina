@@ -8,6 +8,8 @@ import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
+import { BarcodeScannerModal } from '../../components/BarcodeScannerModal';
+import { ScanResultPanel } from '../../components/ScanResultPanel';
 
 type SortKey = 'name' | 'categoryId' | 'stock' | 'price';
 interface SortConfig {
@@ -39,6 +41,15 @@ export const Inventory: React.FC = () => {
   const [isSearchingExternal, setIsSearchingExternal] = useState(false);
   const scannerBufferRef = useRef('');
   const scannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Estados de escáner de cámara
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
+  const [scanResult, setScanResult] = useState<{
+    show: boolean;
+    code: string;
+    product: Product | null;
+    isSearching: boolean;
+  } | null>(null);
 
   const [activeTab, setActiveTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -87,6 +98,85 @@ export const Inventory: React.FC = () => {
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
   }, []);
+
+  const handleCameraBarcode = async (code: string) => {
+    setCameraScannerOpen(false);
+    setScanResult({
+      show: true,
+      code,
+      product: null,
+      isSearching: true,
+    });
+
+    const found = findProductByBarcode(code);
+    if (found) {
+      console.log("Producto encontrado localmente por cámara:", found.name);
+      setScanResult({
+        show: true,
+        code,
+        product: found,
+        isSearching: false,
+      });
+    } else {
+      console.log("Buscando en Open Food Facts por cámara...");
+      const externalData = await searchProductExternal(code);
+      if (externalData) {
+        console.log("Datos encontrados externamente por cámara:", externalData);
+        const tempProduct: Product = {
+          id: '',
+          name: externalData.name || '',
+          brand: externalData.brand || '',
+          categoryId: adminCategories[0]?.id || 'almacen',
+          price: 0,
+          originalPrice: null,
+          image: externalData.image || '',
+          format: externalData.format || '',
+          isNew: true,
+          discount: null,
+          badge: null,
+          minStock: 15,
+          barcode: code,
+          stock: 0,
+          branchId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        setScanResult({
+          show: true,
+          code,
+          product: tempProduct,
+          isSearching: false,
+        });
+      } else {
+        console.log("No se encontraron datos externos por cámara.");
+        setScanResult({
+          show: true,
+          code,
+          product: null,
+          isSearching: false,
+        });
+      }
+    }
+  };
+
+  const handleCameraUpdateStock = async (productId: string, newStock: number) => {
+    const success = await updateStock(productId, newStock);
+    if (success) {
+      setScanResult((prev) => {
+        if (prev && prev.product && prev.product.id === productId) {
+          return {
+            ...prev,
+            product: {
+              ...prev.product,
+              stock: newStock,
+            },
+          };
+        }
+        return prev;
+      });
+    }
+    return success;
+  };
 
   const processBarcode = async (code: string) => {
     console.log("Procesando código:", code);
@@ -207,7 +297,7 @@ export const Inventory: React.FC = () => {
   const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleAll = () => setSelectedIds(allSelected ? [] : sortedProducts.map(p => p.id));
 
-  const openProductModal = (mode: 'new' | 'edit', product?: Product) => {
+  const openProductModal = (mode: 'new' | 'edit', product?: Product, prefilledBarcode?: string) => {
     if (mode === 'edit' && product) {
       setProductForm({
         id: product.id, name: product.name, brand: product.brand || '', categoryId: product.categoryId,
@@ -219,9 +309,18 @@ export const Inventory: React.FC = () => {
       });
     } else {
       setProductForm({
-        id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen',
-        price: '', image: '', format: '', badge: '', originalPrice: '',
-        stock: '0', minStock: '15', barcode: ''
+        id: '',
+        name: product?.name || '',
+        brand: product?.brand || '',
+        categoryId: product?.categoryId || adminCategories[0]?.id || 'almacen',
+        price: product?.price ? product.price.toString() : '',
+        image: product?.image || '',
+        format: product?.format || '',
+        badge: product?.badge || '',
+        originalPrice: product?.originalPrice?.toString() || '',
+        stock: (product?.stock ?? 0).toString(),
+        minStock: (product?.minStock ?? 15).toString(),
+        barcode: prefilledBarcode || product?.barcode || ''
       });
     }
     setBarcodeError(null);
@@ -422,23 +521,8 @@ export const Inventory: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 pb-10 w-full overflow-hidden">
+    <div className="flex flex-col gap-4 animate-in fade-in duration-500 pb-10 w-full overflow-hidden">
       <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Inventario</h1>
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileUpload}
-        accept=".csv,.xlsx,.xls"
-        className="hidden"
-      />
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #e2e8f0 transparent; }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
 
       {/* Header Bar Portal */}
       {portalTarget && (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || employeeProfile?.role === 'admin') && createPortal(
@@ -589,9 +673,20 @@ export const Inventory: React.FC = () => {
                 ¡Escaneado!
               </span>
             )}
-            <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest bg-surface-container-low px-4 py-2 rounded-xl flex items-center gap-2">
+            
+            {/* Botón de Escáner por Cámara */}
+            <button
+              onClick={() => setCameraScannerOpen(true)}
+              className="bg-primary hover:bg-primary-hover text-white font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 active:scale-95 transition-all text-xs shadow-md shadow-primary/25 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+              Escanear
+            </button>
+
+            {/* Badge de Lector Físico / Teclado */}
+            <span className="hidden md:flex text-[9px] font-bold text-on-surface-variant uppercase tracking-widest bg-surface-container-low px-4 py-2.5 rounded-xl items-center gap-2">
               <span className="material-symbols-outlined text-[12px]">barcode_scanner</span>
-              Scanner activo
+              Scanner USB
             </span>
           </div>
         </div>
@@ -743,11 +838,13 @@ export const Inventory: React.FC = () => {
                     </PermissionGuard>
 
                     {/* Miniatura de Imagen */}
-                    {product.image && (
-                      <div className="w-10 h-10 bg-surface-container-low rounded-xl p-1.5 shrink-0 flex items-center justify-center border border-outline-variant/5">
-                        <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
-                      </div>
-                    )}
+                    <div className="w-10 h-10 bg-surface-container-low rounded-xl shrink-0 flex items-center justify-center border border-outline-variant/5 overflow-hidden">
+                      {product.image ? (
+                        <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="material-symbols-outlined text-[20px] text-on-surface-variant/40">image</span>
+                      )}
+                    </div>
 
                     {/* Nombre */}
                     <div className="min-w-0 flex-1">
@@ -1074,6 +1171,44 @@ export const Inventory: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Modales de escáner por cámara */}
+      <BarcodeScannerModal
+        open={cameraScannerOpen}
+        onClose={() => setCameraScannerOpen(false)}
+        onDetected={handleCameraBarcode}
+      />
+
+      <ScanResultPanel
+        open={!!scanResult?.show}
+        onClose={() => setScanResult(null)}
+        scannedCode={scanResult?.code || ''}
+        product={scanResult?.product || null}
+        isSearching={!!scanResult?.isSearching}
+        onEditProduct={(product) => openProductModal('edit', product)}
+        onUpdateStock={handleCameraUpdateStock}
+        onCreateProduct={(barcode) => openProductModal('new', undefined, barcode)}
+        onScanAgain={() => {
+          setScanResult(null);
+          setCameraScannerOpen(true);
+        }}
+      />
+
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept=".csv,.xlsx,.xls"
+        className="hidden"
+      />
+
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #e2e8f0 transparent; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </div>
   );
 };
