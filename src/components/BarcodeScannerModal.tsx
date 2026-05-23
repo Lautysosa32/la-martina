@@ -145,6 +145,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     paused={false}
                     allowMultiple={true}
                     scanDelay={500}
+                    startTimeoutMs={10000}
                     constraints={{
                       video: {
                         facingMode: { ideal: 'environment' },
