@@ -5,6 +5,7 @@ import { Product } from '../../data/mockData';
 import { TicketPrinter, TicketData, TicketItem } from '../../components/TicketPrinter';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
 import type { CashWithdrawal, CashMovement } from '../../context/AdminContext';
+import { shoppingSessionService } from '../../services/shopping-session.service';
 
 interface POSCartItem {
   id: string;
@@ -26,6 +27,7 @@ interface POSTab {
   selectedPaymentMethod: string;
   validatedCustomer: any;
   ccDni: string;
+  shoppingSessionId?: string | null;
 }
 
 const PAYMENT_METHODS = [
@@ -43,6 +45,7 @@ const createTab = (num: number): POSTab => ({
   selectedPaymentMethod: 'cash',
   validatedCustomer: null,
   ccDni: '',
+  shoppingSessionId: null,
 });
 
 export const POS: React.FC = () => {
@@ -52,6 +55,109 @@ export const POS: React.FC = () => {
   useEffect(() => {
     setHeaderPortal(document.getElementById('admin-header-portal'));
   }, []);
+
+  // Pre-purchase load modal state
+  const [showPrePurchaseModal, setShowPrePurchaseModal] = useState(false);
+  const [prePurchaseCodeInput, setPrePurchaseCodeInput] = useState('');
+  const [prePurchaseLoading, setPrePurchaseLoading] = useState(false);
+  const [prePurchaseError, setPrePurchaseError] = useState('');
+
+  const handleLoadPrePurchase = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const code = prePurchaseCodeInput.trim().toUpperCase();
+    if (!code) return;
+
+    setPrePurchaseLoading(true);
+    setPrePurchaseError('');
+
+    try {
+      const session = await shoppingSessionService.getShoppingSessionByCode(code);
+      if (!session) {
+        setPrePurchaseError(`No se encontró ninguna pre-compra con el código "${code}".`);
+        setPrePurchaseLoading(false);
+        return;
+      }
+
+      if (session.status !== 'pending') {
+        const statusLabels: Record<string, string> = {
+          confirmed: 'ya fue cobrada',
+          cancelled: 'fue cancelada',
+          expired: 'ha expirado'
+        };
+        setPrePurchaseError(`Esta pre-compra ${statusLabels[session.status] || 'no está pendiente'} (Estado: ${session.status}).`);
+        setPrePurchaseLoading(false);
+        return;
+      }
+
+      // Check expiration
+      if (new Date(session.expiresAt) < new Date()) {
+        setPrePurchaseError('Esta pre-compra ha expirado (límite de validez de 60 minutos superado).');
+        setPrePurchaseLoading(false);
+        return;
+      }
+
+      // Fetch items
+      const sessionItems = await shoppingSessionService.getShoppingSessionItems(session.id);
+      if (sessionItems.length === 0) {
+        setPrePurchaseError('Esta pre-compra no contiene ningún producto.');
+        setPrePurchaseLoading(false);
+        return;
+      }
+
+      // Map to POSCartItem, updating prices if they exist in active catalog products
+      const posCartItems: POSCartItem[] = sessionItems.map(item => {
+        const matchingProduct = adminProducts.find(
+          p => p.id === item.productId || (p.barcode && p.barcode === item.barcode)
+        );
+
+        return {
+          id: `prepurchase-${item.id}-${Date.now()}-${Math.random()}`,
+          productId: item.productId || 'PRODUCTO_COMUN',
+          productCode: item.barcode || 'COMUN',
+          name: item.name,
+          price: matchingProduct ? matchingProduct.price : item.price,
+          quantity: item.quantity,
+          image: matchingProduct ? matchingProduct.image : (item.image || '')
+        };
+      });
+
+      // Update active tab cart and set shoppingSessionId
+      setCart(posCartItems);
+      updateTab({ shoppingSessionId: session.id });
+
+      // Auto-associate customer if they are in registered customers
+      const matchedCustomer = customers.find(c => 
+        (session.customerPhone && c.phone === session.customerPhone) ||
+        (session.customerName && c.name.toLowerCase() === session.customerName.toLowerCase())
+      );
+
+      if (matchedCustomer) {
+        setValidatedCustomer(matchedCustomer);
+      } else if (session.customerName) {
+        // Create temporary validated customer object
+        setValidatedCustomer({
+          id: 'temp-customer',
+          name: session.customerName,
+          phone: session.customerPhone,
+          hasCurrentAccount: false
+        });
+      }
+
+      // Close modal and clean input
+      setShowPrePurchaseModal(false);
+      setPrePurchaseCodeInput('');
+      
+      // Auto-open POS list modal so cashier sees the imported cart immediately
+      setShowModal(true);
+      setTimeout(() => inputRef.current?.focus(), 100);
+
+    } catch (err: any) {
+      console.error('Error loading pre-purchase:', err);
+      setPrePurchaseError('Ocurrió un error al obtener la pre-compra desde Supabase. Intentá de nuevo.');
+    } finally {
+      setPrePurchaseLoading(false);
+    }
+  };
 
   const [showModal, setShowModal] = useState(false);
   const [showCloseSuccess, setShowCloseSuccess] = useState(false);
@@ -518,6 +624,13 @@ export const POS: React.FC = () => {
       }, 100);
     }
 
+    // Confirm shopping session if this cart was loaded from a pre-purchase
+    if (activeTab.shoppingSessionId) {
+      shoppingSessionService.confirmShoppingSession(activeTab.shoppingSessionId, 'Admin')
+        .then(() => console.log('✅ Pre-compra confirmada y cerrada en Supabase'))
+        .catch(err => console.error('❌ Error al confirmar pre-compra en Supabase:', err));
+    }
+
     setCart([]);
     setGlobalDiscount(0);
     setShowPaymentModal(false);
@@ -525,6 +638,7 @@ export const POS: React.FC = () => {
     setValidatedCustomer(null);
     setCcDni('');
     setCcError('');
+    updateTab({ shoppingSessionId: null });
   };
 
   const handleSendWhatsApp = (order: { orderId: string, customer: string, total: number, paymentMethod: string, phone: string }) => {
@@ -556,7 +670,7 @@ export const POS: React.FC = () => {
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(prev => (cart.length === 0 ? null : prev === null ? cart.length - 1 : Math.max(prev - 1, 0))); }
       if (e.key === 'Delete') { e.preventDefault(); if (selectedIndex !== null) handleRemoveItem(selectedIndex); else if (cart.length > 0) handleRemoveItem(0); }
       if (e.key === 'F2') { e.preventDefault(); if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }
-      if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); }
+      if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -813,7 +927,7 @@ export const POS: React.FC = () => {
               </div>
 
               <div className="bg-[#b31414] text-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(179,20,20,0.3)] mb-6 relative overflow-hidden shrink-0"><span className="material-symbols-outlined absolute -right-6 -bottom-6 text-[150px] opacity-10">point_of_sale</span><p className="font-bold text-xs tracking-[0.2em] uppercase mb-2 text-white/80">Monto Final</p><p className="text-6xl font-black mb-6 flex items-start gap-2"><span className="text-2xl mt-2">$</span> {formatCurrency(cartTotal, true, true)}</p><div className="flex justify-between text-xs font-bold text-white/80 pt-5 border-t border-white/20"><div className="flex flex-col gap-1"><span>Subtotal: $ {formatCurrency(subtotal, true, true)}</span>{globalDiscount > 0 && <span className="text-white/60">Desc ({globalDiscount}%): -${formatCurrency(discountAmount, true, true)}</span>}</div><span className="self-end">Tax (0%): $ 0,00</span></div></div>
-              <div className="flex gap-3 mb-8 shrink-0"><button onClick={() => { setCart([]); setGlobalDiscount(0); }} className="flex-1 bg-white border border-outline-variant/10 rounded-2xl py-6 flex flex-col items-center justify-center gap-1 font-bold text-[10px] text-error shadow-sm hover:bg-error/5 transition-all"><span className="material-symbols-outlined text-[20px]">receipt_long</span> F4 - Nuevo</button><button onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }} className={`flex-[1] bg-[#ffeb3b] text-black rounded-2xl py-4 flex flex-col items-center justify-center gap-1 font-black text-xs shadow-lg transition-all border border-[#fdd835] ${cart.length === 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02] active:scale-95'}`}><span className="material-symbols-outlined text-[22px]">credit_card</span>F2 - COBRAR</button></div>
+              <div className="flex gap-3 mb-8 shrink-0"><button onClick={() => { setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }} className="flex-1 bg-white border border-outline-variant/10 rounded-2xl py-6 flex flex-col items-center justify-center gap-1 font-bold text-[10px] text-error shadow-sm hover:bg-error/5 transition-all"><span className="material-symbols-outlined text-[20px]">receipt_long</span> F4 - Nuevo</button><button onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }} className={`flex-[1] bg-[#ffeb3b] text-black rounded-2xl py-4 flex flex-col items-center justify-center gap-1 font-black text-xs shadow-lg transition-all border border-[#fdd835] ${cart.length === 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02] active:scale-95'}`}><span className="material-symbols-outlined text-[22px]">credit_card</span>F2 - COBRAR</button></div>
               <div className="flex-1 min-h-0 flex flex-col justify-between pb-24">
                 <div className="space-y-4">
                   <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-widest">Acciones Rápidas</h4>
@@ -827,6 +941,23 @@ export const POS: React.FC = () => {
                     <div className="text-left">
                       <p className="text-sm font-black">Producto Común</p>
                       <p className="text-[10px] font-medium opacity-70">Vender productos ocasionales sin inventario</p>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPrePurchaseCodeInput('');
+                      setPrePurchaseError('');
+                      setShowPrePurchaseModal(true);
+                    }}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white rounded-2xl p-5 flex items-center gap-4 font-black text-sm shadow-lg shadow-green-200/40 transition-all group"
+                  >
+                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <span className="material-symbols-outlined text-[24px]">assignment_turned_in</span>
+                    </div>
+                    <div className="text-left">
+                      <p className="text-sm font-black">Cargar Pre-compra</p>
+                      <p className="text-[10px] font-medium opacity-80">Importar carrito escaneado por cliente mediante código</p>
                     </div>
                   </button>
                 </div>
@@ -1156,6 +1287,82 @@ export const POS: React.FC = () => {
                 Aceptar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ────────────────────────────────────────────────────────
+          MODAL: CARGAR PRE-COMPRA DESDE EL CELULAR DEL CLIENTE
+          ──────────────────────────────────────────────────────── */}
+      {showPrePurchaseModal && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowPrePurchaseModal(false)} />
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden animate-in zoom-in-95">
+            <div className="p-6 border-b border-outline-variant/10 flex items-center gap-4 bg-surface-container-lowest">
+              <div className="w-12 h-12 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center">
+                <span className="material-symbols-outlined text-[28px]">assignment_turned_in</span>
+              </div>
+              <div>
+                <h3 className="text-xl font-black">Cargar Pre-compra</h3>
+                <p className="text-xs text-on-surface-variant">Importá los productos escaneados por el cliente</p>
+              </div>
+            </div>
+            
+            <form onSubmit={handleLoadPrePurchase} className="p-8 space-y-6">
+              {prePurchaseError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px]">error</span>
+                  <span>{prePurchaseError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-2 block">Código de Pre-compra (ej: LM-8F3K9A)</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="LM-XXXXXX"
+                  value={prePurchaseCodeInput}
+                  onChange={e => setPrePurchaseCodeInput(e.target.value)}
+                  className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-2xl py-4 px-4 text-center font-black text-2xl outline-none focus:border-primary uppercase tracking-widest font-mono"
+                  autoFocus
+                  disabled={prePurchaseLoading}
+                />
+              </div>
+
+              <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10 text-xs text-on-surface-variant leading-relaxed">
+                <p>• Escribí el código que el cliente muestra en la pantalla de su celular.</p>
+                <p>• Los productos se cargarán de manera automática en el Punto de Venta.</p>
+                <p>• El stock se descontará únicamente al confirmar el cobro final.</p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowPrePurchaseModal(false)}
+                  className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors"
+                  disabled={prePurchaseLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={prePurchaseLoading || !prePurchaseCodeInput.trim()}
+                  className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {prePurchaseLoading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                      <span>Cargando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined text-[20px]">download</span>
+                      <span>Importar Carrito</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

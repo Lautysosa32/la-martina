@@ -147,13 +147,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     scanDelay={500}
                     startTimeoutMs={10000}
                     constraints={{
-                      video: {
-                        facingMode: { ideal: 'environment' },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        aspectRatio: { ideal: 1.33333 }
-                      }
-                    } as MediaTrackConstraints}
+                      facingMode: 'environment'
+                    }}
                     formats={[
                       'ean_13',
                       'ean_8',
