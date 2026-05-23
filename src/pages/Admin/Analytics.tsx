@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import type { Offer, CashClose, CashMovement } from '../../context/AdminContext';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
 import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
+import { useAuthStore } from '../../stores/useAuthStore';
 const CAT_COLORS = ['bg-primary', 'bg-secondary', 'bg-error', 'bg-orange-500', 'bg-purple-500', 'bg-teal-500'];
 
 export const Analytics: React.FC = () => {
@@ -14,9 +15,23 @@ export const Analytics: React.FC = () => {
     formatCurrency, customers, cashMovements
   } = useAdmin();
 
+  const employeeProfile = useAuthStore((state) => state.employeeProfile);
+
   const [period, setPeriod] = useState('Últimos 7 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPortalTarget(document.getElementById('admin-header-portal'));
+  }, []);
+
+  // Enforce 7 days period for common employees
+  useEffect(() => {
+    if (employeeProfile?.role === 'employee' && period !== 'Últimos 7 días') {
+      setPeriod('Últimos 7 días');
+    }
+  }, [employeeProfile, period]);
   
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [showCloseResult, setShowCloseResult] = useState<CashClose | null>(null);
@@ -190,12 +205,15 @@ export const Analytics: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
-      <AdminPeriodSelector 
-        period={period} 
-        setPeriod={setPeriod} 
-        customRange={customRange} 
-        setCustomRange={setCustomRange} 
-      />
+      {portalTarget && employeeProfile?.role !== 'employee' && createPortal(
+        <AdminPeriodSelector 
+          period={period} 
+          setPeriod={setPeriod} 
+          customRange={customRange} 
+          setCustomRange={setCustomRange} 
+        />,
+        portalTarget
+      )}
 
       {/* Financial Comparison Grid Dashboard */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

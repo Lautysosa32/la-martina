@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
@@ -22,6 +23,18 @@ export const Dashboard: React.FC = () => {
 
   const [period, setPeriod] = useState('Últimos 7 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
+
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPortalTarget(document.getElementById('admin-header-portal'));
+  }, []);
+
+  // Enforce 7 days period for common employees
+  useEffect(() => {
+    if (employeeProfile?.role === 'employee' && period !== 'Últimos 7 días') {
+      setPeriod('Últimos 7 días');
+    }
+  }, [employeeProfile, period]);
 
   const analyticsParams = useMemo(() => {
     if (period === 'Personalizado' && customRange.from && customRange.to) {
@@ -181,13 +194,15 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
-      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Dashboard</h1>
-      <AdminPeriodSelector 
-        period={period} 
-        setPeriod={setPeriod} 
-        customRange={customRange} 
-        setCustomRange={setCustomRange} 
-      />
+      {portalTarget && employeeProfile?.role !== 'employee' && createPortal(
+        <AdminPeriodSelector 
+          period={period} 
+          setPeriod={setPeriod} 
+          customRange={customRange} 
+          setCustomRange={setCustomRange} 
+        />,
+        portalTarget
+      )}
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-6">
         {stats.map((stat, idx) => (

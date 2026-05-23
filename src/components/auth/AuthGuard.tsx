@@ -45,6 +45,31 @@ export const AuthGuard: React.FC<AuthGuardProps> = ({ children, requiredPermissi
 
   // Verificación de permiso específico para una ruta
   if (requiredPermission && employeeProfile && employeeProfile.role !== 'owner' && employeeProfile.role !== 'super_admin') {
+    // Bloquear acceso absoluto a clientes para empleados comunes
+    if (employeeProfile.role === 'employee' && requiredPermission.startsWith('customers.')) {
+      return (
+        <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center font-sans p-8">
+          <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-red-100 flex flex-col items-center gap-4 text-center max-w-md">
+            <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center">
+              <span className="material-symbols-outlined text-red-500 text-[32px]">block</span>
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-on-background">Acceso Denegado</h3>
+              <p className="text-sm text-on-surface-variant mt-2">
+                No tienes los permisos necesarios para acceder a este módulo. Contacta con tu administrador.
+              </p>
+            </div>
+            <button 
+              onClick={() => navigate('/admin', { replace: true })}
+              className="mt-4 px-6 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+            >
+              Volver al Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (!hasPermission(requiredPermission)) {
       return (
         <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center font-sans p-8">

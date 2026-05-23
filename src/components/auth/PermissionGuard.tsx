@@ -22,8 +22,11 @@ export const PermissionGuard: React.FC<PermissionGuardProps> = ({
 }) => {
   const { hasPermission, hasAnyPermission, hasAllPermissions, employeeProfile } = useAuthStore();
 
-  // Si no hay perfil, denegar
+  // Si no hay perfil, denegar (excepto en modo de desarrollo para facilitar pruebas locales)
   if (!employeeProfile) {
+    if (import.meta.env.DEV) {
+      return <>{children}</>;
+    }
     return <>{fallback}</>;
   }
 

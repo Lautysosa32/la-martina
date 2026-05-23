@@ -36,7 +36,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, PermissionKey[]> = {
     'products.create',
     'products.update',
     'orders.view',
-    'customers.view'
+    'orders.update_status'
   ]
 };
 
@@ -62,6 +62,6 @@ export const EMPLOYEE_PRESETS: Record<EmployeePreset, PermissionKey[]> = {
     'orders.view',
     'pos.access', 'pos.sell',
     'cash.view', 'cash.open', 'cash.close',
-    'customers.view', 'customers.create'
+    'orders.update_status'
   ]
 };

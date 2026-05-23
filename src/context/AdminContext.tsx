@@ -199,6 +199,7 @@ export interface AdminContextType {
   addAdminOrder: (order: AdminOrder) => void;
   updateOrderStatus: (orderId: string, status: AdminOrder['status']) => void;
   updateOrderMethod: (orderId: string, method: string) => void;
+  updateOrderPaymentMethod: (orderId: string, paymentMethod: string) => void;
 
   // Customers
   customers: AdminCustomer[];
@@ -388,6 +389,16 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     if (!storeLoading) {
       setAdminProducts(storeProducts as any);
+      // Sincronizar stockMap con el stock de la base de datos para asegurar consistencia
+      setStockMap(prev => {
+        const next = { ...prev };
+        storeProducts.forEach(p => {
+          if (p.id) {
+            next[p.id] = p.stock ?? 0;
+          }
+        });
+        return next;
+      });
     }
   }, [storeProducts, storeLoading]);
 
@@ -810,9 +821,14 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setAdminProducts(prev => prev.map(p => p.badge === t ? { ...p, badge: '' } : p));
   };
 
-  // Stock & Stats
   const updateStock = (pid: string, s: number) => setStockMap(prev => ({ ...prev, [pid]: Math.max(0, s) }));
-  const getStock = (pid: string): number => stockMap[pid] ?? 0;
+  const getStock = (pid: string): number => {
+    if (stockMap[pid] !== undefined) {
+      return stockMap[pid];
+    }
+    const prod = adminProducts.find(p => p.id === pid);
+    return prod ? (prod.stock ?? 0) : 0;
+  };
   const deductStockForOrder = (orderItems: { id: string; quantity: number }[]): { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] } => {
     const insufficient: { id: string; name: string; requested: number; available: number }[] = [];
     // First pass: validate all items
@@ -880,6 +896,9 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
   const updateOrderMethod = (id: string, method: string) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, method } : o));
+  };
+  const updateOrderPaymentMethod = (id: string, paymentMethod: string) => {
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, paymentMethod } : o));
   };
 
   const ordersRevenue = orders
@@ -1351,7 +1370,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       adminCategories, addCategory, updateCategory, deleteCategory,
       adminTags, addTag, updateTag, deleteTag,
       stockMap, updateStock, getStock, deductStockForOrder, lowStockProducts, findProductByBarcode, searchProductExternal,
-      orders, addAdminOrder, updateOrderStatus, updateOrderMethod, getOrderTimestamp,
+      orders, addAdminOrder, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp,
       customers, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount,
       addManualCustomer, deleteCustomer,
       totalRevenue,

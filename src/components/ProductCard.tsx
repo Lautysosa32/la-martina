@@ -27,7 +27,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
 
   return (
     <article className={`bg-white rounded-xl p-3 flex flex-col shadow-[0_4px_20px_0_rgba(26,26,26,0.03)] border border-outline-variant/10 hover:border-primary/20 transition-all h-full ${isOutOfStock ? 'opacity-60' : ''}`}>
-      <div className="w-full aspect-square mb-3 bg-[#fcf9f8] rounded-lg p-2 flex items-center justify-center relative group">
+      <div className="w-full aspect-square mb-3 bg-[#fcf9f8] rounded-lg p-2 flex items-center justify-center relative group overflow-hidden">
 
         {product.discount && (
           <div className="absolute top-2 left-2 bg-error text-on-error text-[10px] font-bold px-2 py-0.5 rounded tracking-wider uppercase z-10">
@@ -50,7 +50,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
         <img
           src={product.image}
           alt={product.name}
-          className={`object-contain h-full w-full mix-blend-multiply group-hover:scale-105 transition-transform duration-300 ${isOutOfStock ? 'grayscale' : ''}`}
+          className={`object-contain max-h-full max-w-full mix-blend-multiply group-hover:scale-105 transition-transform duration-300 ${isOutOfStock ? 'grayscale' : ''}`}
         />
         <button
           onClick={(e) => {

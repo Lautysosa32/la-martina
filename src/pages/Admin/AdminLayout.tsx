@@ -52,8 +52,18 @@ export const AdminLayout: React.FC = () => {
   const visibleNavItems = navItems.filter(item => {
     if (!item.requiredPermission) return true;
     if (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner') return true;
+    // Ocultar de forma absoluta accesos de clientes para empleados comunes
+    if (employeeProfile?.role === 'employee' && item.requiredPermission.startsWith('customers.')) return false;
     return hasPermission(item.requiredPermission);
   });
+
+  const activeNavItem = visibleNavItems.find(item => {
+    if (item.path === '/admin') {
+      return location.pathname === '/admin';
+    }
+    return location.pathname.startsWith(item.path);
+  });
+  const pageTitle = activeNavItem ? activeNavItem.label : 'Admin';
 
   // Bottom nav: show first 4 accessible items (most important)
   const bottomNavItems = visibleNavItems.slice(0, 4);
@@ -297,8 +307,8 @@ export const AdminLayout: React.FC = () => {
 
         {/* ── DESKTOP HEADER ── */}
         <header className="hidden lg:flex justify-between items-center mb-10 gap-4 min-w-0 p-8 pb-0">
-          <h1 className="text-[28px] font-black text-[#e3001b] shrink-0 tracking-wider">
-            La Martina
+          <h1 className="text-[28px] font-black text-on-background tracking-tight capitalize shrink-0">
+            {pageTitle}
           </h1>
 
           {!isMobile && (
@@ -401,7 +411,7 @@ export const AdminLayout: React.FC = () => {
         {/* ── PAGE CONTENT ── */}
         <div className="flex-1 p-4 md:p-6 lg:p-8 lg:pt-8 pb-24 lg:pb-8">
           {isMobile && (
-            <div id="admin-header-portal" className="lg:hidden mb-4 flex items-center gap-3 min-h-0"></div>
+            <div id="admin-header-portal" className="w-full lg:hidden mb-4 min-h-0"></div>
           )}
           <Outlet />
         </div>

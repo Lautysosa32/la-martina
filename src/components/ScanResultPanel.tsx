@@ -142,15 +142,17 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
                   <div className="flex items-center gap-2 mb-2">
                     {isExternal ? (
                       <span className="text-[10px] font-bold text-primary bg-primary/10 px-3 py-1 rounded-full uppercase tracking-wider">
-                        Externo (No Registrado)
+                        No encontrado
                       </span>
                     ) : (
                       getStockBadge(product.stock, product.minStock)
                     )}
                   </div>
-                  <p className="font-black text-on-surface text-lg">
-                    {isExternal ? 'Precio no asignado' : `$${product.price.toLocaleString('es-AR')}`}
-                  </p>
+                  {!isExternal && (
+                    <p className="font-black text-on-surface text-lg">
+                      ${product.price.toLocaleString('es-AR')}
+                    </p>
+                  )}
                 </div>
               </div>
 
