@@ -866,82 +866,92 @@ export const POS: React.FC = () => {
               </div>{/* close tab content wrapper */}
             </div>
 
-            <div className="w-1/3 bg-[#f8f9fa] p-8 flex flex-col relative h-full overflow-hidden">
-              {/* Asociar Cliente Widget */}
-              <div className="bg-white rounded-3xl p-5 border border-outline-variant/10 shadow-sm mb-5 shrink-0">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider">Cliente Asociado</span>
-                  {validatedCustomer && (
-                    <button onClick={() => { setValidatedCustomer(null); setCcDni(''); }} className="text-xs text-error font-bold flex items-center gap-0.5 hover:underline">
-                      Desasociar
-                    </button>
-                  )}
-                </div>
-                {validatedCustomer ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
-                        {validatedCustomer.name.substring(0, 2).toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-on-background truncate">{validatedCustomer.name}</p>
-                        <p className="text-[9px] text-on-surface-variant font-medium">DNI: {validatedCustomer.dni || 'Sin DNI'}</p>
-                      </div>
-                      {/* Birthday Indicator */}
-                      {(() => {
-                        if (!validatedCustomer.birthday) return null;
-                        const today = new Date();
-                        const parts = validatedCustomer.birthday.split('-');
-                        if (parts.length >= 2) {
-                          const bMonth = parseInt(parts[parts.length - 2]);
-                          const bDay = parseInt(parts[parts.length - 1]);
-                          const isBirthday = today.getMonth() + 1 === bMonth && today.getDate() === bDay;
-                          if (isBirthday) {
-                            return (
-                              <span className="bg-pink-100 text-pink-600 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-0.5 animate-bounce shrink-0">
-                                <span className="material-symbols-outlined text-[10px]">cake</span> Cumple
-                              </span>
-                            );
+            <div className="w-1/3 bg-[#f8f9fa] flex flex-col relative h-full overflow-hidden">
+              <div className="flex-1 overflow-y-auto no-scrollbar p-5 pb-32">
+                {/* Asociar Cliente Widget */}
+                <div className="bg-white rounded-3xl p-5 border border-outline-variant/10 shadow-sm mb-5 shrink-0">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider">Cliente Asociado</span>
+                    {validatedCustomer && (
+                      <button onClick={() => { setValidatedCustomer(null); setCcDni(''); }} className="text-xs text-error font-bold flex items-center gap-0.5 hover:underline">
+                        Desasociar
+                      </button>
+                    )}
+                  </div>
+                  {validatedCustomer ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
+                          {validatedCustomer.name.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-on-background truncate">{validatedCustomer.name}</p>
+                          <p className="text-[9px] text-on-surface-variant font-medium">DNI: {validatedCustomer.dni || 'Sin DNI'}</p>
+                        </div>
+                        {/* Birthday Indicator */}
+                        {(() => {
+                          if (!validatedCustomer.birthday) return null;
+                          const today = new Date();
+                          const parts = validatedCustomer.birthday.split('-');
+                          if (parts.length >= 2) {
+                            const bMonth = parseInt(parts[parts.length - 2]);
+                            const bDay = parseInt(parts[parts.length - 1]);
+                            const isBirthday = today.getMonth() + 1 === bMonth && today.getDate() === bDay;
+                            if (isBirthday) {
+                              return (
+                                <span className="bg-pink-100 text-pink-600 text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-0.5 animate-bounce shrink-0">
+                                  <span className="material-symbols-outlined text-[10px]">cake</span> Cumple
+                                </span>
+                              );
+                            }
                           }
-                        }
-                        return null;
-                      })()}
+                          return null;
+                        })()}
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Buscar por DNI..."
-                      value={ccDni}
-                      onChange={e => setCcDni(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleValidatePOSCustomer(); } }}
-                      className="flex-1 bg-surface-container-low border border-outline-variant/10 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-primary"
-                    />
-                    <button onClick={handleValidatePOSCustomer} className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2 rounded-xl text-xs flex items-center justify-center shrink-0 shadow-sm">
-                      <span className="material-symbols-outlined text-[18px]">person_search</span>
-                    </button>
-                  </div>
-                )}
-                {ccError && !validatedCustomer && <p className="text-error text-[10px] font-bold mt-1.5 ml-1">{ccError}</p>}
-              </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Buscar por DNI..."
+                        value={ccDni}
+                        onChange={e => setCcDni(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleValidatePOSCustomer(); } }}
+                        className="flex-1 bg-surface-container-low border border-outline-variant/10 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-primary"
+                      />
+                      <button onClick={handleValidatePOSCustomer} className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2 rounded-xl text-xs flex items-center justify-center shrink-0 shadow-sm">
+                        <span className="material-symbols-outlined text-[18px]">person_search</span>
+                      </button>
+                    </div>
+                  )}
+                  {ccError && !validatedCustomer && <p className="text-error text-[10px] font-bold mt-1.5 ml-1">{ccError}</p>}
+                </div>
 
-              <div className="bg-[#b31414] text-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(179,20,20,0.3)] mb-6 relative overflow-hidden shrink-0"><span className="material-symbols-outlined absolute -right-6 -bottom-6 text-[150px] opacity-10">point_of_sale</span><p className="font-bold text-xs tracking-[0.2em] uppercase mb-2 text-white/80">Monto Final</p><p className="text-6xl font-black mb-6 flex items-start gap-2"><span className="text-2xl mt-2">$</span> {formatCurrency(cartTotal, true, true)}</p><div className="flex justify-between text-xs font-bold text-white/80 pt-5 border-t border-white/20"><div className="flex flex-col gap-1"><span>Subtotal: $ {formatCurrency(subtotal, true, true)}</span>{globalDiscount > 0 && <span className="text-white/60">Desc ({globalDiscount}%): -${formatCurrency(discountAmount, true, true)}</span>}</div><span className="self-end">Tax (0%): $ 0,00</span></div></div>
-              <div className="flex gap-3 mb-8 shrink-0"><button onClick={() => { setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }} className="flex-1 bg-white border border-outline-variant/10 rounded-2xl py-6 flex flex-col items-center justify-center gap-1 font-bold text-[10px] text-error shadow-sm hover:bg-error/5 transition-all"><span className="material-symbols-outlined text-[20px]">receipt_long</span> F4 - Nuevo</button><button onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }} className={`flex-[1] bg-[#ffeb3b] text-black rounded-2xl py-4 flex flex-col items-center justify-center gap-1 font-black text-xs shadow-lg transition-all border border-[#fdd835] ${cart.length === 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02] active:scale-95'}`}><span className="material-symbols-outlined text-[22px]">credit_card</span>F2 - COBRAR</button></div>
-              <div className="flex-1 min-h-0 flex flex-col justify-between pb-24">
-                <div className="space-y-4">
-                  <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-widest">Acciones Rápidas</h4>
+                <div className="bg-[#b31414] text-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(179,20,20,0.3)] mb-6 relative overflow-hidden shrink-0">
+                  <span className="material-symbols-outlined absolute -right-6 -bottom-6 text-[150px] opacity-10">point_of_sale</span>
+                  <p className="font-bold text-xs tracking-[0.2em] uppercase mb-2 text-white/80">Monto Final</p>
+                  <p className="text-6xl font-black mb-6 flex items-start gap-2"><span className="text-2xl mt-2">$</span> {formatCurrency(cartTotal, true, true)}</p>
+                  <div className="flex justify-between text-xs font-bold text-white/80 pt-5 border-t border-white/20">
+                    <div className="flex flex-col gap-1">
+                      <span>Subtotal: $ {formatCurrency(subtotal, true, true)}</span>
+                      {globalDiscount > 0 && <span className="text-white/60">Desc ({globalDiscount}%): -${formatCurrency(discountAmount, true, true)}</span>}
+                    </div>
+                    <span className="self-end">Tax (0%): $ 0,00</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 mb-8 shrink-0">
+                  <button onClick={() => { setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }} className="flex-1 bg-white border border-outline-variant/10 rounded-2xl py-6 flex flex-col items-center justify-center gap-1 font-bold text-[10px] text-error shadow-sm hover:bg-error/5 transition-all"><span className="material-symbols-outlined text-[20px]">receipt_long</span> F4 - Nuevo</button>
+                  <button onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }} className={`flex-[1] bg-[#ffeb3b] text-black rounded-2xl py-4 flex flex-col items-center justify-center gap-1 font-black text-xs shadow-lg transition-all border border-[#fdd835] ${cart.length === 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02] active:scale-95'}`}><span className="material-symbols-outlined text-[22px]">credit_card</span>F2 - COBRAR</button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => setShowGenericModal(true)}
-                    className="w-full bg-[#FFD700] hover:bg-[#FFC800] text-black rounded-2xl p-5 flex items-center gap-4 font-black text-sm shadow-lg shadow-yellow-200/40 transition-all group"
+                    className="bg-primary hover:bg-[#9c1c1c] text-black rounded-2xl py-8 flex items-center justify-center gap-1.5 font-bold shadow-md shadow-yellow-200/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs w-full"
                   >
-                    <div className="w-12 h-12 bg-black/10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <span className="material-symbols-outlined text-[24px]">add_shopping_cart</span>
-                    </div>
-                    <div className="text-left">
-                      <p className="text-sm font-black">Producto Común</p>
-                      <p className="text-[10px] font-medium opacity-70">Vender productos ocasionales sin inventario</p>
-                    </div>
+                    <span className="material-symbols-outlined text-[18px] shrink-0">add_shopping_cart</span>
+                    <span className="font-black truncate">Prod. Común</span>
                   </button>
 
                   <button
@@ -950,19 +960,19 @@ export const POS: React.FC = () => {
                       setPrePurchaseError('');
                       setShowPrePurchaseModal(true);
                     }}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white rounded-2xl p-5 flex items-center gap-4 font-black text-sm shadow-lg shadow-green-200/40 transition-all group"
+                    className="bg-green-600 hover:bg-green-700 text-white rounded-2xl py-8 flex items-center justify-center gap-1.5 font-bold shadow-md shadow-green-200/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs w-full"
                   >
-                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <span className="material-symbols-outlined text-[24px]">assignment_turned_in</span>
-                    </div>
-                    <div className="text-left">
-                      <p className="text-sm font-black">Cargar Pre-compra</p>
-                      <p className="text-[10px] font-medium opacity-80">Importar carrito escaneado por cliente mediante código</p>
-                    </div>
+                    <span className="material-symbols-outlined text-[18px] shrink-0">assignment_turned_in</span>
+                    <span className="font-black truncate">Pre-compra</span>
                   </button>
                 </div>
               </div>
-              <div className="absolute bottom-0 left-0 right-0 p-8 bg-[#f8f9fa] border-t border-outline-variant/10 z-10"><button onClick={() => setShowManualModal(true)} className="w-full bg-[#9c1c1c] text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#7a1515] transition-all shadow-lg"><span className="material-symbols-outlined text-[18px]">outbox</span> Pago a Proveedor</button></div>
+
+              <div className="absolute bottom-0 left-0 right-0 p-8 bg-[#f8f9fa] border-t border-outline-variant/10 z-10">
+                <button onClick={() => setShowManualModal(true)} className="w-full bg-[#9c1c1c] text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#7a1515] transition-all shadow-lg">
+                  <span className="material-symbols-outlined text-[18px]">outbox</span> Pago a Proveedor
+                </button>
+              </div>
             </div>
 
             {showPaymentModal && (
