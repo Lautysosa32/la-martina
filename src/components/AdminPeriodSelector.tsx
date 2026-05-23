@@ -35,7 +35,7 @@ export const AdminPeriodSelector: React.FC<PeriodSelectorProps> = ({
         </button>
 
         {showDatePicker && (
-          <div className="absolute top-full mt-2 right-0 bg-white p-6 rounded-[2rem] shadow-2xl border border-outline-variant/10 z-[110] w-[280px] md:w-[320px] animate-in fade-in zoom-in-95 duration-200">
+          <div className="absolute top-full mt-2 right-0 bg-white p-6 rounded-4xl shadow-2xl border border-outline-variant/10 z-110 w-70 md:w-[320px] animate-in fade-in zoom-in-95 duration-200">
             <h4 className="text-sm font-bold mb-4">Rango de Fechas</h4>
             <div className="space-y-4">
               <div>

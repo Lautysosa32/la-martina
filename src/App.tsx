@@ -12,6 +12,7 @@ import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
 import { Category } from './pages/Category';
 import { Delivery } from './pages/Delivery';
+import { ShoppingCalculator } from './pages/ShoppingCalculator';
 import { Cart } from './pages/Cart';
 import { Profile } from './pages/Profile';
 import { About } from './pages/About';
@@ -56,6 +57,7 @@ export default function App() {
         <Route path="/search" element={<><Header /><main className="flex-grow pt-[64px]"><Search /></main><Footer /></>} />
         <Route path="/favorites" element={<><Header /><main className="flex-grow pt-[64px]"><Favorites /></main><Footer /></>} />
         <Route path="/delivery" element={<><Header /><main className="flex-grow pt-[64px]"><Delivery /></main><Footer /></>} />
+        <Route path="/calculadora-compras" element={<><Header /><main className="flex-grow pt-[64px]"><ShoppingCalculator /></main><Footer /></>} />
 
         {/* Rutas Administrativas */}
         <Route path="/admin/login" element={<AdminLogin />} />

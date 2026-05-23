@@ -258,10 +258,12 @@ export const Checkout: React.FC = () => {
                         // Lógica de disponibilidad
                         let isAvailable = true;
                         if (!slot.isTomorrow && slot.id !== 'asap') {
-                          if (currentHour > slot.endHour || (currentHour === slot.endHour && currentMinutes >= slot.endMin)) {
+                          const endHour = slot.endHour ?? 0;
+                          const endMin = slot.endMin ?? 0;
+                          if (currentHour > endHour || (currentHour === endHour && currentMinutes >= endMin)) {
                             isAvailable = false;
                           }
-                          const minutesUntilEnd = (slot.endHour - currentHour) * 60 + (slot.endMin - currentMinutes);
+                          const minutesUntilEnd = (endHour - currentHour) * 60 + (endMin - currentMinutes);
                           if (minutesUntilEnd < 15) {
                             isAvailable = false;
                           }
@@ -280,7 +282,7 @@ export const Checkout: React.FC = () => {
                                 : 'border-outline-variant/10 hover:bg-surface-container-low'
                               }`}
                           >
-                            <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${!isAvailable ? 'bg-gray-200 text-gray-400' : formData.deliveryTime.includes(slot.label) ? 'bg-primary text-white' : 'bg-surface-container-high text-on-surface-variant'}`}>
+                            <div className={`w-8 h-8 rounded-full shrink-0 flex items-center justify-center ${!isAvailable ? 'bg-gray-200 text-gray-400' : formData.deliveryTime.includes(slot.label) ? 'bg-primary text-white' : 'bg-surface-container-high text-on-surface-variant'}`}>
                               <span className="material-symbols-outlined text-[18px]">{slot.icon}</span>
                             </div>
                             <div className="flex-1 min-w-0">
@@ -356,10 +358,10 @@ export const Checkout: React.FC = () => {
           </form>
 
           {/* Resumen */}
-          <aside className="w-full md:w-[400px] sticky top-24">
+          <aside className="w-full md:w-100 sticky top-24">
             <div className="bg-white p-6 rounded-3xl shadow-md border border-outline-variant/10">
               <h3 className="text-[25px] font-bold text-on-background mb-6">Tu Pedido</h3>
-              <div className="max-h-[300px] overflow-y-auto space-y-4 mb-6 pr-2 no-scrollbar">
+              <div className="max-h-75 overflow-y-auto space-y-4 mb-6 pr-2 no-scrollbar">
                 {items.map(item => (
                   <div key={item.id} className="flex gap-4 items-center">
                     <div className="w-12 h-12 bg-[#fcf9f8] rounded-lg p-1">
@@ -411,14 +413,14 @@ export const Checkout: React.FC = () => {
 const MapModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: () => void }> = ({ isOpen, onClose, onConfirm }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-in fade-in duration-300">
       <div className="absolute inset-0 bg-on-background/60 backdrop-blur-sm" onClick={onClose}></div>
       <div className="bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-300">
         <div className="p-6 border-b border-outline-variant/20 flex justify-between items-center">
           <h3 className="text-xl font-bold">Seleccioná tu ubicación</h3>
           <button onClick={onClose} className="hover:bg-surface-container-high p-2 rounded-full transition-colors"><span className="material-symbols-outlined">close</span></button>
         </div>
-        <div className="h-[400px] bg-surface-container-low relative">
+        <div className="h-100 bg-surface-container-low relative">
           <iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3345.8340798739953!2d-67.5539972!3d-33.4588047!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x967f5d9a53d32efb%3A0x20989bacf6605d80!2sMartina%20supermercado!5e0!3m2!1ses-419!2sar!4v1714567890123!5m2!1ses-419!2sar" width="100%" height="100%" style={{ border: 0 }} allowFullScreen={true} loading="lazy"></iframe>
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="relative mb-8"><span className="material-symbols-outlined text-primary text-5xl drop-shadow-md animate-bounce">location_on</span><div className="w-4 h-1 bg-black/20 rounded-full blur-sm absolute -bottom-1 left-1/2 -translate-x-1/2 scale-x-150"></div></div>

@@ -99,7 +99,7 @@ export const employeesService = {
 
   // Calcula permisos efectivos: (Base de Rol - Deny) + Allow
   getEffectivePermissions(role: UserRole, overrides?: PermissionsOverride): PermissionKey[] {
-    const basePermissions = new Set(this.getRolePermissions(role));
+    const basePermissions = new Set<PermissionKey>(this.getRolePermissions(role));
     
     if (!overrides) {
       return Array.from(basePermissions);
@@ -115,6 +115,6 @@ export const employeesService = {
       overrides.allow.forEach(p => basePermissions.add(p));
     }
 
-    return Array.from(basePermissions);
+    return Array.from(basePermissions) as PermissionKey[];
   }
 };

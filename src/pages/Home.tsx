@@ -8,14 +8,19 @@ export const Home: React.FC = () => {
   const { adminProducts: products } = useAdmin();
   return (
     <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-4 flex flex-col gap-1">
+
+
       <section className="mb-3">
-        <Link to="/delivery" className="flex items-center space-x-3 bg-surface-container-lowest p-2 rounded-xl shadow-sm border border-surface-variant cursor-pointer hover:bg-surface-bright transition-colors">
-          <div className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-primary bg-white">
-            <span className="material-symbols-outlined text-primary text-[20px]">location_on</span>
+        <Link to="/calculadora-compras" className="flex items-center space-x-3 bg-surface-container-lowest p-3 rounded-xl shadow-sm border border-outline-variant/20 cursor-pointer hover:bg-surface-bright transition-colors">
+          <div className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-primary bg-white animate-pulse shrink-0">
+            <span className="material-symbols-outlined text-primary text-[20px]">calculate</span>
           </div>
-          <div className="flex-1">
-            <p className="font-label-sm text-label-sm text-on-surface font-bold tracking-tight uppercase flex items-center">
-              ELEGÍ TU MÉTODO DE ENTREGA <span className="text-primary ml-1 material-symbols-outlined text-[16px]">chevron_right</span>
+          <div className="flex-1 text-left">
+            <p className="font-label-sm text-[13px] text-on-surface font-bold tracking-tight uppercase flex items-center">
+              ¡CALCULÁ TU COMPRA EN EL LOCAL! <span className="text-primary ml-1 material-symbols-outlined text-[16px]">chevron_right</span>
+            </p>
+            <p className="text-[11px] text-on-surface-variant mt-1 font-medium leading-tight">
+              Escaneá tus productos mientras comprás y controlá tu gasto antes de pasar por caja.
             </p>
           </div>
         </Link>

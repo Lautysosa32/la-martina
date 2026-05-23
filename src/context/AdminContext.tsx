@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { products as catalogProducts, categories as catalogCategories, Product, Category } from '../data/mockData';
 import { useProductStore } from '../stores/useProductStore';
+import { useAuthStore } from '../stores/useAuthStore';
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -891,8 +892,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
   const updateOrderStatus = (id: string, s: AdminOrder['status']) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status: s } : o));
-    // Sincronizar con el perfil del cliente
-    auth.updateOrderStatus(id, s);
+    // Sincronizar con el perfil del cliente (usando Zustand directamente)
+    useAuthStore.getState().updateOrderStatus(id, s);
   };
   const updateOrderMethod = (id: string, method: string) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, method } : o));

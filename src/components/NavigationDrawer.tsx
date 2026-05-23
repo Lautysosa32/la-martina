@@ -27,7 +27,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
         )}
         style={{ height: 'calc(100vh - 64px)' }}
       >
-        <div className="px-margin-mobile pt-4 px-2">
+        <div className="px-margin-mobile pt-4">
           <h2 className="font-headline-md text-headline-md text-on-surface font-bold py-unit-2">
             <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider px-2">
               Categorías
@@ -109,16 +109,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
           ))}
         </ul>
 
-        <div className="p-4 border-t border-outline-variant/10">
-          <NavLink
-            to="/admin"
-            onClick={onClose}
-            className="flex items-center gap-4 p-4 rounded-xl text-primary font-bold bg-primary/5 hover:bg-primary/10 transition-all border border-primary/20"
-          >
-            <span className="material-symbols-outlined">admin_panel_settings</span>
-            <span className="text-sm">Panel Administrador</span>
-          </NavLink>
-        </div>
+
       </nav>
     </>
   );

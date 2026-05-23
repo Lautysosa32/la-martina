@@ -4,14 +4,19 @@ export interface Product {
   brand: string;
   categoryId: string;
   price: number;
-  originalPrice?: number;
+  originalPrice?: number | null;
   image: string;
-  format: string;
+  format?: string | null;
   isNew?: boolean;
-  discount?: string;
-  badge?: string; // like 'Local', 'Orgánico', '3x2'
+  discount?: string | number | null;
+  badge?: string | null; // like 'Local', 'Orgánico', '3x2'
   minStock?: number;
-  barcode?: string; // EAN-13, EAN-8, UPC
+  barcode?: string | null; // EAN-13, EAN-8, UPC
+  // DB-sourced fields (from product.types.Product via Supabase)
+  stock?: number;
+  branchId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Category {

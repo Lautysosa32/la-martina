@@ -135,8 +135,10 @@ export const Dashboard: React.FC = () => {
     setSelectedForReport(next);
   };
 
-  // Últimos 5 pedidos
-  const recentOrders = orders.slice(0, 5);
+  // Últimos 5 pedidos reales (excluyendo ventas de caja/POS)
+  const recentOrders = useMemo(() => {
+    return orders.filter(o => o.source !== 'pos').slice(0, 5);
+  }, [orders]);
 
   const handleGenerateStockReport = () => {
     const filteredProducts = lowStockProducts.filter(p => selectedForReport.has(p.id));

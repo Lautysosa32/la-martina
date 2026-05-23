@@ -29,9 +29,24 @@ export const Cart: React.FC = () => {
   return (
     <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-8 flex flex-col md:flex-row gap-8 items-start animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex-1 w-full">
-        <div className="mb-10">
+        <div className="mb-8">
           <h1 className="text-[25px] font-bold text-on-background mb-2">Mi Carrito</h1>
           <p className="text-on-surface-variant text-base">Productos seleccionados con calidad garantizada.</p>
+          <div className="mt-4">
+            <Link to="/delivery" className="flex items-center space-x-3 bg-surface-container-lowest p-3.5 rounded-xl shadow-sm border border-outline-variant/20 hover:bg-surface-bright transition-colors">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-primary bg-white shrink-0">
+                <span className="material-symbols-outlined text-primary text-[20px]">location_on</span>
+              </div>
+              <div className="flex-1 text-left">
+                <p className="font-label-sm text-[13px] text-on-surface font-bold tracking-tight uppercase flex items-center">
+                  ELEGÍ TU MÉTODO DE ENTREGA <span className="text-primary ml-1 material-symbols-outlined text-[16px]">chevron_right</span>
+                </p>
+                <p className="text-xs text-on-surface-variant mt-1 font-medium leading-none">
+                  Método seleccionado: <span className="font-bold text-primary uppercase">{deliveryMethod === 'retiro' ? 'Retiro en sucursal' : 'Envío a domicilio'}</span>
+                </p>
+              </div>
+            </Link>
+          </div>
         </div>
 
         {/* Stock warning banner */}

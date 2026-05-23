@@ -174,7 +174,6 @@ export const Customers: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700 max-w-[1400px]">
-      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Clientes</h1>
       {/* Header Portal for Buttons */}
       {headerPortal && createPortal(
         <div className="flex gap-3 items-center">

@@ -80,7 +80,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
 
       <div className="flex items-center justify-between mt-auto pt-2">
         <div className="flex flex-col">
-          <div className="font-price-display text-[18px] text-on-surface font-bold text-black">
+          <div className="font-price-display text-[18px] text-on-surface font-bold">
             ${(product.price ?? 0).toLocaleString('es-AR')}
           </div>
           {product.originalPrice && (

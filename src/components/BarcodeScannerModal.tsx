@@ -152,7 +152,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                         height: { ideal: 720 },
                         aspectRatio: { ideal: 1.33333 }
                       }
-                    }}
+                    } as MediaTrackConstraints}
                     formats={[
                       'ean_13',
                       'ean_8',

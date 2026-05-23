@@ -137,7 +137,7 @@ export const Billing: React.FC = () => {
     } else {
       setSelectedBillingCustomerId('manual');
       setCreatorClientName(defaultClientName);
-      setCreatorClientCuit(defaultClientCuit);
+      setCreatorClientCuit(defaultClientCuit ?? '');
       setCreatorClientAddress('');
       setCreatorClientPhone('');
       setCreatorClientEmail('');
@@ -962,7 +962,7 @@ export const Billing: React.FC = () => {
                           type="date"
                           value={creatorDate}
                           onChange={e => setCreatorDate(e.target.value)}
-                          className="w-full bg-surface-container-low border-none rounded-xl px-3 py-2 text-xs outline-none font-bold text-on-surface font-semibold"
+                          className="w-full bg-surface-container-low border-none rounded-xl px-3 py-2 text-xs outline-none font-bold text-on-surface"
                         />
                       </div>
                     </div>
@@ -1022,7 +1022,7 @@ export const Billing: React.FC = () => {
                 </div>
                 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[700px]">
+                  <table className="w-full text-left border-collapse min-w-700px">
                     <thead>
                       <tr className="border-b border-outline-variant/10 text-[10px] font-black uppercase tracking-wider text-on-surface-variant">
                         <th className="py-2.5 pr-4">Descripción</th>
@@ -1364,7 +1364,7 @@ export const Billing: React.FC = () => {
                           <div>
                             <span className="bg-surface-container-low text-on-surface-variant font-black text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md mb-1 inline-block">Ticket #{o.id}</span>
                             <p className="text-sm font-black text-on-background">{o.customer}</p>
-                            <p className="text-[11px] text-on-surface-variant font-semibold mt-0.5 font-medium">
+                            <p className="text-[11px] text-on-surface-variant mt-0.5 font-medium">
                               {o.date} • {o.items.length} {o.items.length === 1 ? 'item' : 'items'}
                             </p>
                           </div>

@@ -589,7 +589,6 @@ export const POS: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 flex flex-col pb-20">
-      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Caja</h1>
       {/* Header Portal for Buttons */}
       {headerPortal && createPortal(
         <div className="flex gap-3 items-center">
@@ -832,7 +831,7 @@ export const POS: React.FC = () => {
                   </button>
                 </div>
               </div>
-              <div className="absolute bottom-0 left-0 right-0 p-8 bg-[#f8f9fa] border-t border-outline-variant/10 z-30"><button onClick={() => setShowManualModal(true)} className="w-full bg-[#9c1c1c] text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#7a1515] transition-all shadow-lg"><span className="material-symbols-outlined text-[18px]">outbox</span> Pago a Proveedor</button></div>
+              <div className="absolute bottom-0 left-0 right-0 p-8 bg-[#f8f9fa] border-t border-outline-variant/10 z-10"><button onClick={() => setShowManualModal(true)} className="w-full bg-[#9c1c1c] text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#7a1515] transition-all shadow-lg"><span className="material-symbols-outlined text-[18px]">outbox</span> Pago a Proveedor</button></div>
             </div>
 
             {showPaymentModal && (

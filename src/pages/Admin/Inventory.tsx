@@ -524,7 +524,6 @@ export const Inventory: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-500 pb-10 w-full overflow-hidden">
-      <h1 className="text-2xl md:text-3xl font-black text-on-background tracking-tight">Inventario</h1>
 
       {/* Header Bar Portal */}
       {portalTarget && (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || employeeProfile?.role === 'admin') && createPortal(
@@ -730,7 +729,7 @@ export const Inventory: React.FC = () => {
                     </th>
                   );
                 })}
-                <th className="px-8 py-5 w-[120px] text-center text-on-surface-variant/70">Gestión</th>
+                <th className="px-8 py-5 w-30 text-center text-on-surface-variant/70">Gestión</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/10 text-sm">
@@ -760,7 +759,7 @@ export const Inventory: React.FC = () => {
                   const stock = product.stock ?? 0;
                   const checked = selectedIds.includes(product.id);
                   return (
-                    <tr key={product.id} className={`transition-colors ${checked ? 'bg-primary/[0.03]' : 'hover:bg-surface-container-lowest'}`}>
+                    <tr key={product.id} className={`transition-colors ${checked ? 'bg-primary/3' : 'hover:bg-surface-container-lowest'}`}>
                       <td className="px-8 py-4 text-center"><input type="checkbox" checked={checked} onChange={() => toggleSelect(product.id)} className="accent-primary w-4 h-4 cursor-pointer" /></td>
                       <td className="px-8 py-4">
                         <div className="flex items-center gap-4 min-w-0">
@@ -768,7 +767,7 @@ export const Inventory: React.FC = () => {
                             <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
                           </div>
                           <div className="flex flex-col min-w-0 pr-2">
-                            <p className="font-bold text-on-background text-[15px] leading-tight whitespace-normal break-words">{product.name}</p>
+                            <p className="font-bold text-on-background text-[15px] leading-tight whitespace-normal wrap-break-word">{product.name}</p>
                             <div className="flex items-center gap-2 mt-1">
                               <p className="text-[10px] text-on-surface-variant font-black uppercase tracking-wider bg-surface-container-low px-1.5 py-0.5 rounded-md truncate">{product.brand}</p>
                               {product.barcode && (
@@ -858,7 +857,7 @@ export const Inventory: React.FC = () => {
 
                     {/* Nombre */}
                     <div className="min-w-0 flex-1">
-                      <p className="font-bold text-on-background text-sm leading-snug break-words">{product.name}</p>
+                      <p className="font-bold text-on-background text-sm leading-snug wrap-break-word">{product.name}</p>
                     </div>
                   </div>
 
@@ -875,7 +874,7 @@ export const Inventory: React.FC = () => {
 
       {/* Modales - Se mantienen pero compactos */}
       {showProductModal.show && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setShowProductModal({ show: false, mode: 'new' })} />
           <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="p-6 border-b border-outline-variant/10 flex justify-between items-center sticky top-0 bg-white/95 backdrop-blur-md z-20">
@@ -923,7 +922,7 @@ export const Inventory: React.FC = () => {
                     <input type="number" value={productForm.stock} onChange={e => setProductForm({ ...productForm, stock: e.target.value })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 outline-none font-bold" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1 text-orange-600">Avisar con menos de:</label>
+                    <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Avisar con menos de:</label>
                     <input type="number" value={productForm.minStock} onChange={e => setProductForm({ ...productForm, minStock: e.target.value })} className="w-full bg-orange-50/50 rounded-xl px-4 py-3 outline-none font-bold text-orange-600 border border-orange-200" />
                   </div>
                 </div>
@@ -931,7 +930,7 @@ export const Inventory: React.FC = () => {
             </div>
             <div className="p-6 border-t border-outline-variant/10 flex gap-4">
               <button onClick={() => setShowProductModal({ show: false, mode: 'new' })} className="flex-1 font-bold">Cancelar</button>
-              <button onClick={handleSaveProduct} className="flex-[2] bg-primary text-white font-bold py-4 rounded-2xl shadow-lg shadow-primary/20">Guardar</button>
+              <button onClick={handleSaveProduct} className="flex-2 bg-primary text-white font-bold py-4 rounded-2xl shadow-lg shadow-primary/20">Guardar</button>
             </div>
           </div>
         </div>
@@ -939,7 +938,7 @@ export const Inventory: React.FC = () => {
 
       {/* Modal de Ajuste en Masa */}
       {showBulkModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setShowBulkModal(false)} />
           <div className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 p-8 text-center">
             <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -981,9 +980,9 @@ export const Inventory: React.FC = () => {
 
       {/* Modal de Gestión (Compacto) */}
       {showManageModal.show && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setShowManageModal({ show: false, type: 'category' })} />
-          <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 p-6">
+          <div className="bg-white w-full max-w-sm rounded-4xl shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 p-6">
             <h3 className="font-bold mb-4">Gestionar {showManageModal.type === 'category' ? 'Categorías' : 'Etiquetas'}</h3>
             <div className="flex gap-2 mb-4">
               <input type="text" value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="Nuevo..." className="flex-1 bg-surface-container-low rounded-xl px-4 py-2 outline-none" />
@@ -1003,7 +1002,7 @@ export const Inventory: React.FC = () => {
 
       {/* Modal Confirmación Eliminación */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-110 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
           <div className="bg-white w-full max-w-xs rounded-[2.5rem] p-8 text-center relative z-10 animate-in zoom-in-95">
             <div className="w-14 h-14 bg-error/10 text-error rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1020,7 +1019,7 @@ export const Inventory: React.FC = () => {
 
       {/* Modal de Revisión de Importación */}
       {showImportReview && (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-150 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setShowImportReview(false)} />
           <div className="bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 max-h-[90vh] flex flex-col overflow-hidden">
             <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center bg-white z-20">
@@ -1173,7 +1172,7 @@ export const Inventory: React.FC = () => {
 
       {/* Indicador de procesamiento */}
       {isProcessingFile && (
-        <div className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center">
+        <div className="fixed inset-0 z-200 bg-black/40 backdrop-blur-sm flex items-center justify-center">
           <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl flex flex-col items-center">
             <span className="material-symbols-outlined text-5xl text-primary animate-spin mb-4">sync</span>
             <p className="font-black">Procesando archivo...</p>

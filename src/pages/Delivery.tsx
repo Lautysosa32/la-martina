@@ -6,7 +6,11 @@ export const Delivery: React.FC = () => {
 
   const selectMethod = (method: 'retiro' | 'envio') => {
     localStorage.setItem('la-martina-delivery-method', method);
-    navigate('/');
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/');
+    }
   };
 
   return (
