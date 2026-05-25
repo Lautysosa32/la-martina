@@ -3,13 +3,18 @@ import { Link, useNavigate } from 'react-router-dom';
 import { NavigationDrawer } from './NavigationDrawer';
 import { useCart } from '../context/CartContext';
 import { useAdmin } from '../context/AdminContext';
+import logo from '../logo.png';
+
 
 export const Header: React.FC = () => {
   const { adminProducts } = useAdmin();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const isSearchActive = isSearchFocused || searchQuery.trim().length > 0;
   const searchRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { totalItems } = useCart();
 
@@ -25,6 +30,7 @@ export const Header: React.FC = () => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setIsSearchOpen(false);
+        setIsSearchFocused(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -36,6 +42,8 @@ export const Header: React.FC = () => {
     if (searchQuery.trim() !== '') {
       navigate(`/search?q=${encodeURIComponent(searchQuery)}`);
       setIsSearchOpen(false);
+      setIsSearchFocused(false);
+      inputRef.current?.blur();
       setSearchQuery('');
     }
   };
@@ -44,37 +52,62 @@ export const Header: React.FC = () => {
     navigate(`/search?q=${encodeURIComponent(productName)}`);
     setSearchQuery('');
     setIsSearchOpen(false);
+    setIsSearchFocused(false);
+    inputRef.current?.blur();
   };
 
   return (
     <>
-      <header className="bg-primary text-white font-headline-md text-headline-md docked full-width top-0 shadow-md flex items-center justify-between pl-2 pr-margin-mobile h-16 w-full fixed z-50">
-        <div className="flex items-center gap-2 sm:gap-2 shrink-0">
+      <header className="bg-primary text-white font-headline-md text-headline-md docked full-width top-0 shadow-md flex items-center justify-between pl-2 pr-margin-mobile h-16 w-full fixed z-50 transition-all duration-300 ease-in-out">
+        <div className={`flex items-center shrink-0 transition-all duration-300 ease-in-out ${isSearchActive ? 'gap-0 sm:gap-2' : 'gap-0 sm:gap-2'}`}>
           <button
             onClick={() => setIsDrawerOpen(!isDrawerOpen)}
             className="hover:opacity-90 transition-opacity flex items-center justify-center text-white"
           >
             <span className="material-symbols-outlined">menu</span>
           </button>
-          <Link to="/" className="text-base sm:text-lg font-bold text-white hover:opacity-90 whitespace-nowrap tracking-tight">
-            La Martina
+          <Link
+            to="/"
+            className={`transition-all duration-300 ease-in-out overflow-hidden flex items-center shrink-0 ${
+              isSearchActive ? 'max-w-0 opacity-0 pointer-events-none ml-0 md:max-w-[150px] md:opacity-100 md:ml-2' : 'max-w-[150px] opacity-100 ml-2'
+            } hover:opacity-90`}
+          >
+            <img src={logo} alt="La Martina Supermercado" className="h-9 w-20 object-contain" />
           </Link>
         </div>
 
         {/* Barra de Búsqueda (Diseño Píldora) */}
-        <div className="flex-1 max-w-lg mx-2 sm:mx-4 relative" ref={searchRef}>
+        <div className="flex-1 max-w-lg mx-2 sm:mx-4 relative transition-all duration-300 ease-in-out" ref={searchRef}>
           <form onSubmit={handleSearchSubmit} className="relative w-full">
             <input
+              ref={inputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setIsSearchOpen(true);
               }}
-              onFocus={() => setIsSearchOpen(true)}
+              onFocus={() => {
+                setIsSearchFocused(true);
+                setIsSearchOpen(true);
+              }}
               placeholder="¡Hola! ¿Qué estás buscando?"
-              className="w-full h-10 bg-white text-[#1c1b1b] placeholder-gray-500 border-none rounded-full pl-4 pr-10 outline-none text-sm shadow-[0_2px_8px_rgba(0,0,0,0.1)]"
+              className={`w-full h-10 bg-white text-[#1c1b1b] placeholder-gray-500 border-none rounded-full pl-4 ${
+                searchQuery.length > 0 ? 'pr-16' : 'pr-10'
+              } outline-none text-sm shadow-[0_2px_8px_rgba(0,0,0,0.1)] transition-all duration-300 ease-in-out`}
             />
+            {searchQuery.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  inputRef.current?.focus();
+                }}
+                className="absolute right-9 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            )}
             <button type="submit" className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 text-primary hover:opacity-80 transition-opacity">
               <span className="material-symbols-outlined font-bold text-[22px]">search</span>
             </button>
@@ -102,7 +135,7 @@ export const Header: React.FC = () => {
                           <p className="text-on-surface font-bold text-[13px] sm:text-sm line-clamp-1 leading-tight">{product.name}</p>
                           <p className="text-on-surface-variant text-[10px] sm:text-[11px] truncate mt-0.5">{product.brand}</p>
                         </div>
-                        <div className="text-primary font-bold text-[15px] sm:text-sm shrink-0 whitespace-nowrap pl-20">
+                        <div className="text-primary font-bold text-[15px] sm:text-sm shrink-0 whitespace-nowrap pl-2">
                           ${(product.price ?? 0).toLocaleString('es-AR')}
                         </div>
                       </button>
@@ -126,11 +159,21 @@ export const Header: React.FC = () => {
           )}
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-          <Link to="/favorites" className="hover:opacity-90 transition-opacity flex items-center justify-center text-white relative">
+        <div className={`flex items-center shrink-0 transition-all duration-300 ease-in-out ${isSearchActive ? 'gap-0 sm:gap-4' : 'gap-2 sm:gap-4'}`}>
+          <Link
+            to="/favorites"
+            className={`transition-all duration-300 ease-in-out overflow-hidden ${
+              isSearchActive ? 'max-w-0 opacity-0 pointer-events-none mr-0 md:max-w-[40px] md:opacity-100 md:mr-2' : 'max-w-[40px] opacity-100 mr-2 sm:mr-0'
+            } hover:opacity-90 flex items-center justify-center text-white relative`}
+          >
             <span className="material-symbols-outlined">favorite</span>
           </Link>
-          <Link to="/profile" className="hover:opacity-90 transition-opacity flex items-center justify-center text-white">
+          <Link
+            to="/profile"
+            className={`transition-all duration-300 ease-in-out overflow-hidden ${
+              isSearchActive ? 'max-w-0 opacity-0 pointer-events-none mr-0 md:max-w-[40px] md:opacity-100 md:mr-2' : 'max-w-[40px] opacity-100 mr-2 sm:mr-0'
+            } hover:opacity-90 flex items-center justify-center text-white`}
+          >
             <span className="material-symbols-outlined">person</span>
           </Link>
           <Link to="/cart" className="hover:opacity-90 transition-opacity flex items-center justify-center relative text-white">

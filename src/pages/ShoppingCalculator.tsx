@@ -203,18 +203,7 @@ export const ShoppingCalculator: React.FC = () => {
             <p className="font-body-lg text-on-surface-variant mb-6 text-sm sm:text-base leading-relaxed px-4">
               Escaneá los productos con la cámara de tu celular a medida que los vas sumando al carrito en el local.
               Conocé el total aproximado de tu gasto y presentá el código generado en la caja.
-            </p>
-
-            {/* Attention Banner */}
-            <div className="w-full bg-white p-4.5 rounded-2xl shadow-sm border-l-4 border-primary border-t border-r border-b border-outline-variant/10 text-left mb-8 flex gap-3.5 items-start">
-              <span className="material-symbols-outlined text-primary text-[22px] mt-0.5 shrink-0">info</span>
-              <div>
-                <p className="text-xs font-bold text-on-surface uppercase tracking-wider mb-1">Aviso Importante</p>
-                <p className="text-xs text-on-surface-variant leading-relaxed">
-                  Esta calculadora es de carácter informativo. Los precios finales y el stock se ratifican y descuentan únicamente en caja al momento de procesar el pago físico.
-                </p>
-              </div>
-            </div>
+            </p>            
 
             {/* Bottom CTA Button */}
             <button
