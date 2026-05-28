@@ -3,6 +3,7 @@ import { products as catalogProducts, categories as catalogCategories, Product, 
 import { useProductStore } from '../stores/useProductStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
+import { supabase } from '../lib/supabase';
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -188,7 +189,7 @@ export interface OfferRedemption {
   quantity: number;
   discount_amount: number;
   redemption_date: string;
-  created_at: number;
+  created_at: string;
 }
 
 export interface CashClose {
@@ -800,39 +801,68 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [offerRedemptions, setOfferRedemptions] = useState<OfferRedemption[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-offer-redemptions');
-    return saved ? JSON.parse(saved) : [];
+  const [offerRedemptions, setOfferRedemptions] = useState<OfferRedemption[]>([]);
+
+  const [storeStatus, setStoreStatusState] = useState<StoreStatus>({
+    onlineSalesPaused: false,
+    pauseReason: '',
+    pausedAt: null,
+    pausedBy: null,
+    resumeMessage: '',
+    allowBrowsingWhilePaused: true
   });
 
-  const [storeStatus, setStoreStatus] = useState<StoreStatus>(() => {
-    const saved = localStorage.getItem('la-martina-store-status');
-    return saved ? JSON.parse(saved) : {
-      onlineSalesPaused: false,
-      pauseReason: '',
-      pausedAt: null,
-      pausedBy: null,
-      resumeMessage: '',
-      allowBrowsingWhilePaused: true
+  useEffect(() => {
+    // 1. Load initial Store Status
+    supabase.from('settings').select('value').eq('id', 'store_status').single().then(({ data }) => {
+      if (data?.value) setStoreStatusState(data.value);
+    });
+
+    // 2. Real-time subscription for Store Status
+    const statusSub = supabase.channel('store_status_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'id=eq.store_status' }, (payload) => {
+        if (payload.new && payload.new.value) {
+          setStoreStatusState(payload.new.value);
+        }
+      })
+      .subscribe();
+
+    // 3. Load initial Offer Redemptions
+    supabase.from('offer_redemptions').select('*').then(({ data }) => {
+      if (data) setOfferRedemptions(data);
+    });
+
+    // 4. Real-time subscription for Redemptions
+    const redemptionsSub = supabase.channel('offer_redemptions_channel')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'offer_redemptions' }, (payload) => {
+        setOfferRedemptions(prev => [...prev, payload.new as OfferRedemption]);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(statusSub);
+      supabase.removeChannel(redemptionsSub);
     };
-  });
+  }, []);
 
-  const updateStoreStatus = (updates: Partial<StoreStatus>) => {
-    setStoreStatus(prev => ({ ...prev, ...updates }));
+  const updateStoreStatus = async (updates: Partial<StoreStatus>) => {
+    const nextStatus = { ...storeStatus, ...updates };
+    setStoreStatusState(nextStatus); // optimistic update
+    await supabase.from('settings').upsert({ id: 'store_status', value: nextStatus, updated_at: new Date().toISOString() });
   };
 
-  const addOfferRedemption = (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => {
-    const todayStr = (() => {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    })();
-    const newRedemption: OfferRedemption = {
-      ...redemption,
-      id: `RED-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      created_at: Date.now(),
-      redemption_date: todayStr
-    };
-    setOfferRedemptions(prev => [...prev, newRedemption]);
+  const addOfferRedemption = async (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    await supabase.from('offer_redemptions').insert({
+      offer_id: redemption.offer_id,
+      product_id: redemption.product_id || null,
+      order_id: redemption.order_id || null,
+      customer_phone: redemption.customer_phone || null,
+      quantity: redemption.quantity,
+      discount_amount: redemption.discount_amount,
+      redemption_date: todayStr,
+      branch_id: 'main'
+    });
   };
 
   const [cashCloses, setCashCloses] = useState<CashClose[]>(() => {
@@ -922,18 +952,18 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => { localStorage.setItem('la-martina-admin-stock', JSON.stringify(stockMap)); }, [stockMap]);
   useEffect(() => { localStorage.setItem('la-martina-admin-orders', JSON.stringify(orders)); }, [orders]);
   useEffect(() => { localStorage.setItem('la-martina-admin-offers', JSON.stringify(offers)); }, [offers]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-offer-redemptions', JSON.stringify(offerRedemptions)); }, [offerRedemptions]);
-  useEffect(() => { localStorage.setItem('la-martina-store-status', JSON.stringify(storeStatus)); }, [storeStatus]);
+
+  // Handle Storage events (multi-tab sync) for legacy localStorage keys
+  const handleStorageChange = (e: StorageEvent) => {
+    if (e.key === 'la-martina-admin-orders' && e.newValue) {
+      setOrders(JSON.parse(e.newValue));
+    }
+  };
 
   // Sync store status across tabs (e.g. if an admin pauses the store in one tab, the customer tab should know instantly)
   useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'la-martina-store-status' && e.newValue) {
-        setStoreStatus(JSON.parse(e.newValue));
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
   useEffect(() => { localStorage.setItem('la-martina-admin-cash-closes', JSON.stringify(cashCloses)); }, [cashCloses]);
   useEffect(() => { localStorage.setItem('la-martina-admin-cashmovements', JSON.stringify(cashMovements)); }, [cashMovements]);

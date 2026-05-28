@@ -132,6 +132,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         console.error("❌ Error al obtener sesión inicial:", error.message);
       }
       
+      // Set session first so axios interceptors have access to the token for API calls
+      if (session) {
+        set({ session, user: session.user });
+      }
+      
       let employeeProfile = null;
       let customerProfile = null;
       let permissions: PermissionKey[] = [];
@@ -168,6 +173,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       let employeeProfile = get().employeeProfile;
       let customerProfile = get().customerProfile;
       let permissions = get().permissions;
+
+      if (session) {
+        set({ session, user: session.user });
+      }
 
       if (session?.user) {
         // Resolve role

@@ -107,12 +107,8 @@ export const Checkout: React.FC = () => {
     setStockError(null);
     setFormError(null);
 
-    // Leemos de localStorage directamente por si hay desincronización entre pestañas
-    const savedStatusStr = localStorage.getItem('la-martina-store-status');
-    const currentStatus = savedStatusStr ? JSON.parse(savedStatusStr) : storeStatus;
-
-    if (currentStatus?.onlineSalesPaused) {
-      setFormError('Las compras online están pausadas temporalmente. ' + (currentStatus.pauseReason || 'Estamos actualizando precios o realizando mantenimiento. Volvé a intentar en unos minutos.'));
+    if (storeStatus?.onlineSalesPaused) {
+      setFormError('Las compras online están pausadas temporalmente. ' + (storeStatus.pauseReason || 'Estamos actualizando precios o realizando mantenimiento. Volvé a intentar en unos minutos.'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
