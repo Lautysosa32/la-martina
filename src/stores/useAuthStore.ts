@@ -16,6 +16,15 @@ export interface Order {
   deliveryTime?: string;
   items: any[];
   phone?: string;
+  discount?: number;
+  discountLabel?: string;
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
+  delivery_address_label?: string | null;
+  delivery_house_number?: string | null;
+  delivery_reference?: string | null;
+  delivery_notes?: string | null;
+  delivery_method?: 'retiro' | 'envio';
 }
 
 export interface GuestProfile {
@@ -477,11 +486,13 @@ export const useAuth = () => {
             id: o.id,
             date: o.date,
             total: o.total,
-            itemsCount: o.itemsCount || (o.items ? o.items.reduce((s, i) => s + (i.quantity || 1), 0) : 0),
+            itemsCount: o.itemsCount || (o.items ? o.items.reduce((s: number, i: any) => s + (i.quantity || 1), 0) : 0),
             status: o.status,
             address: o.address,
             deliveryTime: o.deliveryTime,
-            items: o.items || []
+            items: o.items || [],
+            discount: o.discount,
+            discountLabel: o.discountLabel,
           }));
       }
     } catch (err) {

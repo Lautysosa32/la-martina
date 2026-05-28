@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useCart } from '../context/CartContext';
-import { useAuth } from '../stores/useAuthStore';
+import { useAuth, Order } from '../stores/useAuthStore';
 import { useAdmin } from '../context/AdminContext';
 import { Link, useNavigate } from 'react-router-dom';
 import { MapSelector } from '../components/MapSelector';
@@ -172,7 +172,7 @@ export const Checkout: React.FC = () => {
       delivery_notes: deliveryNotes || null,
       delivery_method: isPickup ? ('retiro' as const) : ('envio' as const)
     };
-    addOrder(userOrder as any);
+    addOrder(userOrder as Order);
 
     // Guardar en el panel de administración
     const adminOrder = {
