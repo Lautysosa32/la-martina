@@ -264,10 +264,10 @@ export const Customers: React.FC = () => {
             onChange={e => setTierFilter(e.target.value)}
             className="bg-surface-container-low border-none rounded-2xl px-5 py-3 text-sm font-bold outline-none cursor-pointer focus:ring-2 ring-primary/10 transition-all"
           >
-            <option value="All">Membership Tier: All</option>
-            <option value="Gold">Gold (+200k/mes)</option>
-            <option value="Silver">Silver (100k-150k/mes)</option>
-            <option value="Bronze">Bronze (50k-100k/mes)</option>
+            <option value="All">Categoría: Todas</option>
+            <option value="Gold">Oro (+200k/mes)</option>
+            <option value="Silver">Plata (100k-200k/mes)</option>
+            <option value="Bronze">Bronce (50k-100k/mes)</option>
             <option value="Regular">Regular</option>
           </select>
 
@@ -335,7 +335,7 @@ export const Customers: React.FC = () => {
                     <td className="px-7 py-4 text-on-surface-variant font-medium whitespace-nowrap">{c.phone}</td>
                     <td className="px-10 py-4">
                       <span className="bg-surface-container-low px-2 py-1 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
-                        {tier}
+                        {tier === 'Gold' ? 'Oro' : tier === 'Silver' ? 'Plata' : tier === 'Bronze' ? 'Bronce' : tier}
                       </span>
                     </td>
                     <td className="px-15 py-4 text-on-surface-variant font-black text-sm">{c.totalOrders}</td>
@@ -383,7 +383,7 @@ export const Customers: React.FC = () => {
                   <h3 className="text-2xl font-black text-on-background">{currentCustomer.name}</h3>
                   <div className="flex items-center gap-2 mt-1">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getTierColor(currentCustomer.tier)}`}>
-                      TIER {currentCustomer.tier.toUpperCase()}
+                      NIVEL {(currentCustomer.tier === 'Gold' ? 'Oro' : currentCustomer.tier === 'Silver' ? 'Plata' : currentCustomer.tier === 'Bronze' ? 'Bronce' : currentCustomer.tier).toUpperCase()}
                     </span>
                     <span className="text-xs text-on-surface-variant font-bold">{currentCustomer.phone}</span>
                   </div>

@@ -103,7 +103,7 @@ export const Employees: React.FC = () => {
                     </td>
                     <td className="p-6">
                       <span className="px-3 py-1 bg-surface-container-low text-on-surface text-xs font-bold rounded-lg uppercase tracking-wider">
-                        {emp.role}
+                        {emp.role === 'admin' ? 'Administrador' : emp.role === 'owner' ? 'Dueño' : emp.role === 'employee' ? 'Empleado' : emp.role}
                       </span>
                     </td>
                     <td className="p-6">

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from '
 import { products as catalogProducts, categories as catalogCategories, Product, Category } from '../data/mockData';
 import { useProductStore } from '../stores/useProductStore';
 import { useAuthStore } from '../stores/useAuthStore';
+import { whatsappMessageService } from '../services/whatsapp-message.service';
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -705,13 +706,26 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return o;
       });
 
+      const methodMap: Record<string, string> = { 'cash': 'Efectivo', 'card': 'Tarjeta', 'transfer': 'Transferencia' };
+      const translatedMethod = methodMap[method] || method;
+
       // 2. Record the payment in Cash Movements for today's physical box
       addCashMovement({
         type: 'Ingreso',
-        description: `Pago Cta. Corriente (${method}) - ${unpaidOrders[0].customer}`,
+        description: `Pago Cta. Corriente (${translatedMethod}) - ${unpaidOrders[0].customer}`,
         cashier: 'Admin',
         amount: paymentAmount
       });
+
+      // Fase 3: Integración con Cuenta Corriente cuando se registra un pago
+      const customerName = unpaidOrders[0].customer;
+      const remainingDebt = Math.max(0, totalDebt - paymentAmount);
+      whatsappMessageService.createCurrentAccountPaymentMessage(
+        phone,
+        customerName,
+        paymentAmount,
+        remainingDebt
+      );
 
       return updatedOrders;
     });
@@ -1001,11 +1015,57 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateStock(i.id, getStock(i.id) - i.quantity);
       }
     });
+
+    // Fase 3: Integración con Cuenta Corriente cuando se agrega una compra
+    if (o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado') {
+      const activeCustomer = customers.find(c => c.phone === o.phone);
+      const currentDebt = activeCustomer ? activeCustomer.currentDebt : 0;
+      const debtAmount = o.total - (o.paidAmount || 0);
+      const newDebt = currentDebt + debtAmount;
+
+      // Encolar mensaje de compra
+      whatsappMessageService.createCurrentAccountDebtMessage(
+        o.phone,
+        o.customer,
+        debtAmount,
+        newDebt,
+        `Compra en local (#${o.id}) - ${o.items.length} ítems`,
+        o.id
+      );
+
+      // Alerta de límite superado
+      const effectiveAmountLimit = activeCustomer?.useCustomAccountLimits 
+        ? (activeCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount) 
+        : currentAccountConfig.maxDebtAmount;
+
+      if (currentAccountConfig.warnOnAmountLimit && newDebt > effectiveAmountLimit) {
+        whatsappMessageService.createLimitExceededMessage(
+          o.phone,
+          o.customer,
+          newDebt,
+          effectiveAmountLimit
+        );
+      }
+    }
   };
   const updateOrderStatus = (id: string, s: AdminOrder['status']) => {
+    // Buscar la orden previa para ver su estado actual antes del cambio
+    const targetOrder = orders.find(o => o.id === id);
+    const prevStatus = targetOrder ? targetOrder.status : null;
+
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status: s } : o));
     // Sincronizar con el perfil del cliente (usando Zustand directamente)
     useAuthStore.getState().updateOrderStatus(id, s);
+
+    // Encolar mensaje si el estado cambió realmente
+    if (targetOrder && prevStatus !== s) {
+      whatsappMessageService.createOrderStatusMessage({
+        id: targetOrder.id,
+        customer: targetOrder.customer,
+        phone: targetOrder.phone,
+        status: s
+      });
+    }
   };
   const updateOrderMethod = (id: string, method: string) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, method } : o));

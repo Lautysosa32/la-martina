@@ -24,6 +24,7 @@ const navItems: NavItem[] = [
   { id: 'employees', label: 'Empleados', icon: 'badge', path: '/admin/employees', requiredPermission: 'employees.view' },
   { id: 'billing', label: 'Facturación', icon: 'receipt_long', path: '/admin/billing', requiredPermission: 'billing.view' },
   { id: 'settings', label: 'Configuración', icon: 'settings', path: '/admin/settings', requiredPermission: 'settings.access' },
+  { id: 'whatsapp', label: 'Mensajes WA', icon: 'forum', path: '/admin/whatsapp', requiredPermission: 'settings.access' },
 ];
 
 export const AdminLayout: React.FC = () => {
@@ -130,7 +131,7 @@ export const AdminLayout: React.FC = () => {
         <div className="p-8">
           <div className="flex items-center justify-between">
             <Link to="/" className="flex flex-col">
-              <span className="text-[22px] font-bold text-primary leading-tight">La Martina</span>
+              <span className="text-[22px] font-bold text-primary leading-tight">Martina</span>
               <span className="text-[11px] font-bold text-on-surface-variant/60 uppercase tracking-[0.2em]">Admin Suite</span>
             </Link>
             <button

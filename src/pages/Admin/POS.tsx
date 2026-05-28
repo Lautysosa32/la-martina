@@ -37,6 +37,16 @@ const PAYMENT_METHODS = [
   { id: 'cuenta_corriente', label: 'Cta. Corriente', icon: 'menu_book' },
 ];
 
+const getPaymentMethodDisplay = (method: string) => {
+  switch (method) {
+    case 'cash': return 'Efectivo';
+    case 'card': return 'Tarjeta';
+    case 'transfer': return 'Transferencia';
+    case 'cuenta_corriente': return 'Cta. Corriente';
+    default: return method.replace('_', ' ');
+  }
+};
+
 const createTab = (num: number): POSTab => ({
   id: `tab-${Date.now()}-${num}`,
   label: `Hoja ${num}`,
@@ -620,7 +630,7 @@ export const POS: React.FC = () => {
     if (selectedPaymentMethod !== 'cuenta_corriente') {
       addCashMovement({
         type: 'Ingreso',
-        description: `Venta Local (${selectedPaymentMethod}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
+        description: `Venta Local (${getPaymentMethodDisplay(selectedPaymentMethod)}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
         cashier: 'Admin',
         amount: total,
         orderId: orderId
@@ -701,7 +711,7 @@ export const POS: React.FC = () => {
       message += `Se registró una nueva compra en tu *Cuenta Corriente* por *$${formatCurrency(order.total, true, true)}*.\n`;
       message += `Tu deuda actual es de *$${formatCurrency(currentDebt, true, true)}*.\n\n`;
     } else {
-      message += `Tu compra por *$${formatCurrency(order.total, true, true)}* (${order.paymentMethod}) fue registrada con éxito.\n\n`;
+      message += `Tu compra por *$${formatCurrency(order.total, true, true)}* (${getPaymentMethodDisplay(order.paymentMethod)}) fue registrada con éxito.\n\n`;
     }
     message += `Número de operación: #${order.orderId}\n`;
     message += `¡Gracias por elegir *La Martina*! 🏪`;
@@ -816,7 +826,7 @@ export const POS: React.FC = () => {
                   <td className="px-6 py-4 text-sm font-medium text-on-surface-variant">{act.time}</td>
                   <td className="px-6 py-4"><span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${act.isVenta ? 'bg-[#FFD700]/20 text-[#8B6508]' : act.type === 'Retiro' ? 'bg-orange-100 text-orange-700' : act.type === 'Ingreso' ? 'bg-green-100 text-green-700' : 'bg-error/10 text-error'}`}>{act.isVenta ? 'Venta' : act.type}</span></td>
                   <td className="px-6 py-4 text-sm font-bold text-on-background">{act.detail}</td>
-                  <td className="px-6 py-4 text-[10px] font-black uppercase text-on-surface-variant tracking-widest">{act.paymentMethod.replace('_', ' ')}</td>
+                  <td className="px-6 py-4 text-[10px] font-black uppercase text-on-surface-variant tracking-widest">{getPaymentMethodDisplay(act.paymentMethod)}</td>
                   <td className={`px-6 py-4 text-sm font-black text-right ${act.amount > 0 ? 'text-on-background' : 'text-error'}`}>{act.amount > 0 ? '+' : ''}${formatCurrency(Math.abs(act.amount))}</td>
                   <td className="px-4 py-4"><span className="material-symbols-outlined text-[18px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">visibility</span></td>
                 </tr>
@@ -1092,7 +1102,7 @@ export const POS: React.FC = () => {
                   <div className="bg-surface-container-low rounded-3xl p-6 mb-8 text-left space-y-2">
                     <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Cliente</span><span className="font-bold">{showSuccessModal.customer}</span></div>
                     <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Total</span><span className="text-xl font-black text-primary">${formatCurrency(showSuccessModal.total, true, true)}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Pago</span><span className="text-xs font-black uppercase bg-white px-2 py-1 rounded-lg border border-outline-variant/10">{showSuccessModal.paymentMethod.replace('_', ' ')}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Pago</span><span className="text-xs font-black uppercase bg-white px-2 py-1 rounded-lg border border-outline-variant/10">{getPaymentMethodDisplay(showSuccessModal.paymentMethod)}</span></div>
                   </div>
 
                   <div className="space-y-3">

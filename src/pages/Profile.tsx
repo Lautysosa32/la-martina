@@ -163,7 +163,7 @@ export const Profile: React.FC = () => {
           {/* Left Column: Benefits (Visual hook) */}
           <div className="md:col-span-6 flex flex-col justify-center space-y-6 bg-primary/5 rounded-[2.5rem] p-8 border border-primary/10 text-left">
             <div>
-              <span className="text-xs font-bold bg-primary/10 text-primary px-3 py-1 rounded-full uppercase tracking-wider">La Martina Club</span>
+              <span className="text-xs font-bold bg-primary/10 text-primary px-3 py-1 rounded-full uppercase tracking-wider">Martina Club</span>
               <h2 className="text-2xl md:text-3xl font-black text-on-background mt-3 mb-1">¡Comprá con más beneficios!</h2>
               <p className="text-sm text-on-surface-variant">Unite gratis para acceder a funciones premium en nuestra tienda.</p>
             </div>

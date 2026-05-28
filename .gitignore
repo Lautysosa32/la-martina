@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# WhatsApp Worker - browser session data & auth
+whatsapp-worker/session/
+whatsapp-worker/.wwebjs_auth/
+whatsapp-worker/.wwebjs_cache/
+whatsapp-worker/node_modules/
