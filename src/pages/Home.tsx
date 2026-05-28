@@ -5,7 +5,20 @@ import { ProductCarousel } from '../components/ProductCarousel';
 
 
 export const Home: React.FC = () => {
-  const { adminProducts: products } = useAdmin();
+  const { adminProducts: products, applyOffersToCartItem } = useAdmin();
+
+  const productsWithOffers = React.useMemo(() => {
+    return products.map(p => {
+      // Simulate adding 1 item to check for discounts
+      const calc = applyOffersToCartItem({ productId: p.id, categoryId: p.categoryId, price: p.price, quantity: 1 });
+      if (calc.discountAmount > 0) {
+        // Return a mapped product that ProductCard will render as discounted
+        return { ...p, originalPrice: p.price, price: calc.finalPrice, offerLabel: calc.offerLabel };
+      }
+      return p.originalPrice ? p : null; // Fallback to hardcoded mock data if present
+    }).filter(Boolean) as any[];
+  }, [products, applyOffersToCartItem]);
+
   return (
     <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-4 flex flex-col gap-1">
 
@@ -82,10 +95,10 @@ export const Home: React.FC = () => {
         products={products.slice(0, 12)}
       />
 
-      {products.filter(p => p.originalPrice).length > 0 ? (
+      {productsWithOffers.length > 0 ? (
         <ProductCarousel
           title="Ofertas Relámpago"
-          products={products.filter(p => p.originalPrice).slice(0, 12)}
+          products={productsWithOffers.slice(0, 12)}
         />
       ) : (
         <section className="mt-10">

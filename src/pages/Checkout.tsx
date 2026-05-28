@@ -8,7 +8,7 @@ import { MapSelector } from '../components/MapSelector';
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
   const { user, addOrder } = useAuth();
-  const { addAdminOrder, customers, applyOrderOffers, deductStockForOrder } = useAdmin();
+  const { addAdminOrder, customers, applyOrderOffers, deductStockForOrder, storeStatus } = useAdmin();
   const navigate = useNavigate();
   const [isOrdered, setIsOrdered] = useState(false);
   const [stockError, setStockError] = useState<{ id: string; name: string; requested: number; available: number }[] | null>(null);
@@ -107,6 +107,16 @@ export const Checkout: React.FC = () => {
     setStockError(null);
     setFormError(null);
 
+    // Leemos de localStorage directamente por si hay desincronización entre pestañas
+    const savedStatusStr = localStorage.getItem('la-martina-store-status');
+    const currentStatus = savedStatusStr ? JSON.parse(savedStatusStr) : storeStatus;
+
+    if (currentStatus?.onlineSalesPaused) {
+      setFormError('Las compras online están pausadas temporalmente. ' + (currentStatus.pauseReason || 'Estamos actualizando precios o realizando mantenimiento. Volvé a intentar en unos minutos.'));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     // Validation for delivery map location
     if (!isPickup) {
       // Valid if using saved profile address OR if new map coords were selected
@@ -188,7 +198,7 @@ export const Checkout: React.FC = () => {
       paymentStatus: (formData.paymentMethod === 'transfer' ? 'Pagado' : 'Pendiente') as 'Pagado' | 'Pendiente',
       status: 'Nuevo' as const,
       total: finalTotal,
-      items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity })),
+      items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity })),
       discount: activeOrderOfferDiscount,
       discountLabel: activeOrderOfferLabel || undefined,
       delivery_lat: finalLat,
@@ -242,6 +252,24 @@ export const Checkout: React.FC = () => {
   return (
     <>
       <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-8 animate-in fade-in duration-700">
+        {storeStatus?.onlineSalesPaused && (
+          <div className="mb-8 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-xl shadow-sm animate-in slide-in-from-top-4">
+            <div className="flex items-start">
+              <span className="material-symbols-outlined text-red-500 mr-3 mt-0.5 text-2xl">block</span>
+              <div>
+                <h3 className="text-red-800 font-black text-lg">Las compras online están pausadas temporalmente</h3>
+                <p className="text-red-700 text-sm mt-1">{storeStatus.pauseReason || 'Estamos actualizando precios o realizando mantenimiento. Volvé a intentar en unos minutos.'}</p>
+                <div className="mt-4">
+                  <Link to="/" className="text-sm font-bold text-red-700 bg-red-100/80 px-5 py-2.5 rounded-xl inline-flex items-center gap-2 hover:bg-red-200 transition-colors">
+                    <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                    Volver a la tienda
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="mb-10 text-center md:text-left">
           <h1 className="text-[25px] font-bold text-on-background mb-2">Finalizar Compra</h1>
           <p className="text-on-surface-variant text-base">Completá tus datos para finalizar el pedido.</p>
@@ -543,6 +571,11 @@ export const Checkout: React.FC = () => {
                 <span className="material-symbols-outlined">warning</span>
                 AJUSTÁ LAS CANTIDADES
               </div>
+            ) : storeStatus?.onlineSalesPaused ? (
+              <div className="w-full bg-red-100 text-red-700 font-label-sm py-5 rounded-full flex justify-center items-center gap-3 cursor-not-allowed text-lg font-bold border border-red-200">
+                <span className="material-symbols-outlined">block</span>
+                COMPRAS PAUSADAS
+              </div>
             ) : (
               <button type="submit" className="w-full bg-primary text-white font-label-sm py-5 rounded-full flex justify-center items-center gap-3 hover:bg-primary/90 transition-all shadow-xl text-lg font-bold">
                 CONFIRMAR PEDIDO
@@ -568,7 +601,7 @@ export const Checkout: React.FC = () => {
                         {(item.finalPrice && item.finalPrice < item.price
                           ? item.finalPrice
                           : item.price
-                        ).toLocaleString('es-AR')}
+                        ).toLocaleString('es-AR', { maximumFractionDigits: 0 })}
                       </p>
                     </div>
                   </div>
@@ -577,21 +610,21 @@ export const Checkout: React.FC = () => {
               <div className="space-y-3 pt-4 border-t border-outline-variant/20">
                 <div className="flex justify-between text-on-surface-variant">
                   <span>Subtotal</span>
-                  <span>$ {originalPriceSum.toLocaleString('es-AR')}</span>
+                  <span>$ {originalPriceSum.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                 </div>
                 {activeDiscountApplied > 0 && (
                   <div className="flex justify-between text-error font-bold">
                     <span>Descuento {activeOrderOfferLabel ? `(${activeOrderOfferLabel})` : ''}</span>
-                    <span>-$ {activeDiscountApplied.toLocaleString('es-AR')}</span>
+                    <span>-$ {activeDiscountApplied.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-on-surface-variant">
                   <span>{isPickup ? 'Retiro' : 'Envío'}</span>
-                  <span>{isPickup ? <span className="text-green-600 font-bold">Gratis</span> : `$ ${shippingCost.toLocaleString('es-AR')}`}</span>
+                  <span>{isPickup ? <span className="text-green-600 font-bold">Gratis</span> : `$ ${shippingCost.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}</span>
                 </div>
                 <div className="flex justify-between items-center pt-2 font-bold text-xl text-on-surface border-t border-dashed border-outline-variant/10">
                   <span>Total</span>
-                  <span className="text-primary text-2xl">$ {finalTotal.toLocaleString('es-AR')}</span>
+                  <span className="text-primary text-2xl">$ {finalTotal.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                 </div>
               </div>
             </div>

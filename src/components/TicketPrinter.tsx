@@ -5,7 +5,9 @@ export interface TicketItem {
   name: string;
   quantity: number;
   price: number;        // original unit price
-  finalPrice: number;   // price after offer discount
+  finalPrice: number;   // price of a discounted unit
+  lineDiscount?: number;
+  discountedQuantity?: number;
   offerLabel?: string | null;
 }
 
@@ -121,17 +123,17 @@ export const TicketPrinter: React.FC<TicketPrinterProps> = ({ ticket, onClose })
 
             <div className="items">
               {ticket.items.map((item, i) => {
-                const lineTotal = item.finalPrice * item.quantity;
-                const hasDiscount = item.offerLabel && item.finalPrice < item.price;
+                const lineTotal = (item.price * item.quantity) - (item.lineDiscount || 0);
+                const hasDiscount = item.offerLabel && item.lineDiscount && item.lineDiscount > 0;
                 return (
                   <div key={i} className="item">
                     <div className="item-name">{item.name}</div>
                     <div className="item-detail">
-                      <span>{item.quantity} x ${fmt(item.finalPrice)}</span>
+                      <span>{item.quantity} x ${fmt(item.price)}</span>
                       <span>${fmt(lineTotal)}</span>
                     </div>
                     {hasDiscount && (
-                      <div className="offer-line">▸ {item.offerLabel} (-${fmt((item.price - item.finalPrice) * item.quantity)})</div>
+                      <div className="offer-line">▸ {item.offerLabel} {item.discountedQuantity && item.discountedQuantity < item.quantity ? `(${item.discountedQuantity} unid.) ` : ''}(-${fmt(item.lineDiscount || 0)})</div>
                     )}
                   </div>
                 );

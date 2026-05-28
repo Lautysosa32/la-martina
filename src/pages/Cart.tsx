@@ -84,17 +84,18 @@ export const Cart: React.FC = () => {
                       <span className="text-[10px] text-error font-extrabold flex items-center gap-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full mt-1 w-fit">
                         <span className="material-symbols-outlined text-[12px]">local_offer</span>
                         {item.offerLabel}
+                        {item.discountedQuantity && item.discountedQuantity < item.quantity && ` (Cupo: ${item.discountedQuantity} unid.)`}
                       </span>
                     )}
                   </h3>
                   <div className="font-price-display mt-2 flex items-center gap-2">
                     {item.finalPrice && item.finalPrice < item.price ? (
                       <>
-                        <span className="text-xs text-on-surface-variant/50 line-through">${item.price.toLocaleString('es-AR')}</span>
-                        <span className="text-primary font-bold">${item.finalPrice.toLocaleString('es-AR')}</span>
+                        <span className="text-xs text-on-surface-variant/50 line-through">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                        <span className="text-primary font-bold">${item.finalPrice.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                       </>
                     ) : (
-                      <span className="text-primary font-bold">${item.price.toLocaleString('es-AR')}</span>
+                      <span className="text-primary font-bold">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                     )}
                   </div>
                   {/* Stock info per line */}
@@ -124,7 +125,7 @@ export const Cart: React.FC = () => {
                     >
                       <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">remove</span>
                     </button>
-                    <span className={`font-body-md font-bold w-4 text-center ${isOverStock ? 'text-red-600' : ''}`}>{item.quantity}</span>
+                    <span className={`font-body-md font-bold w-8 flex-shrink-0 text-center ${isOverStock ? 'text-red-600' : ''}`}>{item.quantity}</span>
                     <button
                       onClick={() => updateQuantity(item.id, item.quantity + 1)}
                       disabled={!canAddMore}

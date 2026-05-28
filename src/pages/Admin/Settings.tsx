@@ -9,19 +9,22 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 export const Settings: React.FC = () => {
-  const { ticketConfig, updateTicketConfig, currentAccountConfig, updateCurrentAccountConfig } = useAdmin();
+  const { ticketConfig, updateTicketConfig, currentAccountConfig, updateCurrentAccountConfig, storeStatus, updateStoreStatus } = useAdmin();
   const [saved, setSaved] = useState(false);
-  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'account'>('ticket');
+  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'account' | 'online_store'>('ticket');
 
   // Local state mirrors config for form editing
   const [form, setForm] = useState({ ...ticketConfig });
   const [accountForm, setAccountForm] = useState({ ...currentAccountConfig });
+  const [storeForm, setStoreForm] = useState({ ...storeStatus });
 
   const handleSave = () => {
     if (activeSection === 'ticket') {
       updateTicketConfig(form);
     } else if (activeSection === 'account') {
       updateCurrentAccountConfig(accountForm);
+    } else if (activeSection === 'online_store') {
+      updateStoreStatus(storeForm);
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -53,6 +56,17 @@ export const Settings: React.FC = () => {
       };
       setAccountForm(defaultAccountConfig);
       updateCurrentAccountConfig(defaultAccountConfig);
+    } else if (activeSection === 'online_store') {
+      const defaultStoreStatus = {
+        onlineSalesPaused: false,
+        pauseReason: '',
+        pausedAt: null,
+        pausedBy: null,
+        resumeMessage: '',
+        allowBrowsingWhilePaused: true
+      };
+      setStoreForm(defaultStoreStatus);
+      updateStoreStatus(defaultStoreStatus);
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -98,6 +112,14 @@ export const Settings: React.FC = () => {
         >
           <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
           Cuenta Corriente
+        </button>
+        <button
+          onClick={() => setActiveSection('online_store')}
+          className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 ${activeSection === 'online_store' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-on-surface-variant border border-outline-variant/10 hover:bg-surface-container-lowest'
+            }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">store_mall_directory</span>
+          Tienda Online
         </button>
         <button
           onClick={() => setActiveSection('general')}
@@ -446,6 +468,118 @@ export const Settings: React.FC = () => {
                 <li className="flex items-start gap-2">
                   <span className="material-symbols-outlined text-[18px] mt-0.5">warning</span>
                   <p>Si la opción <em>Permitir Excepciones</em> está activa, la caja mostrará un cartel de advertencia, pero el cajero podrá confirmar la venta igual si así lo decide.</p>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'online_store' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
+                    <span className="material-symbols-outlined text-purple-700 text-[20px]">store_mall_directory</span>
+                  </div>
+                  <div>
+                    <h3 className="font-black text-lg">Estado de la Tienda Online</h3>
+                    <p className="text-xs text-on-surface-variant">Control de ventas al público general</p>
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className={`flex flex-col gap-2 p-5 rounded-2xl border ${storeForm.onlineSalesPaused ? 'bg-red-50/50 border-red-200' : 'bg-green-50/50 border-green-200'}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className={`font-bold text-lg ${storeForm.onlineSalesPaused ? 'text-red-700' : 'text-green-700'}`}>
+                        {storeForm.onlineSalesPaused ? 'Compras Pausadas' : 'Compras Activas'}
+                      </h4>
+                      <p className="text-sm text-on-surface-variant mt-1">
+                        {storeForm.onlineSalesPaused 
+                          ? 'Los clientes no pueden finalizar compras. El POS sigue funcionando.'
+                          : 'Los clientes pueden comprar normalmente en la tienda.'}
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input 
+                        type="checkbox" 
+                        checked={!storeForm.onlineSalesPaused} 
+                        onChange={e => {
+                          const isPaused = !e.target.checked;
+                          setStoreForm(p => ({ 
+                            ...p, 
+                            onlineSalesPaused: isPaused,
+                            pausedAt: isPaused ? new Date().toISOString() : null
+                          }));
+                        }} 
+                        className="sr-only peer" 
+                      />
+                      <div className="w-14 h-7 bg-red-500 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-500 shadow-inner"></div>
+                    </label>
+                  </div>
+                </div>
+
+                {storeForm.onlineSalesPaused && (
+                  <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Motivo de la Pausa (Visible para clientes)</label>
+                      <textarea
+                        value={storeForm.pauseReason}
+                        onChange={e => setStoreForm(p => ({ ...p, pauseReason: e.target.value }))}
+                        rows={2}
+                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-medium text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all resize-none"
+                        placeholder="Ej: Estamos actualizando precios. Volvemos en 30 minutos."
+                      />
+                    </div>
+                    <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                      <input 
+                        type="checkbox" 
+                        checked={storeForm.allowBrowsingWhilePaused} 
+                        onChange={e => setStoreForm(p => ({ ...p, allowBrowsingWhilePaused: e.target.checked }))} 
+                        className="w-5 h-5 accent-primary rounded" 
+                      />
+                      <div>
+                        <div className="font-bold text-sm">Permitir navegación</div>
+                        <div className="text-xs text-on-surface-variant">Si está activo, los clientes pueden ver el catálogo pero no pueden hacer checkout. Si se desactiva, se bloquea toda la tienda.</div>
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={handleSave} className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[20px]">save</span>
+                Guardar Configuración
+              </button>
+              <button onClick={handleReset} className="flex-1 bg-white border border-outline-variant/10 font-bold py-4 rounded-2xl text-on-surface-variant hover:bg-surface-container-lowest transition-all flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                Restaurar
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="bg-purple-50/50 rounded-[2rem] border border-purple-100 p-8">
+              <div className="flex items-center gap-3 mb-4">
+                <span className="material-symbols-outlined text-purple-600 text-2xl">info</span>
+                <h4 className="font-black text-purple-900">¿Qué sucede al pausar?</h4>
+              </div>
+              <ul className="space-y-4 text-sm text-purple-800">
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">block</span>
+                  <p><strong>Cierre del Checkout:</strong> Ningún cliente podrá finalizar un pedido. El botón de Confirmar Compra se desactivará.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">point_of_sale</span>
+                  <p><strong>POS Activo:</strong> El sistema de caja (POS) para ventas presenciales seguirá funcionando sin interrupciones.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">edit_document</span>
+                  <p><strong>Seguridad:</strong> Ideal para usar cuando necesitas actualizar muchos precios y evitar que alguien compre con el precio viejo antes de que termines.</p>
                 </li>
               </ul>
             </div>

@@ -8,6 +8,7 @@ export interface CartItem extends Product {
   finalPrice?: number;
   lineDiscount?: number;
   offerLabel?: string | null;
+  discountedQuantity?: number;
 }
 
 interface CartContextType {
@@ -105,7 +106,8 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...item,
         finalPrice: calc.finalPrice,
         lineDiscount: calc.discountAmount,
-        offerLabel: calc.offerLabel
+        offerLabel: calc.offerLabel,
+        discountedQuantity: calc.discountedQuantity
       };
     });
   }, [rawItems, currentCustomer, applyOffersToCartItem]);
@@ -124,7 +126,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
   const originalPriceSum = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const subtotalAfterItemDiscounts = items.reduce((sum, item) => sum + (item.finalPrice ?? item.price) * item.quantity, 0);
+  const subtotalAfterItemDiscounts = items.reduce((sum, item) => sum + (item.price * item.quantity) - (item.lineDiscount || 0), 0);
 
   const orderOfferCalc = useMemo(() => {
     return applyOrderOffers(subtotalAfterItemDiscounts, currentCustomer);

@@ -17,6 +17,10 @@ interface POSCartItem {
   image: string;
   offerDiscount?: number;
   offerLabel?: string | null;
+  finalPrice?: number;
+  lineDiscount?: number;
+  offerId?: string | null;
+  discountedQuantity?: number;
 }
 
 interface POSTab {
@@ -373,13 +377,15 @@ export const POS: React.FC = () => {
         ...item,
         finalPrice: calculation.finalPrice,
         lineDiscount: calculation.discountAmount,
-        offerLabel: calculation.offerLabel
+        offerLabel: calculation.offerLabel,
+        offerId: calculation.offerId,
+        discountedQuantity: calculation.discountedQuantity
       };
     });
   }, [cart, validatedCustomer, applyOffersToCartItem]);
 
   const subtotal = cartWithDiscounts.reduce((s, i) => s + (i.price * i.quantity), 0);
-  const itemDiscountsTotal = cartWithDiscounts.reduce((s, i) => s + (i.lineDiscount * i.quantity), 0);
+  const itemDiscountsTotal = cartWithDiscounts.reduce((s, i) => s + (i.lineDiscount || 0), 0);
   const subtotalAfterItemDiscounts = subtotal - itemDiscountsTotal;
 
   const orderOfferCalc = useMemo(() => {
@@ -618,7 +624,7 @@ export const POS: React.FC = () => {
       paymentStatus: selectedPaymentMethod === 'cuenta_corriente' ? 'Pendiente' : 'Pagado',
       status: 'Entregado',
       total: total,
-      items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice, quantity: i.quantity })),
+      items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId || undefined, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity })),
       source: 'pos',
       discount: totalOrderDiscount,
       discountLabel: totalOrderDiscountLabel,
@@ -645,7 +651,9 @@ export const POS: React.FC = () => {
         name: i.name,
         quantity: i.quantity,
         price: i.price,
-        finalPrice: i.finalPrice,
+        finalPrice: i.finalPrice || i.price,
+        lineDiscount: i.lineDiscount,
+        discountedQuantity: i.discountedQuantity,
         offerLabel: i.offerLabel || null,
       })),
       subtotal,

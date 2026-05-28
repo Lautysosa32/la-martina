@@ -21,10 +21,11 @@ export interface AdminOrder {
   status: 'Nuevo' | 'Preparando' | 'En Camino' | 'Entregado' | 'Cancelado';
   total: number;
   paidAmount?: number; // Amount already paid for this order (useful for partial payments)
-  items: { id: string; name: string; image: string; price: number; quantity: number }[];
+  items: { id: string; name: string; image: string; price: number; quantity: number; originalPrice?: number; offerId?: string; lineDiscount?: number; discountedQuantity?: number }[];
   source?: 'pos' | 'whatsapp' | 'web';
   discount?: number;
   discountLabel?: string;
+  discountOfferId?: string;
   // Nuevos campos para ubicación detallada
   delivery_lat?: number | null;
   delivery_lng?: number | null;
@@ -163,6 +164,31 @@ export interface Offer {
   endDate: string;
   active: boolean;
   label?: string;
+  daily_quantity_limit?: number | null;
+  per_customer_daily_limit?: number | null;
+  total_quantity_limit?: number | null;
+  limit_strategy?: 'discount_only' | 'block_sale' | 'hide_offer';
+}
+
+export interface StoreStatus {
+  onlineSalesPaused: boolean;
+  pauseReason: string;
+  pausedAt: string | null;
+  pausedBy: string | null;
+  resumeMessage: string;
+  allowBrowsingWhilePaused: boolean;
+}
+
+export interface OfferRedemption {
+  id: string;
+  offer_id: string;
+  product_id?: string;
+  order_id?: string;
+  customer_phone?: string;
+  quantity: number;
+  discount_amount: number;
+  redemption_date: string;
+  created_at: number;
 }
 
 export interface CashClose {
@@ -258,8 +284,14 @@ export interface AdminContextType {
   updateOffer: (offerId: string, updates: Partial<Offer>) => void;
   deleteOffer: (offerId: string) => void;
   activeOffers: Offer[];
-  applyOffersToCartItem: (item: { productId: string; categoryId?: string; price: number; quantity: number }, customer?: AdminCustomer | null) => { finalPrice: number; discountAmount: number; offerLabel: string | null };
+  applyOffersToCartItem: (item: { productId: string; categoryId?: string; price: number; quantity: number }, customer?: AdminCustomer | null) => { finalPrice: number; discountAmount: number; offerLabel: string | null; offerId: string | null; discountedQuantity: number };
   applyOrderOffers: (subtotalAfterItemDiscounts: number, customer?: AdminCustomer | null) => { discountAmount: number; offerLabel: string | null; offerId: string | null };
+  offerRedemptions: OfferRedemption[];
+  addOfferRedemption: (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => void;
+
+  // Store Status
+  storeStatus: StoreStatus;
+  updateStoreStatus: (updates: Partial<StoreStatus>) => void;
 
   // Cash Close & Movements
   cashCloses: CashClose[];
@@ -395,6 +427,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const keysToClear = [
         'la-martina-admin-orders',
         'la-martina-admin-offers',
+        'la-martina-admin-offer-redemptions',
         'la-martina-admin-cash-closes',
         'la-martina-admin-cashmovements',
         'la-martina-admin-last-pos-close',
@@ -402,7 +435,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         'la-martina-user',
         'cart',
         'la-martina-favorites',
-        'la-martina-admin-stock'
+        'la-martina-admin-stock',
+        'la-martina-store-status'
       ];
       keysToClear.forEach(k => localStorage.removeItem(k));
       localStorage.setItem('la-martina-catalog-version', version);
@@ -766,6 +800,41 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return saved ? JSON.parse(saved) : [];
   });
 
+  const [offerRedemptions, setOfferRedemptions] = useState<OfferRedemption[]>(() => {
+    const saved = localStorage.getItem('la-martina-admin-offer-redemptions');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [storeStatus, setStoreStatus] = useState<StoreStatus>(() => {
+    const saved = localStorage.getItem('la-martina-store-status');
+    return saved ? JSON.parse(saved) : {
+      onlineSalesPaused: false,
+      pauseReason: '',
+      pausedAt: null,
+      pausedBy: null,
+      resumeMessage: '',
+      allowBrowsingWhilePaused: true
+    };
+  });
+
+  const updateStoreStatus = (updates: Partial<StoreStatus>) => {
+    setStoreStatus(prev => ({ ...prev, ...updates }));
+  };
+
+  const addOfferRedemption = (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => {
+    const todayStr = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    })();
+    const newRedemption: OfferRedemption = {
+      ...redemption,
+      id: `RED-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      created_at: Date.now(),
+      redemption_date: todayStr
+    };
+    setOfferRedemptions(prev => [...prev, newRedemption]);
+  };
+
   const [cashCloses, setCashCloses] = useState<CashClose[]>(() => {
     const saved = localStorage.getItem('la-martina-admin-cash-closes');
     return saved ? JSON.parse(saved) : [];
@@ -853,6 +922,19 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => { localStorage.setItem('la-martina-admin-stock', JSON.stringify(stockMap)); }, [stockMap]);
   useEffect(() => { localStorage.setItem('la-martina-admin-orders', JSON.stringify(orders)); }, [orders]);
   useEffect(() => { localStorage.setItem('la-martina-admin-offers', JSON.stringify(offers)); }, [offers]);
+  useEffect(() => { localStorage.setItem('la-martina-admin-offer-redemptions', JSON.stringify(offerRedemptions)); }, [offerRedemptions]);
+  useEffect(() => { localStorage.setItem('la-martina-store-status', JSON.stringify(storeStatus)); }, [storeStatus]);
+
+  // Sync store status across tabs (e.g. if an admin pauses the store in one tab, the customer tab should know instantly)
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'la-martina-store-status' && e.newValue) {
+        setStoreStatus(JSON.parse(e.newValue));
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
   useEffect(() => { localStorage.setItem('la-martina-admin-cash-closes', JSON.stringify(cashCloses)); }, [cashCloses]);
   useEffect(() => { localStorage.setItem('la-martina-admin-cashmovements', JSON.stringify(cashMovements)); }, [cashMovements]);
   useEffect(() => { localStorage.setItem('la-martina-admin-last-pos-close', lastPOSCloseTimestamp.toString()); }, [lastPOSCloseTimestamp]);
@@ -1047,6 +1129,29 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
       }
     }
+
+    // Registrar redenciones de ofertas para descontar los cupos
+    o.items.forEach(i => {
+      if (i.offerId && i.lineDiscount && i.lineDiscount > 0) {
+        addOfferRedemption({
+          offer_id: i.offerId,
+          product_id: i.id,
+          order_id: o.id,
+          customer_phone: o.phone,
+          quantity: i.discountedQuantity || i.quantity,
+          discount_amount: i.lineDiscount
+        });
+      }
+    });
+    if (o.discountOfferId && o.discount && o.discount > 0) {
+      addOfferRedemption({
+        offer_id: o.discountOfferId,
+        order_id: o.id,
+        customer_phone: o.phone,
+        quantity: 1,
+        discount_amount: o.discount
+      });
+    }
   };
   const updateOrderStatus = (id: string, s: AdminOrder['status']) => {
     // Buscar la orden previa para ver su estado actual antes del cambio
@@ -1155,32 +1260,62 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return false;
     });
 
-    if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null };
+    if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null, offerId: null, discountedQuantity: 0 };
 
-    // Use the best (highest discount) applicable offer
+    // Use the best (highest discount) applicable offer, respecting quotas
     let bestDiscount = 0;
     let bestLabel: string | null = null;
+    let bestOfferId: string | null = null;
+    let finalDiscountedQuantity = 0;
+    
     applicable.forEach(o => {
+      // Validate quota before considering this offer
+      let allowedQuantity = item.quantity;
+      if (o.daily_quantity_limit || o.per_customer_daily_limit || o.total_quantity_limit) {
+        const todayRedemptions = offerRedemptions.filter(r => r.offer_id === o.id && r.redemption_date === todayStr);
+        const usedTodayTotal = todayRedemptions.reduce((s, r) => s + r.quantity, 0);
+        const usedTodayCustomer = customer ? todayRedemptions.filter(r => {
+          const clean1 = (r.customer_phone || '').replace(/\\D/g, '');
+          const clean2 = (customer.phone || '').replace(/\\D/g, '');
+          return clean1 === clean2 && clean1 !== '';
+        }).reduce((s, r) => s + r.quantity, 0) : 0;
+        
+        let remainingGlobal = o.daily_quantity_limit ? Math.max(0, o.daily_quantity_limit - usedTodayTotal) : Infinity;
+        let remainingTotal = o.total_quantity_limit ? Math.max(0, o.total_quantity_limit - offerRedemptions.filter(r => r.offer_id === o.id).reduce((s,r) => s+r.quantity, 0)) : Infinity;
+        let remainingCustomer = o.per_customer_daily_limit ? Math.max(0, o.per_customer_daily_limit - usedTodayCustomer) : Infinity;
+        
+        const strictLimit = Math.min(remainingGlobal, remainingTotal, remainingCustomer);
+        allowedQuantity = Math.min(item.quantity, strictLimit);
+      }
+
+      if (allowedQuantity <= 0) return; // Quota exceeded for this offer
+
+      // Calculate discount for the allowed units
       let discVal = 0;
       if (o.discountType === 'percent') {
-        discVal = item.price * (o.discountValue / 100);
+        const unitDiscount = item.price * (o.discountValue / 100);
+        discVal = unitDiscount * allowedQuantity;
         if (o.maxDiscountAmount && discVal > o.maxDiscountAmount) {
           discVal = o.maxDiscountAmount;
         }
       } else {
-        discVal = Math.min(o.discountValue, item.price);
+        discVal = Math.min(o.discountValue * allowedQuantity, item.price * allowedQuantity);
       }
       
       if (discVal > bestDiscount) {
         bestDiscount = discVal;
         bestLabel = o.label || o.name || 'Oferta';
+        bestOfferId = o.id;
+        finalDiscountedQuantity = allowedQuantity;
       }
     });
 
     return {
-      finalPrice: Math.max(0, item.price - bestDiscount),
+      finalPrice: bestDiscount > 0 && finalDiscountedQuantity > 0 ? Math.max(0, item.price - (bestDiscount / finalDiscountedQuantity)) : item.price, // Exact discounted unit price
       discountAmount: bestDiscount,
-      offerLabel: bestLabel
+      offerLabel: bestLabel,
+      offerId: bestOfferId,
+      discountedQuantity: finalDiscountedQuantity
     };
   };
 
@@ -1246,6 +1381,24 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let bestId: string | null = null;
 
     applicable.forEach(o => {
+      // Validate quota before considering this offer
+      let isValid = true;
+      if (o.daily_quantity_limit || o.per_customer_daily_limit || o.total_quantity_limit) {
+        const todayRedemptions = offerRedemptions.filter(r => r.offer_id === o.id && r.redemption_date === todayStr);
+        const usedTodayTotal = todayRedemptions.length; // per order applied, assume 1 usage
+        const usedTodayCustomer = customer ? todayRedemptions.filter(r => {
+          const clean1 = (r.customer_phone || '').replace(/\\D/g, '');
+          const clean2 = (customer.phone || '').replace(/\\D/g, '');
+          return clean1 === clean2 && clean1 !== '';
+        }).length : 0;
+        
+        if (o.daily_quantity_limit && usedTodayTotal >= o.daily_quantity_limit) isValid = false;
+        if (o.per_customer_daily_limit && usedTodayCustomer >= o.per_customer_daily_limit) isValid = false;
+        const totalRedemptions = offerRedemptions.filter(r => r.offer_id === o.id).length;
+        if (o.total_quantity_limit && totalRedemptions >= o.total_quantity_limit) isValid = false;
+      }
+      if (!isValid) return;
+
       let discVal = 0;
       if (o.discountType === 'percent') {
         discVal = subtotalAfterItemDiscounts * (o.discountValue / 100);
@@ -1552,7 +1705,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       totalDebtInStreet,
       activeOrdersCount, lowStockCount, totalCustomers,
       currentAccountConfig, updateCurrentAccountConfig,
-      offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers,
+      storeStatus, updateStoreStatus,
+      offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
       cashCloses, performCashClose,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,
       ticketConfig, updateTicketConfig,

@@ -27,7 +27,7 @@ export const Analytics: React.FC = () => {
     adminProducts, adminCategories, orders, totalRevenue, activeOffers, offers,
     addOffer, deleteOffer, cashCloses, performCashClose, getCashCloseMovements,
     getTopSellingProducts, getRevenueByCategory, getRevenueByDay, getOrderTimestamp,
-    formatCurrency, customers, cashMovements
+    formatCurrency, customers, cashMovements, offerRedemptions
   } = useAdmin();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
@@ -57,7 +57,10 @@ export const Analytics: React.FC = () => {
     discountValue: '',
     maxDiscountAmount: '',
     label: 'Oferta',
-    endDate: ''
+    endDate: '',
+    daily_quantity_limit: '',
+    per_customer_daily_limit: '',
+    total_quantity_limit: ''
   });
   const [closePeriodFilter, setClosePeriodFilter] = useState('todos');
   const [closeSortOrder, setCloseSortOrder] = useState<'date-desc' | 'date-asc' | 'revenue-desc' | 'revenue-asc'>('date-desc');
@@ -255,7 +258,11 @@ export const Analytics: React.FC = () => {
       })(),
       endDate: offerForm.endDate,
       active: true,
-      label: offerForm.label || calculatedName
+      label: offerForm.label || calculatedName,
+      daily_quantity_limit: offerForm.daily_quantity_limit ? parseInt(offerForm.daily_quantity_limit) : null,
+      per_customer_daily_limit: offerForm.per_customer_daily_limit ? parseInt(offerForm.per_customer_daily_limit) : null,
+      total_quantity_limit: offerForm.total_quantity_limit ? parseInt(offerForm.total_quantity_limit) : null,
+      limit_strategy: 'discount_only'
     };
     addOffer(offer);
     setOfferForm({
@@ -265,7 +272,10 @@ export const Analytics: React.FC = () => {
       discountValue: '',
       maxDiscountAmount: '',
       label: 'Oferta',
-      endDate: ''
+      endDate: '',
+      daily_quantity_limit: '',
+      per_customer_daily_limit: '',
+      total_quantity_limit: ''
     });
     setShowOfferModal(false);
   };
@@ -693,6 +703,28 @@ export const Analytics: React.FC = () => {
                     <div>
                       <p className="font-bold text-sm text-on-background line-clamp-1 truncate">{title}</p>
                       <p className="text-[10px] text-on-surface-variant font-semibold mt-0.5">{subtitle}</p>
+                      {/* Quota Indicators */}
+                      {(offer.daily_quantity_limit || offer.total_quantity_limit) && (
+                        <div className="flex gap-2 mt-1.5">
+                          {offer.daily_quantity_limit && (
+                            <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-bold">
+                              Límite Diario: {(() => {
+                                const todayStr = new Date().toISOString().split('T')[0];
+                                const usedToday = offerRedemptions.filter(r => r.offer_id === offer.id && r.redemption_date === todayStr).reduce((sum, r) => sum + r.quantity, 0);
+                                return `${usedToday} / ${offer.daily_quantity_limit}`;
+                              })()}
+                            </span>
+                          )}
+                          {offer.total_quantity_limit && (
+                            <span className="text-[9px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded font-bold">
+                              Total: {(() => {
+                                const usedTotal = offerRedemptions.filter(r => r.offer_id === offer.id).reduce((sum, r) => sum + r.quantity, 0);
+                                return `${usedTotal} / ${offer.total_quantity_limit}`;
+                              })()}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-2">
@@ -1016,6 +1048,44 @@ export const Analytics: React.FC = () => {
                     min={new Date().toISOString().split('T')[0]}
                   />
                 </div>
+              </div>
+
+              {/* Quotas / Limits */}
+              <div className="grid grid-cols-3 gap-4 border-t border-outline-variant/10 pt-4 mt-2">
+                <div>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Límite Diario Global</label>
+                  <input
+                    type="number"
+                    value={offerForm.daily_quantity_limit}
+                    onChange={e => setOfferForm({ ...offerForm, daily_quantity_limit: e.target.value })}
+                    placeholder="Ej: 50"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-on-surface"
+                    min="1"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Límite Diario por Cliente</label>
+                  <input
+                    type="number"
+                    value={offerForm.per_customer_daily_limit}
+                    onChange={e => setOfferForm({ ...offerForm, per_customer_daily_limit: e.target.value })}
+                    placeholder="Ej: 2"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-on-surface"
+                    min="1"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Límite Total Oferta</label>
+                  <input
+                    type="number"
+                    value={offerForm.total_quantity_limit}
+                    onChange={e => setOfferForm({ ...offerForm, total_quantity_limit: e.target.value })}
+                    placeholder="Ej: 500"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-on-surface"
+                    min="1"
+                  />
+                </div>
+                <p className="col-span-3 text-[10px] text-on-surface-variant/70 ml-1 mt-1 font-medium text-amber-700">Dejá en blanco si no querés poner límite de cupos.</p>
               </div>
             </div>
 
