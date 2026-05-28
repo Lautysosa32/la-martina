@@ -24,6 +24,16 @@ export interface AdminOrder {
   source?: 'pos' | 'whatsapp' | 'web';
   discount?: number;
   discountLabel?: string;
+  // Nuevos campos para ubicación detallada
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
+  delivery_address_label?: string | null;
+  delivery_house_number?: string | null;
+  delivery_reference?: string | null;
+  delivery_notes?: string | null;
+  delivery_method?: 'envio' | 'retiro' | null;
+  was_limit_override?: boolean;
+  override_reason?: string;
 }
 
 export interface AdminCustomer {
@@ -40,6 +50,11 @@ export interface AdminCustomer {
   birthday?: string; // YYYY-MM-DD
   spent30: number;
   tier: 'Gold' | 'Silver' | 'Bronze' | 'Regular';
+  oldestDebtDays?: number;
+  useCustomAccountLimits?: boolean;
+  customDebtLimit?: number;
+  customDebtDays?: number;
+  accountLimitNotes?: string;
 }
 
 export interface CustomerProfile {
@@ -52,6 +67,19 @@ export interface CustomerProfile {
   apellido?: string;
   direccion?: string;
   isManual?: boolean; // true if created manually from Customers screen
+  useCustomAccountLimits?: boolean;
+  customDebtLimit?: number;
+  customDebtDays?: number;
+  accountLimitNotes?: string;
+}
+
+export interface CurrentAccountConfig {
+  enabled: boolean;
+  maxDebtAmount: number;
+  maxDebtDays: number;
+  warnOnAmountLimit: boolean;
+  warnOnTimeLimit: boolean;
+  allowOverride: boolean;
 }
 
 export interface TicketConfig {
@@ -218,6 +246,10 @@ export interface AdminContextType {
   activeOrdersCount: number;
   lowStockCount: number;
   totalCustomers: number;
+
+  // Current Account Limits
+  currentAccountConfig: CurrentAccountConfig;
+  updateCurrentAccountConfig: (config: Partial<CurrentAccountConfig>) => void;
 
   // Offers
   offers: Offer[];
@@ -449,6 +481,24 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return saved ? JSON.parse(saved) : {};
   });
 
+  const defaultCurrentAccountConfig: CurrentAccountConfig = {
+    enabled: true,
+    maxDebtAmount: 50000,
+    maxDebtDays: 35,
+    warnOnAmountLimit: true,
+    warnOnTimeLimit: true,
+    allowOverride: true,
+  };
+
+  const [currentAccountConfig, setCurrentAccountConfig] = useState<CurrentAccountConfig>(() => {
+    const saved = localStorage.getItem('la-martina-current-account-config');
+    return saved ? { ...defaultCurrentAccountConfig, ...JSON.parse(saved) } : defaultCurrentAccountConfig;
+  });
+
+  const updateCurrentAccountConfig = (updates: Partial<CurrentAccountConfig>) => {
+    setCurrentAccountConfig(prev => ({ ...prev, ...updates }));
+  };
+
   // Customers are now derived from orders for total consistency
   const customers = useMemo(() => {
     const customerMap: Record<string, AdminCustomer> = {};
@@ -460,7 +510,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return tsA - tsB;
     });
 
-    const limit30Days = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const limit30Days = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
     sortedOrders.forEach(o => {
       if (o.status === 'Cancelado') return;
@@ -478,7 +528,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           currentDebt: 0,
           creditLimit: 50000,
           spent30: 0,
-          tier: 'Regular'
+          tier: 'Regular',
+          oldestDebtDays: 0,
         };
       }
 
@@ -494,7 +545,16 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado') {
-        c.currentDebt += (o.total - (o.paidAmount || 0));
+        const debtAmount = o.total - (o.paidAmount || 0);
+        c.currentDebt += debtAmount;
+        
+        // Calculate oldest debt days
+        if (debtAmount > 0 && o.timestamp) {
+          const daysOld = Math.floor((Date.now() - o.timestamp) / (1000 * 60 * 60 * 24));
+          if (!c.oldestDebtDays || daysOld > c.oldestDebtDays) {
+            c.oldestDebtDays = daysOld;
+          }
+        }
       }
     });
 
@@ -518,13 +578,22 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           creditLimit: profile.creditLimit || 50000,
           birthday: profile.birthday,
           spent30: 0,
-          tier: 'Regular'
+          tier: 'Regular',
+          oldestDebtDays: 0,
+          useCustomAccountLimits: profile.useCustomAccountLimits,
+          customDebtLimit: profile.customDebtLimit,
+          customDebtDays: profile.customDebtDays,
+          accountLimitNotes: profile.accountLimitNotes,
         };
       } else {
         const c = customerMap[profile.phone];
         c.hasCurrentAccount = profile.hasCurrentAccount || false;
         c.creditLimit = profile.creditLimit || 50000;
         c.birthday = profile.birthday;
+        c.useCustomAccountLimits = profile.useCustomAccountLimits;
+        c.customDebtLimit = profile.customDebtLimit;
+        c.customDebtDays = profile.customDebtDays;
+        c.accountLimitNotes = profile.accountLimitNotes;
         if (profile.dni) c.dni = profile.dni;
         if (profile.nombre) c.name = `${profile.nombre}${profile.apellido ? ' ' + profile.apellido : ''}`;
         if (profile.direccion) c.address = profile.direccion;
@@ -565,7 +634,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return '+54' + cleaned;
   };
 
-  const updateCustomerProfile = (oldPhone: string, updates: Partial<{ name: string; phone: string; dni: string; birthday: string; creditLimit: number }>) => {
+  const updateCustomerProfile = (oldPhone: string, updates: Partial<{ name: string; phone: string; dni: string; birthday: string; creditLimit: number; useCustomAccountLimits: boolean; customDebtLimit: number; customDebtDays: number; accountLimitNotes: string }>) => {
     // Find current customer by phone
     const targetCustomer = customers.find(c => c.phone === oldPhone);
     if (!targetCustomer) return;
@@ -775,6 +844,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => { localStorage.setItem('la-martina-admin-last-pos-close', lastPOSCloseTimestamp.toString()); }, [lastPOSCloseTimestamp]);
   useEffect(() => { localStorage.setItem('la-martina-admin-customer-profiles', JSON.stringify(customerProfiles)); }, [customerProfiles]);
   useEffect(() => { localStorage.setItem('la-martina-ticket-config', JSON.stringify(ticketConfig)); }, [ticketConfig]);
+  useEffect(() => { localStorage.setItem('la-martina-current-account-config', JSON.stringify(currentAccountConfig)); }, [currentAccountConfig]);
   useEffect(() => { localStorage.setItem('la-martina-cash-register', JSON.stringify(cashRegister)); }, [cashRegister]);
   useEffect(() => { localStorage.setItem('la-martina-invoices', JSON.stringify(invoices)); }, [invoices]);
   useEffect(() => { localStorage.setItem('la-martina-billing-customers', JSON.stringify(billingCustomers)); }, [billingCustomers]);
@@ -822,19 +892,27 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setAdminProducts(prev => prev.map(p => p.badge === t ? { ...p, badge: '' } : p));
   };
 
-  const updateStock = (pid: string, s: number) => setStockMap(prev => ({ ...prev, [pid]: Math.max(0, s) }));
+  const updateStock = (pid: string, s: number) => {
+    const newStock = Math.max(0, Number(s) || 0);
+    setStockMap(prev => ({ ...prev, [pid]: newStock }));
+    useProductStore.getState().updateStock(pid, newStock).catch(console.error);
+  };
   const getStock = (pid: string): number => {
-    if (stockMap[pid] !== undefined) {
-      return stockMap[pid];
+    let stockVal: any;
+    if (stockMap[pid] !== undefined && stockMap[pid] !== null) {
+      stockVal = stockMap[pid];
+    } else {
+      const prod = adminProducts.find(p => p.id === pid);
+      stockVal = prod ? prod.stock : 0;
     }
-    const prod = adminProducts.find(p => p.id === pid);
-    return prod ? (prod.stock ?? 0) : 0;
+    const num = Number(stockVal);
+    return isNaN(num) ? 0 : num;
   };
   const deductStockForOrder = (orderItems: { id: string; quantity: number }[]): { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] } => {
     const insufficient: { id: string; name: string; requested: number; available: number }[] = [];
     // First pass: validate all items
     for (const item of orderItems) {
-      const available = stockMap[item.id] ?? 0;
+      const available = getStock(item.id);
       if (item.quantity > available) {
         const prod = adminProducts.find(p => p.id === item.id);
         insufficient.push({ id: item.id, name: prod?.name || item.id, requested: item.quantity, available });
@@ -845,13 +923,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setStockMap(prev => {
       const next = { ...prev };
       for (const item of orderItems) {
-        next[item.id] = Math.max(0, (next[item.id] ?? 0) - item.quantity);
+        const currentStock = next[item.id] !== undefined ? next[item.id] : getStock(item.id);
+        const newStock = Math.max(0, currentStock - item.quantity);
+        next[item.id] = newStock;
+        
+        // Sync to Supabase in the background
+        if (item.id !== 'PRODUCTO_COMUN' && !item.id.startsWith('GENERICO-')) {
+          useProductStore.getState().updateStock(item.id, newStock).catch(console.error);
+        }
       }
       return next;
     });
     return { success: true, insufficientItems: [] };
   };
-  const lowStockProducts = adminProducts.map(p => ({ ...p, stock: stockMap[p.id] ?? 0 })).filter(p => p.stock < (p.minStock ?? 15)).sort((a, b) => a.stock - b.stock);
+  const lowStockProducts = adminProducts.map(p => ({ ...p, stock: getStock(p.id) })).filter(p => p.stock < (p.minStock ?? 15)).sort((a, b) => a.stock - b.stock);
 
   // Barcode lookup
   const findProductByBarcode = (barcode: string): Product | undefined => {
@@ -859,26 +944,53 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return adminProducts.find(p => p.barcode === barcode);
   };
 
+  let fallbackCatalogCache: Record<string, { n: string; b: string }> | null = null;
+
   const searchProductExternal = async (barcode: string): Promise<Partial<Product> | null> => {
+    // 1. Check OpenFoodFacts API first
     try {
       const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
-      const data = await response.json();
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 1) {
+          const p = data.product;
+          return {
+            name: p.product_name || '',
+            brand: p.brands || '',
+            image: p.image_url || p.image_front_url || '',
+            format: p.quantity || '',
+            barcode: barcode
+          };
+        }
+      }
+    } catch (error) {
+      console.error("Error buscando producto en API externa:", error);
+    }
 
-      if (data.status === 1) {
-        const p = data.product;
+    // 2. Check Local Excel Catalog (35k products JSON)
+    try {
+      if (!fallbackCatalogCache) {
+        const fallbackRes = await fetch('/fallback_catalog.json');
+        if (fallbackRes.ok) {
+          fallbackCatalogCache = await fallbackRes.json();
+        } else {
+          fallbackCatalogCache = {};
+        }
+      }
+
+      if (fallbackCatalogCache && fallbackCatalogCache[barcode]) {
+        const item = fallbackCatalogCache[barcode];
         return {
-          name: p.product_name || '',
-          brand: p.brands || '',
-          image: p.image_url || p.image_front_url || '',
-          format: p.quantity || '',
+          name: item.n,
+          brand: item.b,
           barcode: barcode
         };
       }
-      return null;
     } catch (error) {
-      console.error("Error buscando producto externo:", error);
-      return null;
+      console.error("Error buscando en catálogo de respaldo local:", error);
     }
+
+    return null;
   };
 
   const addAdminOrder = (o: AdminOrder) => {
@@ -886,7 +998,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Don't deduct stock for generic/common products
     o.items.forEach(i => {
       if (i.id !== 'PRODUCTO_COMUN' && !i.id.startsWith('GENERICO-')) {
-        updateStock(i.id, (stockMap[i.id] ?? 0) - i.quantity);
+        updateStock(i.id, getStock(i.id) - i.quantity);
       }
     });
   };
@@ -1379,6 +1491,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       posRevenue,
       totalDebtInStreet,
       activeOrdersCount, lowStockCount, totalCustomers,
+      currentAccountConfig, updateCurrentAccountConfig,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers,
       cashCloses, performCashClose,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,

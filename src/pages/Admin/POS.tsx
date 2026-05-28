@@ -49,7 +49,7 @@ const createTab = (num: number): POSTab => ({
 });
 
 export const POS: React.FC = () => {
-  const { customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts, performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers, orders, cashRegister, openCashRegister, isCashRegisterOpen } = useAdmin();
+  const { customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts, performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers, orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig, ticketConfig } = useAdmin();
 
   const [headerPortal, setHeaderPortal] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -61,6 +61,19 @@ export const POS: React.FC = () => {
   const [prePurchaseCodeInput, setPrePurchaseCodeInput] = useState('');
   const [prePurchaseLoading, setPrePurchaseLoading] = useState(false);
   const [prePurchaseError, setPrePurchaseError] = useState('');
+
+  // Limit warning modal
+  const [showLimitWarning, setShowLimitWarning] = useState<{
+    customerName: string;
+    currentDebt: number;
+    cartTotal: number;
+    newDebt: number;
+    amountLimit: number;
+    oldestDays: number;
+    timeLimit: number;
+    isOverAmount: boolean;
+    isOverTime: boolean;
+  } | null>(null);
 
   const handleLoadPrePurchase = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -405,6 +418,16 @@ export const POS: React.FC = () => {
       }
     }
 
+    if (productId !== 'GENERIC' && productId !== 'PRODUCTO_COMUN' && !productId.startsWith('GENERICO-')) {
+      const availableStock = getStock(productId);
+      const existingItem = cart.find(item => item.productCode === productCode);
+      const existingQty = existingItem ? existingItem.quantity : 0;
+      if (existingQty + searchQty > availableStock) {
+        alert(`Stock insuficiente. Solo quedan ${availableStock} unidades disponibles de este producto.`);
+        return;
+      }
+    }
+
     setCart(prev => {
       const existingIdx = prev.findIndex(item => item.productCode === productCode);
       if (existingIdx !== -1) {
@@ -429,6 +452,14 @@ export const POS: React.FC = () => {
 
   const updateItemQty = (index: number, newQty: number) => {
     if (newQty < 1) return;
+    const item = cart[index];
+    if (item.productId !== 'GENERIC' && item.productId !== 'PRODUCTO_COMUN' && !item.productId.startsWith('GENERICO-')) {
+      const availableStock = getStock(item.productId);
+      if (newQty > availableStock) {
+        alert(`Stock insuficiente. Solo quedan ${availableStock} unidades disponibles de este producto.`);
+        return;
+      }
+    }
     setCart(prev => {
       const n = [...prev];
       n[index].quantity = newQty;
@@ -479,14 +510,8 @@ export const POS: React.FC = () => {
     const customer = customers.find(c => c.dni === ccDni);
     if (customer) {
       if (customer.hasCurrentAccount) {
-        const potentialDebt = customer.currentDebt + cartTotal;
-        if (potentialDebt > customer.creditLimit) {
-          setCcError(`Límite excedido ($${formatCurrency(customer.creditLimit)}). Deuda: $${formatCurrency(customer.currentDebt)}`);
-          setValidatedCustomer(null);
-        } else {
-          setValidatedCustomer(customer);
-          setCcError('');
-        }
+        setValidatedCustomer(customer);
+        setCcError('');
       } else {
         setCcError('El cliente no tiene habilitada la Cuenta Corriente');
         setValidatedCustomer(null);
@@ -523,17 +548,38 @@ export const POS: React.FC = () => {
     setShowManualModal(false);
   };
 
-  const handleCompleteSale = () => {
+  const handleCompleteSale = (override = false) => {
     if (cart.length === 0) return;
     if (selectedPaymentMethod === 'cuenta_corriente') {
       if (!validatedCustomer) {
         alert('Por favor asocie un cliente al principio de la venta.');
         return;
       }
-      const potentialDebt = validatedCustomer.currentDebt + cartTotal;
-      if (potentialDebt > validatedCustomer.creditLimit) {
-        alert(`Límite de crédito excedido. Disponible: $${(validatedCustomer.creditLimit - validatedCustomer.currentDebt).toLocaleString('es-AR')}`);
-        return;
+
+      if (currentAccountConfig.enabled && !override) {
+        const effectiveAmountLimit = validatedCustomer.useCustomAccountLimits ? (validatedCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount) : currentAccountConfig.maxDebtAmount;
+        const effectiveTimeLimit = validatedCustomer.useCustomAccountLimits ? (validatedCustomer.customDebtDays ?? currentAccountConfig.maxDebtDays) : currentAccountConfig.maxDebtDays;
+        
+        const potentialDebt = validatedCustomer.currentDebt + cartTotal;
+        const oldestDays = validatedCustomer.oldestDebtDays || 0;
+        
+        const isOverAmount = currentAccountConfig.warnOnAmountLimit && potentialDebt > effectiveAmountLimit;
+        const isOverTime = currentAccountConfig.warnOnTimeLimit && oldestDays > effectiveTimeLimit;
+
+        if (isOverAmount || isOverTime) {
+          setShowLimitWarning({
+            customerName: validatedCustomer.name,
+            currentDebt: validatedCustomer.currentDebt,
+            cartTotal,
+            newDebt: potentialDebt,
+            amountLimit: effectiveAmountLimit,
+            oldestDays,
+            timeLimit: effectiveTimeLimit,
+            isOverAmount,
+            isOverTime
+          });
+          return;
+        }
       }
     }
 
@@ -565,7 +611,9 @@ export const POS: React.FC = () => {
       items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice, quantity: i.quantity })),
       source: 'pos',
       discount: totalOrderDiscount,
-      discountLabel: totalOrderDiscountLabel
+      discountLabel: totalOrderDiscountLabel,
+      was_limit_override: override,
+      override_reason: override ? 'Aprobado manualmente en caja' : undefined
     });
 
     // Only add cash movement if it's not a credit account sale (money not received yet)
@@ -611,8 +659,8 @@ export const POS: React.FC = () => {
       phone: customerPhone
     });
 
-    // AUTO-SEND WHATSAPP if phone exists
-    if (customerPhone) {
+    // AUTO-SEND WHATSAPP if phone exists and is CC
+    if (customerPhone && selectedPaymentMethod === 'cuenta_corriente') {
       setTimeout(() => {
         handleSendWhatsApp({
           orderId,
@@ -684,13 +732,13 @@ export const POS: React.FC = () => {
         if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); ccInputRef.current?.blur(); setSelectedPaymentMethod('transfer'); }
         return;
       }
-      if (selectedPaymentMethod === 'cuenta_corriente' && validatedCustomer && e.key === 'Enter') { e.preventDefault(); handleCompleteSale(); return; }
+      if (selectedPaymentMethod === 'cuenta_corriente' && validatedCustomer && e.key === 'Enter') { e.preventDefault(); handleCompleteSale(false); return; }
       const idx = PAYMENT_METHODS.findIndex(m => m.id === selectedPaymentMethod);
       if (e.key === 'ArrowRight') { e.preventDefault(); if (idx % 2 === 0) setSelectedPaymentMethod(PAYMENT_METHODS[idx + 1].id); }
       if (e.key === 'ArrowLeft') { e.preventDefault(); if (idx % 2 !== 0) setSelectedPaymentMethod(PAYMENT_METHODS[idx - 1].id); }
       if (e.key === 'ArrowDown') { e.preventDefault(); if (idx < 2) setSelectedPaymentMethod(PAYMENT_METHODS[idx + 2].id); }
       if (e.key === 'ArrowUp') { e.preventDefault(); if (idx >= 2) setSelectedPaymentMethod(PAYMENT_METHODS[idx - 2].id); }
-      if (e.key === 'Enter' && selectedPaymentMethod !== 'cuenta_corriente') { e.preventDefault(); handleCompleteSale(); }
+      if (e.key === 'Enter' && selectedPaymentMethod !== 'cuenta_corriente') { e.preventDefault(); handleCompleteSale(false); }
       if (e.key === 'Escape') { e.preventDefault(); setShowPaymentModal(false); }
     };
     window.addEventListener('keydown', handlePaymentKeyDown);
@@ -979,7 +1027,7 @@ export const POS: React.FC = () => {
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[250] flex items-center justify-center p-8 animate-in fade-in">
                 <div className="bg-white rounded-[3rem] w-full max-w-2xl max-h-[90vh] shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col">
                   <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest flex-shrink-0"><h3 className="text-2xl font-black">Finalizar Venta</h3><button onClick={() => setShowPaymentModal(false)} className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center"><span className="material-symbols-outlined">close</span></button></div>
-                  <div className="p-8 overflow-y-auto no-scrollbar">
+                  <div className="p-5 flex-1 overflow-y-auto no-scrollbar">
                     <div className="text-center mb-8"><p className="text-sm font-bold text-on-surface-variant uppercase mb-2 tracking-widest">Total a Pagar</p><p className="text-6xl font-black text-primary">${formatCurrency(cartTotal, true, true)}</p></div>
                     <div className="grid grid-cols-2 gap-4 mb-8">
                       {PAYMENT_METHODS
@@ -1008,7 +1056,7 @@ export const POS: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="p-8 border-t border-outline-variant/10 bg-surface-container-lowest flex-shrink-0"><button onClick={handleCompleteSale} className="w-full bg-primary text-white font-black text-xl py-6 rounded-2xl shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-transform">Confirmar y Cobrar (Enter)</button><p className="text-center text-[10px] font-bold text-on-surface-variant uppercase mt-4 tracking-widest">Enter para cobrar</p></div>
+                  <div className="p-8 border-t border-outline-variant/10 bg-surface-container-lowest flex-shrink-0"><button onClick={() => handleCompleteSale(false)} className="w-full bg-primary text-white font-black text-xl py-6 rounded-2xl shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-transform">Confirmar y Cobrar (Enter)</button><p className="text-center text-[10px] font-bold text-on-surface-variant uppercase mt-4 tracking-widest">Enter para cobrar</p></div>
                 </div>
               </div>
             )}
@@ -1296,6 +1344,81 @@ export const POS: React.FC = () => {
                 <span className="material-symbols-outlined text-[20px]">check</span>
                 Aceptar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Limit Warning Modal */}
+      {showLimitWarning && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowLimitWarning(null)} />
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="p-6 border-b border-red-100 flex items-center gap-4 bg-red-50 text-red-700">
+              <div className="w-12 h-12 bg-white text-red-600 rounded-2xl flex items-center justify-center shadow-sm">
+                <span className="material-symbols-outlined text-[28px]">gavel</span>
+              </div>
+              <div>
+                <h3 className="text-xl font-black leading-tight">Límite Superado</h3>
+                <p className="text-xs font-bold opacity-80">{showLimitWarning.customerName}</p>
+              </div>
+            </div>
+            
+            <div className="p-8 space-y-4">
+              <p className="text-sm font-bold text-on-background mb-2">Este cliente superó uno o más límites de cuenta corriente. Podés cancelar la operación o continuar bajo tu responsabilidad.</p>
+              
+              <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">Deuda actual:</span>
+                  <span className="font-bold">${formatCurrency(showLimitWarning.currentDebt)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">Total esta compra:</span>
+                  <span className="font-bold text-primary">+ ${formatCurrency(showLimitWarning.cartTotal)}</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t border-outline-variant/10">
+                  <span className="font-black">Nueva deuda:</span>
+                  <span className={`font-black ${showLimitWarning.isOverAmount ? 'text-error' : ''}`}>${formatCurrency(showLimitWarning.newDebt)}</span>
+                </div>
+              </div>
+
+              <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">Límite permitido:</span>
+                  <span className="font-bold">${formatCurrency(showLimitWarning.amountLimit)}</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t border-outline-variant/10">
+                  <span className="text-on-surface-variant">Deuda más antigua:</span>
+                  <span className={`font-bold ${showLimitWarning.isOverTime ? 'text-error' : ''}`}>hace {showLimitWarning.oldestDays} días</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">Límite de días:</span>
+                  <span className="font-bold">{showLimitWarning.timeLimit} días</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-outline-variant/10 flex gap-3 bg-surface-container-lowest">
+              <button
+                onClick={() => setShowLimitWarning(null)}
+                className="flex-1 font-bold text-on-surface-variant bg-white border border-outline-variant/10 hover:bg-black/5 py-4 rounded-2xl transition-colors shadow-sm"
+              >
+                Cancelar
+              </button>
+              {currentAccountConfig.allowOverride ? (
+                <button
+                  onClick={() => {
+                    setShowLimitWarning(null);
+                    handleCompleteSale(true);
+                  }}
+                  className="flex-[2] bg-red-600 text-white font-black py-4 rounded-2xl hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
+                >
+                  Continuar de todas formas
+                </button>
+              ) : (
+                <div className="flex-[2] bg-surface-container-high text-on-surface-variant font-bold py-4 rounded-2xl text-center text-xs px-2 flex items-center justify-center opacity-70">
+                  Override desactivado en Configuración
+                </div>
+              )}
             </div>
           </div>
         </div>

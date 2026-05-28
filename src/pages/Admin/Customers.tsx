@@ -22,6 +22,28 @@ export const Customers: React.FC = () => {
   const [editDni, setEditDni] = useState('');
   const [editBirthday, setEditBirthday] = useState('');
 
+  const { currentAccountConfig } = useAdmin();
+  const [showLimitsForm, setShowLimitsForm] = useState(false);
+  const [limitsForm, setLimitsForm] = useState({
+    useCustomAccountLimits: false,
+    customDebtLimit: 50000,
+    customDebtDays: 35,
+    accountLimitNotes: ''
+  });
+
+  useEffect(() => {
+    if (selectedCustomer) {
+      const c = customers.find(x => x.phone === selectedCustomer.phone) || selectedCustomer;
+      setLimitsForm({
+        useCustomAccountLimits: c.useCustomAccountLimits || false,
+        customDebtLimit: c.customDebtLimit || currentAccountConfig.maxDebtAmount,
+        customDebtDays: c.customDebtDays || currentAccountConfig.maxDebtDays,
+        accountLimitNotes: c.accountLimitNotes || ''
+      });
+      setShowLimitsForm(false);
+    }
+  }, [selectedCustomer?.phone, customers, currentAccountConfig]);
+
   // New Customer Modal
   const [showNewCustomerModal, setShowNewCustomerModal] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ nombre: '', apellido: '', telefono: '', direccion: '', dni: '' });
@@ -480,27 +502,138 @@ export const Customers: React.FC = () => {
                     </button>
                   </div>
 
-                  {currentCustomer.hasCurrentAccount && (
-                    <div className="p-5 rounded-2xl bg-surface-container-lowest border border-outline-variant/10 shadow-sm">
-                      <div className="flex justify-between items-center mb-4">
-                        <p className="text-sm font-medium text-on-surface-variant">Deuda Actual</p>
-                        <p className={`text-2xl font-black ${currentCustomer.currentDebt > 0 ? 'text-error' : 'text-green-600'}`}>
-                          ${formatCurrency(currentCustomer.currentDebt)}
-                        </p>
+                  {currentCustomer.hasCurrentAccount && (() => {
+                    const effectiveAmountLimit = currentCustomer.useCustomAccountLimits ? (currentCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount) : currentAccountConfig.maxDebtAmount;
+                    const effectiveTimeLimit = currentCustomer.useCustomAccountLimits ? (currentCustomer.customDebtDays ?? currentAccountConfig.maxDebtDays) : currentAccountConfig.maxDebtDays;
+                    const oldestDays = currentCustomer.oldestDebtDays || 0;
+                    
+                    const isOverAmount = currentCustomer.currentDebt > effectiveAmountLimit;
+                    const isOverTime = oldestDays > effectiveTimeLimit;
+                    const isOverLimit = isOverAmount || isOverTime;
+
+                    return (
+                      <div className="space-y-4">
+                        {isOverLimit && (
+                          <div className="p-4 rounded-xl bg-red-50 border border-red-200">
+                            <div className="flex items-center gap-2 text-red-700 font-bold text-sm mb-2">
+                              <span className="material-symbols-outlined text-[18px]">warning</span>
+                              Este cliente superó el límite de cuenta corriente
+                            </div>
+                            <ul className="text-xs text-red-600 space-y-1">
+                              {isOverAmount && <li>• Deuda total: ${formatCurrency(currentCustomer.currentDebt)} / Límite: ${formatCurrency(effectiveAmountLimit)}</li>}
+                              {isOverTime && <li>• Deuda vencida hace {oldestDays} días / Límite: {effectiveTimeLimit} días</li>}
+                            </ul>
+                          </div>
+                        )}
+
+                        <div className={`p-5 rounded-2xl border shadow-sm ${isOverLimit ? 'bg-red-50/50 border-red-100' : 'bg-surface-container-lowest border-outline-variant/10'}`}>
+                          <div className="flex justify-between items-start mb-4">
+                            <div>
+                              <p className="text-sm font-medium text-on-surface-variant">Deuda Actual</p>
+                              <p className={`text-2xl font-black ${currentCustomer.currentDebt > 0 ? (isOverAmount ? 'text-error' : 'text-orange-600') : 'text-green-600'}`}>
+                                ${formatCurrency(currentCustomer.currentDebt)}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[10px] text-on-surface-variant uppercase font-bold tracking-wider">Antigüedad</p>
+                              <p className={`text-sm font-bold ${isOverTime ? 'text-error' : 'text-on-background'}`}>
+                                {oldestDays} días
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-xs text-on-surface-variant bg-surface-container-low p-2 rounded-lg mb-4 flex justify-between">
+                            <span>Límite: ${formatCurrency(effectiveAmountLimit)}</span>
+                            <span>Max: {effectiveTimeLimit} días</span>
+                          </div>
+
+                          {currentCustomer.currentDebt > 0 ? (
+                            <button
+                              onClick={() => setSettleModalData({ phone: currentCustomer.phone, name: currentCustomer.name, debt: currentCustomer.currentDebt })}
+                              className="w-full bg-surface-container-high hover:bg-green-100 hover:text-green-700 text-on-surface font-bold py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">payments</span>
+                              Saldar Cuenta (${formatCurrency(currentCustomer.currentDebt)})
+                            </button>
+                          ) : (
+                            <p className="text-xs text-center text-on-surface-variant font-bold bg-surface-container-low py-3 rounded-xl">Al día</p>
+                          )}
+                        </div>
+
+                        {/* Limits Editor */}
+                        <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-4">
+                          <button
+                            onClick={() => setShowLimitsForm(!showLimitsForm)}
+                            className="w-full flex justify-between items-center text-sm font-bold text-on-surface-variant hover:text-primary transition-colors"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="material-symbols-outlined text-[18px]">tune</span>
+                              Ampliar o disminuir límites
+                            </span>
+                            <span className="material-symbols-outlined text-[18px]">
+                              {showLimitsForm ? 'expand_less' : 'expand_more'}
+                            </span>
+                          </button>
+
+                          {showLimitsForm && (
+                            <div className="mt-4 pt-4 border-t border-outline-variant/10 space-y-4">
+                              <label className="flex items-center gap-3 p-3 bg-surface-container-low rounded-xl cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={limitsForm.useCustomAccountLimits}
+                                  onChange={e => setLimitsForm({ ...limitsForm, useCustomAccountLimits: e.target.checked })}
+                                  className="w-4 h-4 accent-primary"
+                                />
+                                <span className="text-xs font-bold">Usar límites personalizados</span>
+                              </label>
+
+                              {limitsForm.useCustomAccountLimits && (
+                                <div className="space-y-3">
+                                  <div>
+                                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Límite Monetario ($)</label>
+                                    <input
+                                      type="number"
+                                      value={limitsForm.customDebtLimit}
+                                      onChange={e => setLimitsForm({ ...limitsForm, customDebtLimit: Number(e.target.value) })}
+                                      className="w-full bg-white border border-outline-variant/20 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-primary"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Límite Temporal (Días)</label>
+                                    <input
+                                      type="number"
+                                      value={limitsForm.customDebtDays}
+                                      onChange={e => setLimitsForm({ ...limitsForm, customDebtDays: Number(e.target.value) })}
+                                      className="w-full bg-white border border-outline-variant/20 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-primary"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Observaciones / Motivo</label>
+                                    <input
+                                      type="text"
+                                      value={limitsForm.accountLimitNotes}
+                                      onChange={e => setLimitsForm({ ...limitsForm, accountLimitNotes: e.target.value })}
+                                      placeholder="Ej: Cliente de confianza"
+                                      className="w-full bg-white border border-outline-variant/20 rounded-lg px-3 py-2 text-sm outline-none focus:border-primary"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                              
+                              <button
+                                onClick={() => {
+                                  updateCustomerProfile(currentCustomer.phone, limitsForm);
+                                  setShowLimitsForm(false);
+                                }}
+                                className="w-full bg-primary text-white font-bold py-2 rounded-xl text-xs hover:bg-primary/90"
+                              >
+                                Guardar Límites
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      {currentCustomer.currentDebt > 0 ? (
-                        <button
-                          onClick={() => setSettleModalData({ phone: currentCustomer.phone, name: currentCustomer.name, debt: currentCustomer.currentDebt })}
-                          className="w-full bg-surface-container-high hover:bg-green-100 hover:text-green-700 text-on-surface font-bold py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2"
-                        >
-                          <span className="material-symbols-outlined text-[18px]">payments</span>
-                          Saldar Cuenta (${formatCurrency(currentCustomer.currentDebt)})
-                        </button>
-                      ) : (
-                        <p className="text-xs text-center text-on-surface-variant font-bold bg-surface-container-low py-3 rounded-xl">Al día</p>
-                      )}
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
 

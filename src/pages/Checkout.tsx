@@ -3,6 +3,7 @@ import { useCart } from '../context/CartContext';
 import { useAuth } from '../stores/useAuthStore';
 import { useAdmin } from '../context/AdminContext';
 import { Link, useNavigate } from 'react-router-dom';
+import { MapSelector } from '../components/MapSelector';
 
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
@@ -12,17 +13,27 @@ export const Checkout: React.FC = () => {
   const [isOrdered, setIsOrdered] = useState(false);
   const [stockError, setStockError] = useState<{ id: string; name: string; requested: number; available: number }[] | null>(null);
   const [isMapModalOpen, setIsMapModalOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
+  // Delivery method selection
   const [deliveryMethod, setDeliveryMethod] = useState<'retiro' | 'envio'>(
     (localStorage.getItem('la-martina-delivery-method') as 'retiro' | 'envio') || 'envio'
   );
 
   const isPickup = deliveryMethod === 'retiro';
 
+  // Map & Address specific details
+  const savedProfileAddress = user?.address || '';
+  const [usingProfileAddress, setUsingProfileAddress] = useState<boolean>(!!user?.address);
+  const [deliveryCoords, setDeliveryCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [deliveryAddressLabel, setDeliveryAddressLabel] = useState<string>('');
+  const [deliveryHouseNumber, setDeliveryHouseNumber] = useState<string>('');
+  const [deliveryReference, setDeliveryReference] = useState<string>('');
+  const [deliveryNotes, setDeliveryNotes] = useState<string>('');
+
   const [formData, setFormData] = useState({
     name: user?.name || '',
     phone: user?.phone || '',
-    address: isPickup ? '' : (user?.address || ''),
     notes: '',
     paymentMethod: 'cash',
     deliveryTime: isPickup ? 'Retiro en sucursal' : 'Lo antes posible (Entrega en 30-60 min)'
@@ -31,9 +42,9 @@ export const Checkout: React.FC = () => {
   const handleMethodChange = (method: 'retiro' | 'envio') => {
     setDeliveryMethod(method);
     localStorage.setItem('la-martina-delivery-method', method);
+    setFormError(null);
     setFormData(prev => ({
       ...prev,
-      address: method === 'retiro' ? '' : (user?.address || ''),
       deliveryTime: method === 'retiro' ? 'Retiro en sucursal' : 'Lo antes posible (Entrega en 30-60 min)'
     }));
   };
@@ -75,16 +86,48 @@ export const Checkout: React.FC = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const confirmMapLocation = () => {
-    if (!formData.address) {
-      setFormData(prev => ({ ...prev, address: 'Ubicación seleccionada en mapa (La Paz, Mendoza)' }));
-    }
+  const handleLocationSelected = (lat: number, lng: number, address: string) => {
+    setDeliveryCoords({ lat, lng });
+    setDeliveryAddressLabel(address);
+    setUsingProfileAddress(false);
+    setFormError(null);
     setIsMapModalOpen(false);
+  };
+
+  const handleSwitchToMapAddress = () => {
+    setUsingProfileAddress(false);
+    setDeliveryCoords(null);
+    setDeliveryAddressLabel('');
+    setDeliveryHouseNumber('');
+    setDeliveryReference('');
   };
 
   const handleOrder = (e: React.FormEvent) => {
     e.preventDefault();
     setStockError(null);
+    setFormError(null);
+
+    // Validation for delivery map location
+    if (!isPickup) {
+      // Valid if using saved profile address OR if new map coords were selected
+      const hasValidAddress = usingProfileAddress && savedProfileAddress ? true : !!deliveryCoords;
+      if (!hasValidAddress) {
+        setFormError('Por favor, seleccioná tu ubicación en el mapa antes de continuar.');
+        window.scrollTo({ top: 200, behavior: 'smooth' });
+        return;
+      }
+      // Only require house number and reference if using the map (not saved address)
+      if (!usingProfileAddress) {
+        if (!deliveryHouseNumber.trim()) {
+          setFormError('Por favor, ingresá el número de casa, lote o depto.');
+          return;
+        }
+        if (!deliveryReference.trim()) {
+          setFormError('Por favor, ingresá una referencia visual para guiar al repartidor.');
+          return;
+        }
+      }
+    }
 
     // Final stock validation before confirming
     const stockResult = deductStockForOrder(items.map(i => ({ id: i.id, quantity: i.quantity })));
@@ -96,6 +139,19 @@ export const Checkout: React.FC = () => {
     const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
     const dateStr = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+    // Build address string — use saved profile address or newly selected map address
+    const backwardAddressString = isPickup
+      ? 'Retiro en sucursal'
+      : usingProfileAddress && savedProfileAddress
+        ? savedProfileAddress
+        : `${deliveryAddressLabel} ${deliveryHouseNumber ? 'Nº ' + deliveryHouseNumber : ''} (${deliveryReference})`;
+
+    // Resolve final delivery coordinates
+    // If using saved profile address → use stored coords; if using new map → use deliveryCoords
+    const finalLat = usingProfileAddress ? (user?.address_lat ?? null) : (deliveryCoords?.lat ?? null);
+    const finalLng = usingProfileAddress ? (user?.address_lng ?? null) : (deliveryCoords?.lng ?? null);
+    const finalAddressLabel = usingProfileAddress ? savedProfileAddress : deliveryAddressLabel;
+
     // Guardar en el historial del usuario
     const userOrder = {
       id: orderId,
@@ -103,13 +159,20 @@ export const Checkout: React.FC = () => {
       total: finalTotal,
       itemsCount: totalItems,
       status: 'Procesando' as const,
-      address: formData.address,
+      address: backwardAddressString,
       deliveryTime: formData.deliveryTime,
       items: [...items],
       discount: activeOrderOfferDiscount,
-      discountLabel: activeOrderOfferLabel || undefined
+      discountLabel: activeOrderOfferLabel || undefined,
+      delivery_lat: finalLat,
+      delivery_lng: finalLng,
+      delivery_address_label: finalAddressLabel || null,
+      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber || null),
+      delivery_reference: usingProfileAddress ? null : (deliveryReference || null),
+      delivery_notes: deliveryNotes || null,
+      delivery_method: isPickup ? ('retiro' as const) : ('envio' as const)
     };
-    addOrder(userOrder);
+    addOrder(userOrder as any);
 
     // Guardar en el panel de administración
     const adminOrder = {
@@ -118,7 +181,7 @@ export const Checkout: React.FC = () => {
       timestamp: Date.now(),
       customer: formData.name || 'Cliente Anónimo',
       phone: formData.phone,
-      address: formData.address,
+      address: backwardAddressString,
       deliveryTime: formData.deliveryTime,
       method: isPickup ? 'Retiro' : 'Envío',
       paymentMethod: formData.paymentMethod,
@@ -127,9 +190,16 @@ export const Checkout: React.FC = () => {
       total: finalTotal,
       items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity })),
       discount: activeOrderOfferDiscount,
-      discountLabel: activeOrderOfferLabel || undefined
+      discountLabel: activeOrderOfferLabel || undefined,
+      delivery_lat: finalLat,
+      delivery_lng: finalLng,
+      delivery_address_label: finalAddressLabel || null,
+      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber || null),
+      delivery_reference: usingProfileAddress ? null : (deliveryReference || null),
+      delivery_notes: deliveryNotes || null,
+      delivery_method: isPickup ? 'retiro' : 'envio'
     };
-    addAdminOrder(adminOrder);
+    addAdminOrder(adminOrder as any);
 
     setIsOrdered(true);
 
@@ -198,6 +268,13 @@ export const Checkout: React.FC = () => {
           </div>
         </div>
 
+        {formError && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-2 animate-in slide-in-from-top-2 duration-300">
+            <span className="material-symbols-outlined text-red-600 text-[20px]">error</span>
+            <p className="text-sm font-bold text-red-700">{formError}</p>
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row gap-12 items-start">
           <form onSubmit={handleOrder} className="flex-1 w-full space-y-8">
             {/* Paso 1: Datos */}
@@ -209,36 +286,153 @@ export const Checkout: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-on-surface-variant">Nombre Completo</label>
-                  <input required name="name" value={formData.name} onChange={handleInputChange} type="text" placeholder="Juan Pérez" className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all" />
+                  <input required name="name" value={formData.name} onChange={handleInputChange} type="text" placeholder="Juan Pérez" className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-on-surface-variant">Teléfono / WhatsApp</label>
-                  <input required name="phone" value={formData.phone} onChange={handleInputChange} type="tel" placeholder="261 455 6677" className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all" />
+                  <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
+                    <span className="material-symbols-outlined pl-4 text-on-surface-variant text-[20px] shrink-0">call</span>
+                    <span className="pl-2 pr-1.5 text-on-surface font-semibold text-sm shrink-0 border-r border-outline-variant/20 mr-2">+54</span>
+                    <input 
+                      required 
+                      type="tel" 
+                      placeholder="261 455 6677" 
+                      value={formData.phone.startsWith('+54') ? formData.phone.substring(3) : (formData.phone.startsWith('54') ? formData.phone.substring(2) : formData.phone)} 
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        setFormData(prev => ({ ...prev, phone: val ? '+54' + val : '' }));
+                      }} 
+                      className="w-full bg-transparent py-3 pr-4 outline-none font-semibold text-sm" 
+                    />
+                  </div>
                 </div>
+
                 {!isPickup && (
-                  <div className="md:col-span-2 space-y-2">
-                    <label className="text-sm font-bold text-on-surface-variant">Dirección de Entrega</label>
-                    <div className="relative">
-                      <input required name="address" value={formData.address} onChange={handleInputChange} type="text" placeholder="Calle, Número, Departamento..." className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all" />
-                      <button type="button" onClick={() => setIsMapModalOpen(true)} className="mt-2 text-primary text-sm font-bold flex items-center gap-1 hover:underline px-1">
-                        <span className="material-symbols-outlined text-[18px]">map</span>
-                        Seleccionar en mapa
-                      </button>
+                  <div className="md:col-span-2 space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-on-surface-variant block">Ubicación de Entrega (Mapa)</label>
+
+                      {/* CASO 1: Tiene dirección guardada en el perfil y la está usando */}
+                      {usingProfileAddress && savedProfileAddress ? (
+                        <div className="space-y-2">
+                          <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex justify-between items-center gap-4">
+                            <div className="flex gap-3 items-center min-w-0">
+                              <span className="material-symbols-outlined text-primary shrink-0 text-3xl">home</span>
+                              <div className="min-w-0">
+                                <p className="text-xs text-primary font-bold uppercase tracking-wider">Dirección del perfil</p>
+                                <p className="font-bold text-sm text-on-surface leading-tight mt-0.5 line-clamp-2">{savedProfileAddress}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleSwitchToMapAddress}
+                            className="text-red-500 text-xs font-bold hover:text-red-600 transition-colors flex items-center gap-1 pl-1"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">location_on</span>
+                            Usar otra ubicación
+                          </button>
+                        </div>
+
+                      /* CASO 2: Seleccionó nueva ubicación en el mapa */
+                      ) : deliveryCoords ? (
+                        <div className="space-y-2">
+                          <div className="bg-green-50/50 border border-green-200 rounded-2xl p-4 flex justify-between items-center gap-4 animate-in fade-in duration-300">
+                            <div className="flex gap-3 items-center min-w-0">
+                              <span className="material-symbols-outlined text-green-600 shrink-0 text-3xl">location_on</span>
+                              <div className="min-w-0">
+                                <p className="text-xs text-green-600 font-bold uppercase tracking-wider">Dirección Seleccionada</p>
+                                <p className="font-bold text-sm text-on-surface truncate leading-tight mt-0.5">{deliveryAddressLabel}</p>
+                                <p className="text-[10px] text-on-surface-variant font-medium mt-0.5">Lat: {deliveryCoords.lat.toFixed(5)}, Lng: {deliveryCoords.lng.toFixed(5)}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setIsMapModalOpen(true)}
+                              className="bg-white hover:bg-green-50 border border-green-200 text-green-700 font-bold px-4 py-2.5 rounded-xl text-xs transition-all shrink-0 shadow-sm"
+                            >
+                              CAMBIAR
+                            </button>
+                          </div>
+                          {/* Mostrar link para volver a dirección del perfil si tiene una */}
+                          {savedProfileAddress && (
+                            <button
+                              type="button"
+                              onClick={() => setUsingProfileAddress(true)}
+                              className="text-primary/70 text-xs font-bold hover:text-primary transition-colors flex items-center gap-1 pl-1"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">home</span>
+                              Volver a mi dirección guardada
+                            </button>
+                          )}
+                        </div>
+
+                      /* CASO 3: Sin dirección — botón para abrir el mapa */
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsMapModalOpen(true)}
+                          className="w-full bg-red-50 hover:bg-red-100/70 border border-dashed border-red-300 text-red-700 rounded-2xl p-5 font-bold text-sm flex flex-col items-center justify-center gap-2 transition-all hover:scale-[1.01]"
+                        >
+                          <span className="material-symbols-outlined text-red-600 text-3xl animate-bounce">location_on</span>
+                          <span>SELECCIONAR UBICACIÓN EN MAPA * (REQUERIDO)</span>
+                          <span className="text-[10px] text-red-600/70 font-medium">Marcá tu casa en el mapa para guiar al repartidor</span>
+                        </button>
+                      )}
                     </div>
+
+                    {deliveryCoords && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 animate-in slide-in-from-top-3 duration-500">
+                        <div className="space-y-2">
+                          <label className="text-sm font-bold text-on-surface-variant">Número de casa / Altura / Lote *</label>
+                          <input 
+                            required 
+                            type="text" 
+                            placeholder="Ej: 145, Manzana B Lote 4" 
+                            value={deliveryHouseNumber}
+                            onChange={(e) => setDeliveryHouseNumber(e.target.value)}
+                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" 
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-bold text-on-surface-variant">Referencia visual *</label>
+                          <input 
+                            required 
+                            type="text" 
+                            placeholder="Ej: Portón negro, casa de esquina" 
+                            value={deliveryReference}
+                            onChange={(e) => setDeliveryReference(e.target.value)}
+                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" 
+                          />
+                        </div>
+                        <div className="sm:col-span-2 space-y-2">
+                          <label className="text-sm font-bold text-on-surface-variant">Aclaración adicional para delivery</label>
+                          <input 
+                            type="text" 
+                            placeholder="Ej: Timbre roto, llamar al celular al llegar" 
+                            value={deliveryNotes}
+                            onChange={(e) => setDeliveryNotes(e.target.value)}
+                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-medium" 
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
+
                 {isPickup && (
                   <div className="md:col-span-2 bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10">
                     <div className="flex items-start gap-3">
                       <span className="material-symbols-outlined text-primary text-[24px] mt-0.5">storefront</span>
                       <div>
-                        <p className="font-bold text-on-surface">Martina Supermercado</p>
+                        <p className="font-bold text-on-surface">La Martina Supermercado</p>
                         <p className="text-sm text-on-surface-variant">La Paz, Mendoza</p>
                         <p className="text-xs text-on-surface-variant mt-1">Horario: Lunes a Sábados 8:00 - 21:00</p>
                       </div>
                     </div>
                   </div>
                 )}
+
                 <div className="md:col-span-2 space-y-4">
                   <label className="text-sm font-bold text-on-surface-variant">{isPickup ? 'Horario de Retiro' : 'Horario de Entrega'}</label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -365,7 +559,7 @@ export const Checkout: React.FC = () => {
                 {items.map(item => (
                   <div key={item.id} className="flex gap-4 items-center">
                     <div className="w-12 h-12 bg-[#fcf9f8] rounded-lg p-1">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-contain mix-blend-multiply" />
+                      <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain mix-blend-multiply" />
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-bold line-clamp-1">{item.name}</p>
@@ -405,32 +599,14 @@ export const Checkout: React.FC = () => {
         </div>
       </div>
 
-      <MapModal isOpen={isMapModalOpen} onClose={() => setIsMapModalOpen(false)} onConfirm={confirmMapLocation} />
+      {isMapModalOpen && (
+        <MapSelector 
+          initialLat={deliveryCoords?.lat}
+          initialLng={deliveryCoords?.lng}
+          onClose={() => setIsMapModalOpen(false)} 
+          onLocationSelected={handleLocationSelected} 
+        />
+      )}
     </>
-  );
-};
-
-const MapModal: React.FC<{ isOpen: boolean; onClose: () => void; onConfirm: () => void }> = ({ isOpen, onClose, onConfirm }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-in fade-in duration-300">
-      <div className="absolute inset-0 bg-on-background/60 backdrop-blur-sm" onClick={onClose}></div>
-      <div className="bg-white w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl relative z-10 animate-in zoom-in-95 duration-300">
-        <div className="p-6 border-b border-outline-variant/20 flex justify-between items-center">
-          <h3 className="text-xl font-bold">Seleccioná tu ubicación</h3>
-          <button onClick={onClose} className="hover:bg-surface-container-high p-2 rounded-full transition-colors"><span className="material-symbols-outlined">close</span></button>
-        </div>
-        <div className="h-100 bg-surface-container-low relative">
-          <iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3345.8340798739953!2d-67.5539972!3d-33.4588047!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x967f5d9a53d32efb%3A0x20989bacf6605d80!2sMartina%20supermercado!5e0!3m2!1ses-419!2sar!4v1714567890123!5m2!1ses-419!2sar" width="100%" height="100%" style={{ border: 0 }} allowFullScreen={true} loading="lazy"></iframe>
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="relative mb-8"><span className="material-symbols-outlined text-primary text-5xl drop-shadow-md animate-bounce">location_on</span><div className="w-4 h-1 bg-black/20 rounded-full blur-sm absolute -bottom-1 left-1/2 -translate-x-1/2 scale-x-150"></div></div>
-          </div>
-        </div>
-        <div className="p-6 bg-surface-container-lowest flex flex-col gap-4">
-          <p className="text-sm text-on-surface-variant flex items-center gap-2 bg-primary/5 p-3 rounded-xl border border-primary/10"><span className="material-symbols-outlined text-primary">info</span>Arrastrá el mapa hasta que el pin rojo esté sobre tu domicilio.</p>
-          <button onClick={onConfirm} className="w-full bg-primary text-white font-bold py-4 rounded-xl hover:bg-primary/90 transition-all shadow-md">CONFIRMAR UBICACIÓN</button>
-        </div>
-      </div>
-    </div>
   );
 };

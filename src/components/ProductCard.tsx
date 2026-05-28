@@ -2,10 +2,14 @@ import React from 'react';
 import { Product } from '../data/mockData';
 import { useCart } from '../context/CartContext';
 import { useFavorites } from '../context/FavoritesContext';
+import { useAuth } from '../stores/useAuthStore';
+import { useNavigate } from 'react-router-dom';
 
 export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }> = ({ product, showQuantity = false }) => {
   const { items, addItem, updateQuantity, getStock } = useCart();
   const { toggleFavorite, isFavorite } = useFavorites();
+  const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
   const cartItem = items.find(item => item.id === product.id);
   const quantity = cartItem ? cartItem.quantity : 0;
@@ -49,12 +53,17 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
 
         <img
           src={product.image}
-          alt={product.name}
+          alt=""
+          aria-hidden="true"
           className={`object-contain max-h-full max-w-full mix-blend-multiply group-hover:scale-105 transition-transform duration-300 ${isOutOfStock ? 'grayscale' : ''}`}
         />
         <button
           onClick={(e) => {
             e.preventDefault();
+            if (!isAuthenticated) {
+              navigate('/profile');
+              return;
+            }
             toggleFavorite(product);
           }}
           className={`absolute top-2 right-2 w-9 h-9 rounded-full flex items-center justify-center transition-all z-20 ${isFav
@@ -65,6 +74,8 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
           <span
             className="material-symbols-outlined text-[18px] transition-all duration-300"
             style={{ fontVariationSettings: `'FILL' ${isFav ? 1 : 0}, 'wght' 400, 'GRAD' 0, 'opsz' 24` }}
+            aria-hidden="true"
+            translate="no"
           >
             favorite
           </span>
@@ -95,7 +106,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
             disabled
             className="w-10 h-10 rounded-full bg-gray-200 text-gray-400 flex items-center justify-center cursor-not-allowed shrink-0"
           >
-            <span className="material-symbols-outlined">block</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">block</span>
           </button>
         ) : quantity > 0 || showQuantity ? (
           <div className="flex items-center justify-between bg-surface-container-high rounded-full p-1 min-w-[90px]">
@@ -103,7 +114,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
               onClick={() => updateQuantity(product.id, quantity - 1)}
               className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest transition-colors"
             >
-              <span className="material-symbols-outlined text-[18px]">remove</span>
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">remove</span>
             </button>
             <span className="font-body-md text-sm font-bold w-6 text-center">{quantity || 1}</span>
             <button
@@ -111,7 +122,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
               disabled={!canAddMore}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors shadow-sm ${canAddMore ? 'bg-primary-container text-on-primary-container hover:bg-primary' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
             >
-              <span className="material-symbols-outlined text-[18px]">add</span>
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">add</span>
             </button>
           </div>
         ) : (
@@ -119,7 +130,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
             onClick={handleAdd}
             className="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center hover:bg-primary transition-colors shadow-sm shrink-0"
           >
-            <span className="material-symbols-outlined">add</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">add</span>
           </button>
         )}
       </div>

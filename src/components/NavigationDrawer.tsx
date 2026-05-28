@@ -29,13 +29,13 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
         style={{ top: '8%', height: '92%' }}
       >
         {/* Top Section: Categories */}
-        <div className="flex flex-col overflow-hidden" style={{ height: '70%', paddingTop: '4%' }}>
+        <div className="flex flex-col overflow-hidden" style={{ height: '70%' }}>
           <div className="px-[6%] pb-[2%] shrink-0" style={{ height: '12%', display: 'flex', alignItems: 'center' }}>
             <h2 className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider px-2">
               Categorías
             </h2>
           </div>
-          <ul className="flex flex-col justify-around px-[3%] overflow-hidden" style={{ height: '88%' }}>
+          <ul className="flex flex-col justify-around px-[5%] overflow-hidden" style={{ height: '70%' }}>
             {categories.map((cat) => (
               <li key={cat.id} style={{ height: '14%' }} className="flex items-center">
                 <NavLink
@@ -59,6 +59,8 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
                             isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary transition-colors'
                           )}
                           data-icon={getIconForCategory(cat.id)}
+                          aria-hidden="true"
+                          translate="no"
                         >
                           {getIconForCategory(cat.id)}
                         </span>
@@ -69,6 +71,8 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
                           'material-symbols-outlined transition-colors shrink-0',
                           isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary'
                         )}
+                        aria-hidden="true"
+                        translate="no"
                       >
                         chevron_right
                       </span>
@@ -90,7 +94,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
               Información
             </h3>
           </div>
-          <ul className="flex flex-col justify-around" style={{ height: '78%' }}>
+          <ul className="flex flex-col justify-around" style={{ height: '70%' }}>
             {[
               { label: 'Más información', icon: 'info', path: '/about' },
               { label: 'Preguntas Frecuentes', icon: 'help', path: '/faq' },
@@ -108,7 +112,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
                     )
                   }
                 >
-                  <span className="material-symbols-outlined text-on-surface-variant shrink-0">
+                  <span className="material-symbols-outlined text-on-surface-variant shrink-0" aria-hidden="true" translate="no">
                     {item.icon}
                   </span>
                   <span className="font-body-md text-xs sm:text-sm font-semibold truncate">{item.label}</span>

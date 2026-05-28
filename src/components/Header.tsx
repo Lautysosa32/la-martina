@@ -64,7 +64,7 @@ export const Header: React.FC = () => {
             onClick={() => setIsDrawerOpen(!isDrawerOpen)}
             className="hover:opacity-90 transition-opacity flex items-center justify-center text-white"
           >
-            <span className="material-symbols-outlined">menu</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">menu</span>
           </button>
           <Link
             to="/"
@@ -72,7 +72,7 @@ export const Header: React.FC = () => {
               isSearchActive ? 'max-w-0 opacity-0 pointer-events-none ml-0 md:max-w-[150px] md:opacity-100 md:ml-2' : 'max-w-[150px] opacity-100 ml-2'
             } hover:opacity-90`}
           >
-            <img src={logo} alt="La Martina Supermercado" className="h-9 w-20 object-contain" />
+            <img src={logo} alt="" aria-hidden="true" translate="no" className="h-9 w-20 object-contain" />
           </Link>
         </div>
 
@@ -105,11 +105,11 @@ export const Header: React.FC = () => {
                 }}
                 className="absolute right-9 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <span className="material-symbols-outlined text-[18px]">close</span>
+                <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">close</span>
               </button>
             )}
             <button type="submit" className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 text-primary hover:opacity-80 transition-opacity">
-              <span className="material-symbols-outlined font-bold text-[22px]">search</span>
+              <span className="material-symbols-outlined font-bold text-[22px]" aria-hidden="true" translate="no">search</span>
             </button>
           </form>
 
@@ -129,7 +129,7 @@ export const Header: React.FC = () => {
                         className="flex items-center gap-3 p-3 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/5 last:border-none group"
                       >
                         <div className="w-12 h-12 bg-white rounded-xl p-1 shrink-0 border border-outline-variant/10 group-hover:border-primary/20 transition-colors">
-                          <img src={product.image} alt={product.name} className="w-full h-full object-contain" />
+                          <img src={product.image} alt="" aria-hidden="true" className="w-full h-full object-contain" />
                         </div>
                         <div className="flex-1 min-w-0 flex flex-col justify-center">
                           <p className="text-on-surface font-bold text-[13px] sm:text-sm line-clamp-1 leading-tight">{product.name}</p>
@@ -146,12 +146,12 @@ export const Header: React.FC = () => {
                     className="p-4 text-center text-primary text-sm font-bold hover:bg-primary/5 transition-colors border-t border-outline-variant/10 w-full flex items-center justify-center gap-2"
                   >
                     Ver todos los resultados
-                    <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                    <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">arrow_forward</span>
                   </button>
                 </div>
               ) : (
                 <div className="p-8 text-center">
-                  <span className="material-symbols-outlined text-4xl text-on-surface-variant/20 mb-2">search_off</span>
+                  <span className="material-symbols-outlined text-4xl text-on-surface-variant/20 mb-2" aria-hidden="true" translate="no">search_off</span>
                   <p className="text-on-surface-variant text-sm">No encontramos resultados para "{searchQuery}"</p>
                 </div>
               )}
@@ -166,7 +166,7 @@ export const Header: React.FC = () => {
               isSearchActive ? 'max-w-0 opacity-0 pointer-events-none mr-0 md:max-w-[40px] md:opacity-100 md:mr-2' : 'max-w-[40px] opacity-100 mr-2 sm:mr-0'
             } hover:opacity-90 flex items-center justify-center text-white relative`}
           >
-            <span className="material-symbols-outlined">favorite</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">favorite</span>
           </Link>
           <Link
             to="/profile"
@@ -174,12 +174,12 @@ export const Header: React.FC = () => {
               isSearchActive ? 'max-w-0 opacity-0 pointer-events-none mr-0 md:max-w-[40px] md:opacity-100 md:mr-2' : 'max-w-[40px] opacity-100 mr-2 sm:mr-0'
             } hover:opacity-90 flex items-center justify-center text-white`}
           >
-            <span className="material-symbols-outlined">person</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">person</span>
           </Link>
           <Link to="/cart" className="hover:opacity-90 transition-opacity flex items-center justify-center relative text-white">
-            <span className="material-symbols-outlined">shopping_cart</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">shopping_cart</span>
             {totalItems > 0 && (
-              <span className="absolute -top-1 -right-1 bg-secondary-container text-on-secondary-container text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+              <span className="absolute -top-1 -right-1 bg-secondary-container text-on-secondary-container text-[10px] font-bold px-1.5 py-0.5 rounded-full" aria-hidden="true">
                 {totalItems}
               </span>
             )}

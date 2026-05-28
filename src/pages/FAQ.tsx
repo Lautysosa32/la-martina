@@ -108,11 +108,11 @@ export const FAQ: React.FC = () => {
         <h3 className="text-[25px] font-bold text-on-background mb-2">¿Todavía tenés dudas?</h3>
         <p className="text-on-surface-variant mb-6">Nuestro equipo de atención al cliente está listo para ayudarte.</p>
         <div className="flex flex-wrap justify-center gap-4">
-          <a href="tel:08102225316" className="bg-primary text-white px-8 py-3 rounded-full font-bold hover:bg-primary/90 transition-all flex items-center gap-2">
+          <a href="tel:2634776230" className="bg-primary text-white px-8 py-3 rounded-full font-bold hover:bg-primary/90 transition-all flex items-center gap-2">
             <span className="material-symbols-outlined text-[20px]">call</span>
             Llamar ahora
           </a>
-          <a href="https://wa.me/yournumber" className="bg-[#25D366] text-white px-8 py-3 rounded-full font-bold hover:opacity-90 transition-all flex items-center gap-2">
+          <a href="https://wa.me/5492617139129" target="_blank" rel="noopener noreferrer" className="bg-[#25D366] text-white px-8 py-3 rounded-full font-bold hover:opacity-90 transition-all flex items-center gap-2">
             <span className="material-symbols-outlined text-[20px]">chat</span>
             WhatsApp
           </a>

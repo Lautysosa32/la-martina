@@ -49,10 +49,14 @@ export const AdminLayout: React.FC = () => {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
 
+  // Guard: while auth is not ready, don't filter nav items
+  // (prevents sidebar going blank when employeeProfile is momentarily null)
+  const authReady = initialized && !loading;
+
   const visibleNavItems = navItems.filter(item => {
+    if (!authReady) return true; // show all while loading, skeleton will cover it
     if (!item.requiredPermission) return true;
     if (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner') return true;
-    // Ocultar de forma absoluta accesos de clientes para empleados comunes
     if (employeeProfile?.role === 'employee' && item.requiredPermission.startsWith('customers.')) return false;
     return hasPermission(item.requiredPermission);
   });
@@ -134,7 +138,7 @@ export const AdminLayout: React.FC = () => {
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${privacyMode ? 'bg-primary/10 text-primary' : 'text-on-surface-variant hover:bg-surface-container-low'}`}
               title={privacyMode ? "Ocultar números activado" : "Ocultar números desactivado"}
             >
-              <span className="material-symbols-outlined text-[18px]">
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">
                 {privacyMode ? 'visibility_off' : 'visibility'}
               </span>
             </button>
@@ -142,33 +146,42 @@ export const AdminLayout: React.FC = () => {
         </div>
 
         <nav className="flex-1 px-4 space-y-1">
-          {visibleNavItems.map((item) => {
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.id}
-                to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm relative ${
-                  isActive
-                    ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
-                    : 'text-on-surface-variant hover:bg-surface-container-low'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
-                {item.label}
-                {item.id === 'orders' && newOrdersCount > 0 && (
-                  <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-error text-white'}`}>
-                    {newOrdersCount}
-                  </span>
-                )}
-                {item.id === 'inventory' && lowStockCount > 0 && (
-                  <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-orange-500 text-white'}`}>
-                    {lowStockCount}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
+          {/* Skeleton mientras el auth se inicializa */}
+          {!authReady ? (
+            <div className="space-y-1 animate-pulse">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="h-11 bg-surface-container-low rounded-2xl" />
+              ))}
+            </div>
+          ) : (
+            visibleNavItems.map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.id}
+                  to={item.path}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm relative ${
+                    isActive
+                      ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
+                      : 'text-on-surface-variant hover:bg-surface-container-low'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">{item.icon}</span>
+                  {item.label}
+                  {item.id === 'orders' && newOrdersCount > 0 && (
+                    <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-error text-white'}`}>
+                      {newOrdersCount}
+                    </span>
+                  )}
+                  {item.id === 'inventory' && lowStockCount > 0 && (
+                    <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-orange-500 text-white'}`}>
+                      {lowStockCount}
+                    </span>
+                  )}
+                </Link>
+              );
+            })
+          )}
         </nav>
 
         <div className="p-4 border-t border-outline-variant/10 space-y-2">
@@ -176,14 +189,14 @@ export const AdminLayout: React.FC = () => {
             to="/"
             className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-on-surface-variant font-bold text-sm hover:bg-surface-container-low transition-all"
           >
-            <span className="material-symbols-outlined text-[22px]">storefront</span>
+            <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">storefront</span>
             Ir a la Tienda
           </Link>
           <button
             onClick={handleSignOut}
             className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-error font-bold text-sm hover:bg-red-50 hover:text-error transition-all"
           >
-            <span className="material-symbols-outlined text-[22px]">logout</span>
+            <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">logout</span>
             Cerrar Sesión
           </button>
         </div>
@@ -213,7 +226,7 @@ export const AdminLayout: React.FC = () => {
               onClick={() => setIsMobileMenuOpen(false)}
               className="w-9 h-9 rounded-full bg-surface-container-low flex items-center justify-center"
             >
-              <span className="material-symbols-outlined text-[20px]">close</span>
+              <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">close</span>
             </button>
           </div>
           {/* Profile mini in drawer */}
@@ -268,14 +281,14 @@ export const AdminLayout: React.FC = () => {
             className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-on-surface-variant font-bold text-sm hover:bg-surface-container-low transition-all"
             onClick={() => setIsMobileMenuOpen(false)}
           >
-            <span className="material-symbols-outlined text-[22px]">storefront</span>
+            <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">storefront</span>
             Ir a la Tienda
           </Link>
           <button
             onClick={handleSignOut}
             className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-error font-bold text-sm hover:bg-red-50 transition-all"
           >
-            <span className="material-symbols-outlined text-[22px]">logout</span>
+            <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">logout</span>
             Cerrar Sesión
           </button>
         </div>
@@ -290,12 +303,12 @@ export const AdminLayout: React.FC = () => {
             onClick={() => setIsMobileMenuOpen(true)}
             className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-surface-container-low transition-all"
           >
-            <span className="material-symbols-outlined text-[24px]">menu</span>
+            <span className="material-symbols-outlined text-[24px]" aria-hidden="true" translate="no">menu</span>
           </button>
           <span className="text-base font-black text-[#e3001b] tracking-wider">La Martina</span>
           <div className="flex items-center gap-2">
             <button className="w-10 h-10 rounded-xl flex items-center justify-center relative hover:bg-surface-container-low transition-all">
-              <span className="material-symbols-outlined text-[22px]">notifications</span>
+              <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">notifications</span>
               {newOrdersCount > 0 && (
                 <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-error rounded-full text-white text-[9px] font-bold flex items-center justify-center">
                   {newOrdersCount}
@@ -326,7 +339,7 @@ export const AdminLayout: React.FC = () => {
                 onFocus={() => setIsSearchOpen(true)}
                 className="bg-surface-container-low border-none rounded-2xl px-6 py-3 pl-12 w-[220px] lg:w-[280px] text-sm outline-none focus:ring-2 ring-primary/20 transition-all"
               />
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" aria-hidden="true" translate="no">search</span>
 
               {isSearchOpen && q.length >= 2 && (
                 <div className="absolute top-full mt-2 left-0 w-full bg-white rounded-2xl shadow-2xl border border-outline-variant/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -360,7 +373,7 @@ export const AdminLayout: React.FC = () => {
                               className="flex items-center justify-between w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors"
                             >
                               <div className="flex items-center gap-3">
-                                <span className="material-symbols-outlined text-on-surface-variant text-[20px]">receipt_long</span>
+                                <span className="material-symbols-outlined text-on-surface-variant text-[20px]" aria-hidden="true" translate="no">receipt_long</span>
                                 <div className="text-left">
                                   <p className="text-sm font-bold">#{o.id}</p>
                                   <p className="text-[11px] text-on-surface-variant">{o.customer}</p>
@@ -383,7 +396,7 @@ export const AdminLayout: React.FC = () => {
 
             {/* Notifications */}
             <button className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-outline-variant/10 shadow-sm relative">
-              <span className="material-symbols-outlined">notifications</span>
+              <span className="material-symbols-outlined" aria-hidden="true" translate="no">notifications</span>
               {newOrdersCount > 0 && (
                 <span className="absolute top-2 right-2 w-5 h-5 bg-error rounded-full text-white text-[10px] font-bold flex items-center justify-center">
                   {newOrdersCount}
@@ -430,7 +443,7 @@ export const AdminLayout: React.FC = () => {
                 isActive ? 'text-primary' : 'text-on-surface-variant'
               }`}
             >
-              <span className={`material-symbols-outlined text-[24px] transition-all ${isActive ? 'text-primary' : ''}`}>
+              <span className={`material-symbols-outlined text-[24px] transition-all ${isActive ? 'text-primary' : ''}`} aria-hidden="true" translate="no">
                 {item.icon}
               </span>
               <span className={`text-[10px] font-bold leading-none ${isActive ? 'text-primary' : 'text-on-surface-variant/70'}`}>
@@ -453,7 +466,7 @@ export const AdminLayout: React.FC = () => {
             onClick={() => setIsMobileMenuOpen(true)}
             className="flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-xl text-on-surface-variant transition-all"
           >
-            <span className="material-symbols-outlined text-[24px]">more_horiz</span>
+            <span className="material-symbols-outlined text-[24px]" aria-hidden="true" translate="no">more_horiz</span>
             <span className="text-[10px] font-bold leading-none text-on-surface-variant/70">Más</span>
           </button>
         )}

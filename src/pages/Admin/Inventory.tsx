@@ -849,7 +849,7 @@ export const Inventory: React.FC = () => {
                     {/* Miniatura de Imagen */}
                     <div className="w-10 h-10 bg-surface-container-low rounded-xl shrink-0 flex items-center justify-center border border-outline-variant/5 overflow-hidden">
                       {product.image ? (
-                        <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+                        <img src={product.image} alt="" aria-hidden="true" className="w-full h-full object-cover" />
                       ) : (
                         <span className="material-symbols-outlined text-[20px] text-on-surface-variant/40">image</span>
                       )}

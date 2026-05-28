@@ -15,7 +15,7 @@ export const Cart: React.FC = () => {
     return (
       <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-20 flex flex-col items-center text-center">
         <div className="w-24 h-24 bg-surface-container-low rounded-full flex items-center justify-center mb-6">
-          <span className="material-symbols-outlined text-on-surface-variant text-5xl">shopping_cart_off</span>
+          <span className="material-symbols-outlined text-on-surface-variant text-5xl" aria-hidden="true" translate="no">shopping_cart_off</span>
         </div>
         <h1 className="font-display-xl font-bold text-on-surface mb-2">Tu carrito está vacío</h1>
         <p className="text-on-surface-variant mb-8 max-w-sm">¡Parece que aún no has agregado nada! Explorá nuestras categorías y encontrá lo que necesitás.</p>
@@ -35,11 +35,11 @@ export const Cart: React.FC = () => {
           <div className="mt-4">
             <Link to="/delivery" className="flex items-center space-x-3 bg-surface-container-lowest p-3.5 rounded-xl shadow-sm border border-outline-variant/20 hover:bg-surface-bright transition-colors">
               <div className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-primary bg-white shrink-0">
-                <span className="material-symbols-outlined text-primary text-[20px]">location_on</span>
+                <span className="material-symbols-outlined text-primary text-[20px]" aria-hidden="true" translate="no">location_on</span>
               </div>
               <div className="flex-1 text-left">
                 <p className="font-label-sm text-[13px] text-on-surface font-bold tracking-tight uppercase flex items-center">
-                  ELEGÍ TU MÉTODO DE ENTREGA <span className="text-primary ml-1 material-symbols-outlined text-[16px]">chevron_right</span>
+                  ELEGÍ TU MÉTODO DE ENTREGA <span className="text-primary ml-1 material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">chevron_right</span>
                 </p>
                 <p className="text-xs text-on-surface-variant mt-1 font-medium leading-none">
                   Método seleccionado: <span className="font-bold text-primary uppercase">{deliveryMethod === 'retiro' ? 'Retiro en sucursal' : 'Envío a domicilio'}</span>
@@ -52,7 +52,7 @@ export const Cart: React.FC = () => {
         {/* Stock warning banner */}
         {hasStockIssues && (
           <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
-            <span className="material-symbols-outlined text-amber-600 text-[20px] mt-0.5">warning</span>
+            <span className="material-symbols-outlined text-amber-600 text-[20px] mt-0.5" aria-hidden="true" translate="no">warning</span>
             <div>
               <p className="text-sm font-bold text-amber-800">Algunos productos exceden el stock disponible</p>
               {stockWarnings.map(w => (
@@ -74,7 +74,7 @@ export const Cart: React.FC = () => {
             return (
               <div key={item.id} className={`bg-white p-4 rounded-xl shadow-sm flex gap-4 items-center border ${isOverStock ? 'border-red-300 bg-red-50/30' : 'border-outline-variant/10'}`}>
                 <div className="w-20 h-20 bg-[#fcf9f8] flex-shrink-0 rounded-lg overflow-hidden p-2">
-                  <img src={item.image} alt={item.name} className="w-full h-full object-contain mix-blend-multiply" />
+                  <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain mix-blend-multiply" />
                 </div>
                 <div className="flex-1">
                   <span className="text-[10px] uppercase font-bold text-on-surface-variant/60">{item.brand}</span>
@@ -115,14 +115,14 @@ export const Cart: React.FC = () => {
                     onClick={() => removeItem(item.id)}
                     className="text-on-surface-variant hover:text-error transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[20px]">delete</span>
+                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">delete</span>
                   </button>
                   <div className="flex items-center gap-3 border border-outline-variant/30 rounded-full px-2 py-1 bg-[#fcf9f8]">
                     <button
                       onClick={() => updateQuantity(item.id, item.quantity - 1)}
                       className="text-on-surface-variant w-6 h-6 flex items-center justify-center hover:text-primary transition-colors"
                     >
-                      <span className="material-symbols-outlined text-[16px]">remove</span>
+                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">remove</span>
                     </button>
                     <span className={`font-body-md font-bold w-4 text-center ${isOverStock ? 'text-red-600' : ''}`}>{item.quantity}</span>
                     <button
@@ -130,7 +130,7 @@ export const Cart: React.FC = () => {
                       disabled={!canAddMore}
                       className={`w-6 h-6 flex items-center justify-center transition-colors ${canAddMore ? 'text-on-surface-variant hover:text-primary' : 'text-gray-300 cursor-not-allowed'}`}
                     >
-                      <span className="material-symbols-outlined text-[16px]">add</span>
+                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">add</span>
                     </button>
                   </div>
                 </div>
@@ -181,7 +181,7 @@ export const Cart: React.FC = () => {
 
         {hasStockIssues ? (
           <div className="w-full bg-gray-300 text-gray-500 font-label-sm py-4 rounded-full flex justify-center items-center gap-2 cursor-not-allowed">
-            <span className="material-symbols-outlined text-[18px]">warning</span>
+            <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">warning</span>
             <span className="text-[16px]">Ajustá las cantidades</span>
           </div>
         ) : (
@@ -190,7 +190,7 @@ export const Cart: React.FC = () => {
             className="w-full bg-primary text-white font-label-sm py-4 rounded-full flex justify-center items-center gap-2 hover:bg-primary/90 transition-colors shadow-lg"
           >
             <span className="text-[16px]">Finalizar Compra</span>
-            <span className="material-symbols-outlined">arrow_forward</span>
+            <span className="material-symbols-outlined" aria-hidden="true" translate="no">arrow_forward</span>
           </Link>
         )}
       </div>

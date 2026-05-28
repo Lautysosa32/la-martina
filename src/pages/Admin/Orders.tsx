@@ -320,10 +320,89 @@ export const AdminOrders: React.FC = () => {
                               </div>
                               <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
-                                  <div>
-                                    <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Entrega</h4>
-                                    <p className="text-xs flex items-center gap-2"><span className="material-symbols-outlined text-[16px] text-primary">location_on</span>{order.address || 'No especificada'}</p>
-                                    <p className="text-xs flex items-center gap-2 mt-1"><span className="material-symbols-outlined text-[16px] text-primary">schedule</span>{order.deliveryTime}</p>
+                                  <div className="col-span-1 space-y-3">
+                                    <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Entrega ({order.method || 'Envío'})</h4>
+                                    {order.delivery_lat && order.delivery_lng ? (
+                                      <div className="space-y-2 text-xs">
+                                        <p className="flex items-start gap-2">
+                                          <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">location_on</span>
+                                          <span className="font-semibold text-on-surface">{order.delivery_address_label || order.address}</span>
+                                        </p>
+                                        <p className="flex items-start gap-2">
+                                          <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">home</span>
+                                          <span><strong>Altura/Lote:</strong> {order.delivery_house_number || 'S/N'}</span>
+                                        </p>
+                                        <p className="flex items-start gap-2 text-primary font-bold">
+                                          <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">visibility</span>
+                                          <span><strong>Ref:</strong> {order.delivery_reference}</span>
+                                        </p>
+                                        {order.delivery_notes && (
+                                          <p className="flex items-start gap-2 text-on-surface-variant italic">
+                                            <span className="material-symbols-outlined text-[16px] text-on-surface-variant shrink-0 mt-0.5">chat</span>
+                                            <span>"{order.delivery_notes}"</span>
+                                          </p>
+                                        )}
+                                        <p className="text-[10px] text-on-surface-variant font-mono mt-1">Coord: {order.delivery_lat.toFixed(6)}, {order.delivery_lng.toFixed(6)}</p>
+                                        <p className="flex items-center gap-2 text-on-surface font-medium">
+                                          <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
+                                          {order.deliveryTime}
+                                        </p>
+                                        
+                                        {/* Action buttons inside delivery card */}
+                                        <div className="flex gap-2 mt-3 flex-wrap">
+                                          <a 
+                                            href={`https://www.google.com/maps?q=${order.delivery_lat},${order.delivery_lng}`} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2 rounded-xl text-[10px] flex items-center gap-1 shadow-sm transition-colors"
+                                          >
+                                            <span className="material-symbols-outlined text-[14px]">map</span>
+                                            ABRIR MAPA
+                                          </a>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(`${order.delivery_lat},${order.delivery_lng}`);
+                                              alert('Coordenadas copiadas al portapapeles');
+                                            }}
+                                            className="bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-bold px-3 py-2 rounded-xl text-[10px] flex items-center gap-1 border border-outline-variant/20 transition-colors"
+                                          >
+                                            <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                                            COPIAR COORD.
+                                          </button>
+                                          {order.phone && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                navigator.clipboard.writeText(order.phone.replace(/\s+/g, ''));
+                                                alert('Teléfono copiado al portapapeles');
+                                              }}
+                                              className="bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-bold px-3 py-2 rounded-xl text-[10px] flex items-center gap-1 border border-outline-variant/20 transition-colors"
+                                            >
+                                              <span className="material-symbols-outlined text-[14px]">call</span>
+                                              COPIAR TEL.
+                                            </button>
+                                          )}
+                                        </div>
+
+                                        {/* Embedded mini-map */}
+                                        <div className="mt-3 w-full h-[150px] rounded-xl overflow-hidden border border-outline-variant/20 shadow-sm relative">
+                                          <iframe 
+                                            title={`map-${order.id}`}
+                                            width="100%" 
+                                            height="100%" 
+                                            style={{ border: 0 }} 
+                                            src={`https://www.openstreetmap.org/export/embed.html?bbox=${order.delivery_lng - 0.003}%2C${order.delivery_lat - 0.0015}%2C${order.delivery_lng + 0.003}%2C${order.delivery_lat + 0.0015}&layer=mapnik&marker=${order.delivery_lat}%2C${order.delivery_lng}`}
+                                          />
+                                          <div className="absolute top-2 right-2 bg-white/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] font-mono shadow-sm">OSM Preview</div>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-1 text-xs">
+                                        <p className="flex items-center gap-2"><span className="material-symbols-outlined text-[16px] text-primary">location_on</span>{order.address || 'No especificada'}</p>
+                                        <p className="flex items-center gap-2 mt-1"><span className="material-symbols-outlined text-[16px] text-primary">schedule</span>{order.deliveryTime}</p>
+                                      </div>
+                                    )}
                                   </div>
                                   <div>
                                     <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Pago</h4>
@@ -582,16 +661,87 @@ export const AdminOrders: React.FC = () => {
                         </div>
 
                         {/* Delivery address & times */}
-                        <div className="bg-surface-container-lowest p-3 rounded-xl border border-outline-variant/10 space-y-1.5 text-xs">
-                          <h4 className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider mb-1">Información de Entrega</h4>
-                          <p className="flex items-center gap-2 text-on-surface font-medium">
-                            <span className="material-symbols-outlined text-[15px] text-primary">location_on</span>
-                            {order.address || 'No especificada'}
-                          </p>
-                          <p className="flex items-center gap-2 text-on-surface font-medium">
-                            <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
-                            {order.deliveryTime}
-                          </p>
+                        <div className="bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant/10 space-y-3.5 text-xs">
+                          <div className="flex justify-between items-center">
+                            <h4 className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider">Información de Entrega</h4>
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-bold ${order.method === 'Retiro' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                              {order.method || 'Envío'}
+                            </span>
+                          </div>
+
+                          {order.delivery_lat && order.delivery_lng ? (
+                            <div className="space-y-2 text-xs">
+                              <p className="flex items-start gap-2">
+                                <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">location_on</span>
+                                <span className="font-semibold text-on-surface">{order.delivery_address_label || order.address}</span>
+                              </p>
+                              <p className="flex items-start gap-2">
+                                <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">home</span>
+                                <span><strong>Altura/Lote:</strong> {order.delivery_house_number || 'S/N'}</span>
+                              </p>
+                              <p className="flex items-start gap-2 text-primary font-bold">
+                                <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">visibility</span>
+                                <span><strong>Ref:</strong> {order.delivery_reference}</span>
+                              </p>
+                              {order.delivery_notes && (
+                                <p className="flex items-start gap-2 text-on-surface-variant italic">
+                                  <span className="material-symbols-outlined text-[15px] text-on-surface-variant shrink-0 mt-0.5">chat</span>
+                                  <span>"{order.delivery_notes}"</span>
+                                </p>
+                              )}
+                              <p className="text-[9px] text-on-surface-variant font-mono">Coord: {order.delivery_lat.toFixed(6)}, {order.delivery_lng.toFixed(6)}</p>
+                              <p className="flex items-center gap-2 text-on-surface font-medium">
+                                <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
+                                {order.deliveryTime}
+                              </p>
+
+                              {/* Mobile actions */}
+                              <div className="flex gap-2 pt-1 flex-wrap">
+                                <a 
+                                  href={`https://www.google.com/maps?q=${order.delivery_lat},${order.delivery_lng}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2.5 rounded-xl text-[10px] flex items-center justify-center gap-1 shadow-sm flex-1 text-center"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">map</span>
+                                  GOOGLE MAPS
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(`${order.delivery_lat},${order.delivery_lng}`);
+                                    alert('Coordenadas copiadas');
+                                  }}
+                                  className="bg-surface-container-high text-on-surface font-bold px-2.5 py-2.5 rounded-xl text-[10px] flex items-center justify-center gap-1 border border-outline-variant/20 flex-1"
+                                >
+                                  <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                                  COPIAR COORD.
+                                </button>
+                              </div>
+
+                              {/* Embedded mini-map */}
+                              <div className="mt-2 w-full h-[130px] rounded-xl overflow-hidden border border-outline-variant/20 shadow-sm relative">
+                                <iframe 
+                                  title={`map-mobile-${order.id}`}
+                                  width="100%" 
+                                  height="100%" 
+                                  style={{ border: 0 }} 
+                                  src={`https://www.openstreetmap.org/export/embed.html?bbox=${order.delivery_lng - 0.003}%2C${order.delivery_lat - 0.0015}%2C${order.delivery_lng + 0.003}%2C${order.delivery_lat + 0.0015}&layer=mapnik&marker=${order.delivery_lat}%2C${order.delivery_lng}`}
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <p className="flex items-center gap-2 text-on-surface font-medium">
+                                <span className="material-symbols-outlined text-[15px] text-primary">location_on</span>
+                                {order.address || 'No especificada'}
+                              </p>
+                              <p className="flex items-center gap-2 text-on-surface font-medium">
+                                <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
+                                {order.deliveryTime}
+                              </p>
+                            </div>
+                          )}
                         </div>
 
                         {/* Price Breakdown */}

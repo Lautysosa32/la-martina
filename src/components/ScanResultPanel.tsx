@@ -86,7 +86,7 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-outline-variant/10">
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-[22px]">
+            <span className="material-symbols-outlined text-primary text-[22px]" aria-hidden="true" translate="no">
               barcode_scanner
             </span>
             <div>
@@ -100,7 +100,7 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
             onClick={onClose}
             className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-surface-container-high active:bg-surface-container-highest transition-colors cursor-pointer text-on-surface-variant"
           >
-            <span className="material-symbols-outlined text-[20px]">close</span>
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">close</span>
           </button>
         </div>
 
@@ -108,7 +108,7 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
         <div className="p-6 flex-1 flex flex-col justify-center">
           {isSearching ? (
             <div className="flex flex-col items-center justify-center py-10 gap-4">
-              <span className="material-symbols-outlined text-primary text-[42px] animate-spin">
+              <span className="material-symbols-outlined text-primary text-[42px] animate-spin" aria-hidden="true" translate="no">
                 sync
               </span>
               <p className="text-sm font-semibold text-on-surface">Buscando producto...</p>
@@ -124,12 +124,13 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
                 {product.image ? (
                   <img
                     src={product.image}
-                    alt={product.name}
+                    alt=""
+                    aria-hidden="true"
                     className="w-20 h-20 rounded-2xl object-cover border border-outline-variant/5 bg-white shrink-0"
                   />
                 ) : (
                   <div className="w-20 h-20 rounded-2xl bg-surface-container-low flex items-center justify-center border border-outline-variant/5 text-on-surface-variant/40 shrink-0">
-                    <span className="material-symbols-outlined text-[36px]">image</span>
+                    <span className="material-symbols-outlined text-[36px]" aria-hidden="true" translate="no">image</span>
                   </div>
                 )}
                 <div className="flex-1 min-w-0">

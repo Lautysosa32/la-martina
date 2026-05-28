@@ -9,33 +9,51 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 export const Settings: React.FC = () => {
-  const { ticketConfig, updateTicketConfig } = useAdmin();
+  const { ticketConfig, updateTicketConfig, currentAccountConfig, updateCurrentAccountConfig } = useAdmin();
   const [saved, setSaved] = useState(false);
-  const [activeSection, setActiveSection] = useState<'ticket' | 'general'>('ticket');
+  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'account'>('ticket');
 
   // Local state mirrors config for form editing
   const [form, setForm] = useState({ ...ticketConfig });
+  const [accountForm, setAccountForm] = useState({ ...currentAccountConfig });
 
   const handleSave = () => {
-    updateTicketConfig(form);
+    if (activeSection === 'ticket') {
+      updateTicketConfig(form);
+    } else if (activeSection === 'account') {
+      updateCurrentAccountConfig(accountForm);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
 
   const handleReset = () => {
-    const defaults = {
-      blankLinesTop: 0,
-      blankLinesBottom: 2,
-      headerText: 'La Martina',
-      businessName: 'Minimarket & Supermercado',
-      businessAddress: 'La Paz, Mendoza',
-      businessPhone: '',
-      businessCuit: '',
-      footerMessage: '¡Gracias por su compra!',
-      showLogo: false
-    };
-    setForm(defaults);
-    updateTicketConfig(defaults);
+    if (activeSection === 'ticket') {
+      const defaults = {
+        blankLinesTop: 0,
+        blankLinesBottom: 2,
+        headerText: 'La Martina',
+        businessName: 'Minimarket & Supermercado',
+        businessAddress: 'La Paz, Mendoza',
+        businessPhone: '',
+        businessCuit: '',
+        footerMessage: '¡Gracias por su compra!',
+        showLogo: false
+      };
+      setForm(defaults);
+      updateTicketConfig(defaults);
+    } else if (activeSection === 'account') {
+      const defaultAccountConfig = {
+        enabled: true,
+        maxDebtAmount: 50000,
+        maxDebtDays: 35,
+        warnOnAmountLimit: true,
+        warnOnTimeLimit: true,
+        allowOverride: true,
+      };
+      setAccountForm(defaultAccountConfig);
+      updateCurrentAccountConfig(defaultAccountConfig);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -72,6 +90,14 @@ export const Settings: React.FC = () => {
         >
           <span className="material-symbols-outlined text-[20px]">receipt_long</span>
           Personalizar Ticket
+        </button>
+        <button
+          onClick={() => setActiveSection('account')}
+          className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 ${activeSection === 'account' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-on-surface-variant border border-outline-variant/10 hover:bg-surface-container-lowest'
+            }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">account_balance_wallet</span>
+          Cuenta Corriente
         </button>
         <button
           onClick={() => setActiveSection('general')}
@@ -306,6 +332,122 @@ export const Settings: React.FC = () => {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'account' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <span className="material-symbols-outlined text-blue-700 text-[20px]">account_balance_wallet</span>
+                  </div>
+                  <div>
+                    <h3 className="font-black text-lg">Límites de Cuenta Corriente</h3>
+                    <p className="text-xs text-on-surface-variant">Configuración global para ventas a cuenta</p>
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className="flex items-center justify-between bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/20">
+                  <div>
+                    <h4 className="font-bold text-sm">Habilitar Control de Límites</h4>
+                    <p className="text-xs text-on-surface-variant">Activa o desactiva la validación de límites en la caja.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={accountForm.enabled} onChange={e => setAccountForm(p => ({ ...p, enabled: e.target.checked }))} className="sr-only peer" />
+                    <div className="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                  </label>
+                </div>
+
+                {accountForm.enabled && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Límite Monetario ($)</label>
+                        <input
+                          type="number"
+                          value={accountForm.maxDebtAmount}
+                          onChange={e => setAccountForm(p => ({ ...p, maxDebtAmount: Number(e.target.value) }))}
+                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Límite Temporal (Días)</label>
+                        <input
+                          type="number"
+                          value={accountForm.maxDebtDays}
+                          onChange={e => setAccountForm(p => ({ ...p, maxDebtDays: Number(e.target.value) }))}
+                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                        <input type="checkbox" checked={accountForm.warnOnAmountLimit} onChange={e => setAccountForm(p => ({ ...p, warnOnAmountLimit: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
+                        <div>
+                          <div className="font-bold text-sm">Advertir por Límite Monetario</div>
+                          <div className="text-xs text-on-surface-variant">Mostrar alerta si la compra supera el monto máximo permitido</div>
+                        </div>
+                      </label>
+
+                      <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                        <input type="checkbox" checked={accountForm.warnOnTimeLimit} onChange={e => setAccountForm(p => ({ ...p, warnOnTimeLimit: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
+                        <div>
+                          <div className="font-bold text-sm">Advertir por Límite Temporal</div>
+                          <div className="text-xs text-on-surface-variant">Mostrar alerta si el cliente tiene deudas previas vencidas</div>
+                        </div>
+                      </label>
+
+                      <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                        <input type="checkbox" checked={accountForm.allowOverride} onChange={e => setAccountForm(p => ({ ...p, allowOverride: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
+                        <div>
+                          <div className="font-bold text-sm">Permitir Excepciones (Override)</div>
+                          <div className="text-xs text-on-surface-variant">Permite al cajero continuar la venta "de todas formas" bajo su responsabilidad</div>
+                        </div>
+                      </label>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={handleSave} className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[20px]">save</span>
+                Guardar Configuración
+              </button>
+              <button onClick={handleReset} className="flex-1 bg-white border border-outline-variant/10 font-bold py-4 rounded-2xl text-on-surface-variant hover:bg-surface-container-lowest transition-all flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                Restaurar
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="bg-blue-50/50 rounded-[2rem] border border-blue-100 p-8">
+              <div className="flex items-center gap-3 mb-4">
+                <span className="material-symbols-outlined text-blue-600 text-2xl">info</span>
+                <h4 className="font-black text-blue-900">¿Cómo funcionan los límites?</h4>
+              </div>
+              <ul className="space-y-4 text-sm text-blue-800">
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">check_circle</span>
+                  <p>Estos son los límites <strong>globales</strong>. Aplicarán por defecto a todos los clientes que tengan Cuenta Corriente habilitada.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">person</span>
+                  <p>Puedes establecer <strong>límites personalizados</strong> por cliente desde la pestaña <em>Clientes &gt; Editar</em>, los cuales tendrán prioridad sobre estos globales.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">warning</span>
+                  <p>Si la opción <em>Permitir Excepciones</em> está activa, la caja mostrará un cartel de advertencia, pero el cajero podrá confirmar la venta igual si así lo decide.</p>
+                </li>
+              </ul>
             </div>
           </div>
         </div>

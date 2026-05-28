@@ -112,7 +112,7 @@ export const Dashboard: React.FC = () => {
       baseStats.push({ 
         label: 'Deuda en la Calle', 
         value: `$${formatCurrency(totalDebtInStreet)}`, 
-        change: 'Total Cta. Corriente', 
+        change: 'Total Cta. Corr.', 
         icon: 'menu_book', 
         color: 'bg-red-50 text-red-600' 
       });

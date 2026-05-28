@@ -5,7 +5,22 @@ import type { Offer, CashClose, CashMovement } from '../../context/AdminContext'
 import { MovementDetailModal } from '../../components/MovementDetailModal';
 import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
-const CAT_COLORS = ['bg-primary', 'bg-secondary', 'bg-error', 'bg-orange-500', 'bg-purple-500', 'bg-teal-500'];
+const CATEGORY_COLORS: Record<string, string> = {
+  carnes: "#DC2626",      // rojo fuerte
+  lacteos: "#06B6D4",     // celeste/cyan
+  limpieza: "#8B5CF6",   // violeta
+  perfumeria: "#EC4899", // rosa
+  bebidas: "#2563EB",    // azul
+  almacen: "#F59E0B",    // amarillo/ámbar
+  otros: "#111827"       // negro/gris oscuro
+};
+
+const getCategoryColor = (categoryName: string): string => {
+  const normalized = categoryName.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return CATEGORY_COLORS[normalized] || CATEGORY_COLORS['otros'];
+};
 
 export const Analytics: React.FC = () => {
   const {
@@ -58,10 +73,67 @@ export const Analytics: React.FC = () => {
   }, [period, customRange]);
 
   const topProducts = getTopSellingProducts(analyticsParams);
-  const catData = getRevenueByCategory(typeof analyticsParams === 'object' ? analyticsParams : undefined);
   const dailyRevenue = getRevenueByDay(analyticsParams);
   const maxRev = Math.max(...dailyRevenue.map(d => d.revenue), 1);
-  const totalCatRevenue = catData.reduce((s, c) => s + c.revenue, 0);
+
+  // Filter orders by the selected period (applying the time filter perfectly)
+  const filteredOrdersForPeriod = useMemo(() => {
+    return orders.filter(o => {
+      const t = getOrderTimestamp(o);
+      if (typeof analyticsParams === 'object') {
+        return t >= analyticsParams.from && t <= analyticsParams.to;
+      }
+      return t >= Date.now() - (analyticsParams as number) * 86400000;
+    }).filter(o => o.status !== 'Cancelado');
+  }, [orders, analyticsParams, getOrderTimestamp]);
+
+  // Calculate revenue for each of the 6 fixed categories in the period
+  const catData = useMemo(() => {
+    const revenueMap: Record<string, number> = {
+      carnes: 0,
+      lacteos: 0,
+      limpieza: 0,
+      perfumeria: 0,
+      bebidas: 0,
+      almacen: 0
+    };
+
+    filteredOrdersForPeriod.forEach(o => {
+      o.items.forEach(item => {
+        const prod = adminProducts.find(p => p.id === item.id);
+        const catId = prod?.categoryId || '';
+        if (Object.hasOwnProperty.call(revenueMap, catId)) {
+          revenueMap[catId] += item.price * item.quantity;
+        }
+      });
+    });
+
+    const totalRevenueInPeriod = Object.values(revenueMap).reduce((s, r) => s + r, 0);
+
+    const categoriesList = [
+      { id: 'carnes', title: 'Carnes' },
+      { id: 'lacteos', title: 'Lácteos' },
+      { id: 'limpieza', title: 'Limpieza' },
+      { id: 'perfumeria', title: 'Perfumería' },
+      { id: 'bebidas', title: 'Bebidas' },
+      { id: 'almacen', title: 'Almacén' }
+    ];
+
+    return categoriesList.map(cat => {
+      const revenue = revenueMap[cat.id];
+      const percent = totalRevenueInPeriod > 0 ? Math.round((revenue / totalRevenueInPeriod) * 100) : 0;
+      return {
+        id: cat.id,
+        category: cat.title,
+        revenue,
+        percent
+      };
+    });
+  }, [filteredOrdersForPeriod, adminProducts]);
+
+  const totalCatRevenue = useMemo(() => {
+    return catData.reduce((s, c) => s + c.revenue, 0);
+  }, [catData]);
 
   // Payment methods breakdown from ORDERS in the selected period (Real-time)
   const paymentMethodData = useMemo(() => {
@@ -393,14 +465,14 @@ export const Analytics: React.FC = () => {
         <div className="bg-white p-8 rounded-[2rem] border border-outline-variant/5 shadow-sm">
           <h3 className="text-xl font-bold text-on-background mb-2">Ventas por Categoría</h3>
           <p className="text-sm text-on-surface-variant mb-8">Distribución de ingresos totales</p>
-          {catData.length > 0 ? (
+          {totalCatRevenue > 0 ? (
             <div className="flex flex-col md:flex-row items-center gap-12">
               <div className="relative w-48 h-48">
                 <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
                   {(() => {
                     let offset = 0;
                     return catData.map((cat, i) => {
-                      const el = <path key={i} className={CAT_COLORS[i % CAT_COLORS.length].replace('bg-', 'text-')} stroke="currentColor" strokeWidth="4"
+                      const el = <path key={i} stroke={getCategoryColor(cat.category)} strokeWidth="4"
                         strokeDasharray={`${cat.percent}, 100`} strokeDashoffset={`${-offset}`} fill="none"
                         d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />;
                       offset += cat.percent;
@@ -414,10 +486,10 @@ export const Analytics: React.FC = () => {
                 </div>
               </div>
               <div className="flex-1 space-y-4 w-full">
-                {catData.map((cat, i) => (
+                {catData.map((cat) => (
                   <div key={cat.category} className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${CAT_COLORS[i % CAT_COLORS.length]}`}></div>
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: getCategoryColor(cat.category) }}></div>
                       <span className="text-sm font-bold text-on-surface-variant">{cat.category}</span>
                     </div>
                     <span className="text-sm font-bold">{cat.percent}%</span>
