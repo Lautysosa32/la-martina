@@ -8,6 +8,7 @@ export interface CartItem extends Product {
   finalPrice?: number;
   lineDiscount?: number;
   offerLabel?: string | null;
+  offerId?: string | null;
   discountedQuantity?: number;
 }
 

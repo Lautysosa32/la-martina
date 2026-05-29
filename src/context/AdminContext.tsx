@@ -4,6 +4,15 @@ import { useProductStore } from '../stores/useProductStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
 import { supabase } from '../lib/supabase';
+import { 
+  fetchOrders, insertOrder, updateOrderInDb, 
+  fetchCashMovements, insertCashMovement, 
+  fetchCashCloses, insertCashClose, 
+  fetchOffers, insertOffer, updateOfferInDb, deleteOfferInDb,
+  fetchCustomerProfiles, upsertCustomerProfile,
+  fetchSetting, saveSetting
+} from '../services/admin.service';
+
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -268,7 +277,7 @@ export interface AdminContextType {
   // Customers
   customers: AdminCustomer[];
   toggleCurrentAccount: (phone: string) => { success: boolean; message?: string };
-  updateCustomerProfile: (oldPhone: string, updates: Partial<{ name: string; phone: string; dni: string; birthday: string; creditLimit: number }>) => void;
+  updateCustomerProfile: (oldPhone: string, updates: Partial<{ name: string; phone: string; dni: string; birthday: string; creditLimit: number; useCustomAccountLimits: boolean; customDebtLimit: number; customDebtDays: number; accountLimitNotes: string }>) => void;
   settleCurrentAccount: (phone: string, method: string, amount?: number) => void;
   addManualCustomer: (data: { nombre: string; apellido: string; telefono: string; direccion: string; dni?: string }) => void;
   deleteCustomer: (phone: string) => { success: boolean; message?: string };
@@ -520,10 +529,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     return [];
   });
-  const [customerProfiles, setCustomerProfiles] = useState<Record<string, CustomerProfile>>(() => {
-    const saved = localStorage.getItem('la-martina-admin-customer-profiles');
-    return saved ? JSON.parse(saved) : {};
-  });
+  const [customerProfiles, setCustomerProfiles] = useState<Record<string, CustomerProfile>>({});
 
   const defaultCurrentAccountConfig: CurrentAccountConfig = {
     enabled: true,
@@ -534,10 +540,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     allowOverride: true,
   };
 
-  const [currentAccountConfig, setCurrentAccountConfig] = useState<CurrentAccountConfig>(() => {
-    const saved = localStorage.getItem('la-martina-current-account-config');
-    return saved ? { ...defaultCurrentAccountConfig, ...JSON.parse(saved) } : defaultCurrentAccountConfig;
-  });
+  const [currentAccountConfig, setCurrentAccountConfig] = useState<CurrentAccountConfig>(defaultCurrentAccountConfig);
 
   const updateCurrentAccountConfig = (updates: Partial<CurrentAccountConfig>) => {
     setCurrentAccountConfig(prev => ({ ...prev, ...updates }));
@@ -804,10 +807,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { success: true };
   };
 
-  const [offers, setOffers] = useState<Offer[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-offers');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [offers, setOffers] = useState<Offer[]>([]);
 
   const [offerRedemptions, setOfferRedemptions] = useState<OfferRedemption[]>([]);
 
@@ -821,29 +821,70 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   useEffect(() => {
-    // 1. Load initial Store Status
-    supabase.from('settings').select('value').eq('id', 'store_status').single().then(({ data }) => {
-      if (data?.value) setStoreStatusState(data.value);
-    });
+    // 1. Fetch initial data from Supabase
+    const loadAllData = async () => {
+      const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing] = await Promise.all([
+        fetchOrders(),
+        fetchCashMovements(),
+        fetchCashCloses(),
+        fetchOffers(),
+        fetchCustomerProfiles(),
+        fetchSetting('ticket_config', defaultTicketConfig),
+        fetchSetting('current_account_config', defaultCurrentAccountConfig),
+        fetchSetting('cash_register', { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' } as CashRegister),
+        fetchSetting('invoices', [] as Invoice[]),
+        fetchSetting('billing_customers', [] as BillingCustomer[])
+      ]);
 
-    // 2. Real-time subscription for Store Status
+      setOrders(_orders);
+      setCashMovements(_cashMovements);
+      setCashCloses(_cashCloses);
+      setOffers(_offers);
+      setCustomerProfiles(_profiles);
+      setTicketConfig(_ticketCfg);
+      setCurrentAccountConfig(_accCfg);
+      setCashRegister(_cashReg);
+      setInvoices(_invoices);
+      setBillingCustomers(_billing);
+
+      // Store Status
+      supabase.from('settings').select('value').eq('key', 'store_status').single().then(({ data }) => {
+        if (data?.value) setStoreStatusState(data.value as StoreStatus);
+      });
+      // Offer Redemptions
+      supabase.from('offer_redemptions').select('*').then(({ data }) => {
+        if (data) setOfferRedemptions(data);
+      });
+    };
+
+    loadAllData();
+
+    // 2. Real-time subscriptions for critical sync
     const statusSub = supabase.channel('store_status_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'id=eq.store_status' }, (payload) => {
-        if (payload.new && payload.new.value) {
-          setStoreStatusState(payload.new.value);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings', filter: 'key=eq.store_status' }, (payload) => {
+        if (payload.new && (payload.new as any).value) {
+          setStoreStatusState((payload.new as any).value as StoreStatus);
         }
       })
       .subscribe();
 
-    // 3. Load initial Offer Redemptions
-    supabase.from('offer_redemptions').select('*').then(({ data }) => {
-      if (data) setOfferRedemptions(data);
-    });
-
-    // 4. Real-time subscription for Redemptions
     const redemptionsSub = supabase.channel('offer_redemptions_channel')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'offer_redemptions' }, (payload) => {
         setOfferRedemptions(prev => [...prev, payload.new as OfferRedemption]);
+      })
+      .subscribe();
+      
+    // Sync new orders from other devices
+    const ordersSub = supabase.channel('orders_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+        // Simple strategy: refetch all orders to avoid complex diffing logic and keep it robust
+        fetchOrders().then(setOrders);
+      })
+      .subscribe();
+
+    const movementsSub = supabase.channel('cash_movements_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_movements' }, () => {
+        fetchCashMovements().then(setCashMovements);
       })
       .subscribe();
 
@@ -873,20 +914,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
-  const [cashCloses, setCashCloses] = useState<CashClose[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-cash-closes');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [cashCloses, setCashCloses] = useState<CashClose[]>([]);
 
-  const [cashMovements, setCashMovements] = useState<CashMovement[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-cashmovements');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
 
-  const [lastPOSCloseTimestamp, setLastPOSCloseTimestamp] = useState<number>(() => {
-    const saved = localStorage.getItem('la-martina-admin-last-pos-close');
-    return saved ? parseInt(saved) : 0;
-  });
+  const [lastPOSCloseTimestamp, setLastPOSCloseTimestamp] = useState<number>(0);
 
   const [privacyMode, setPrivacyMode] = useState<boolean>(false);
 
@@ -902,19 +934,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     footerMessage: '¡Gracias por su compra!',
     showLogo: false
   };
-  const [ticketConfig, setTicketConfig] = useState<TicketConfig>(() => {
-    const saved = localStorage.getItem('la-martina-ticket-config');
-    return saved ? { ...defaultTicketConfig, ...JSON.parse(saved) } : defaultTicketConfig;
-  });
+  const [ticketConfig, setTicketConfig] = useState<TicketConfig>(defaultTicketConfig);
   const updateTicketConfig = (updates: Partial<TicketConfig>) => {
     setTicketConfig(prev => ({ ...prev, ...updates }));
   };
 
   // ─── Cash Register ────────────────────────────────────────
-  const [cashRegister, setCashRegister] = useState<CashRegister>(() => {
-    const saved = localStorage.getItem('la-martina-cash-register');
-    return saved ? JSON.parse(saved) : { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' };
-  });
+  const [cashRegister, setCashRegister] = useState<CashRegister>({ isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' });
   const isCashRegisterOpen = cashRegister.isOpen;
   const openCashRegister = (amount: number, user: string = 'Admin') => {
     const reg: CashRegister = { isOpen: true, initialAmount: amount, openedBy: user, openedAt: new Date().toISOString() };
@@ -925,14 +951,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ─── Invoices ─────────────────────────────────────────────
-  const [invoices, setInvoices] = useState<Invoice[]>(() => {
-    const saved = localStorage.getItem('la-martina-invoices');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [billingCustomers, setBillingCustomers] = useState<BillingCustomer[]>(() => {
-    const saved = localStorage.getItem('la-martina-billing-customers');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [billingCustomers, setBillingCustomers] = useState<BillingCustomer[]>([]);
 
   const addInvoice = (invoiceData: Omit<Invoice, 'id' | 'folio'>): Invoice => {
     const folio = String(invoices.length + 1).padStart(6, '0');
@@ -1234,6 +1254,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ─── Offers ───────────────────────────────────────────────
   const addOffer = (o: Offer) => {
     setOffers(prev => [...prev, o]);
+    insertOffer(o);
     // Apply discount to product price only for product-scoped percent offers (legacy behavior)
     if (o.scope === 'product' && o.targetId && o.active && o.discountType === 'percent') {
       const prod = adminProducts.find(p => p.id === o.targetId);
@@ -1248,7 +1269,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
   };
-  const updateOffer = (id: string, up: Partial<Offer>) => setOffers(prev => prev.map(o => o.id === id ? { ...o, ...up } : o));
+  const updateOffer = (id: string, up: Partial<Offer>) => {
+    setOffers(prev => prev.map(o => o.id === id ? { ...o, ...up } : o));
+    updateOfferInDb(id, up);
+  };
   const deleteOffer = (id: string) => {
     const offer = offers.find(o => o.id === id);
     if (offer && offer.scope === 'product' && offer.targetId) {
