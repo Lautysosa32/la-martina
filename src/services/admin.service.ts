@@ -15,12 +15,46 @@ export const fetchOrders = async (): Promise<AdminOrder[]> => {
 };
 
 export const insertOrder = async (order: AdminOrder): Promise<void> => {
-  const { error } = await supabase.from('orders').insert({ ...order, branch_id: BRANCH_ID });
+  const dbOrder = {
+    id: order.id,
+    branch_id: BRANCH_ID,
+    date: order.date,
+    timestamp: order.timestamp || Date.now(),
+    customer: order.customer,
+    phone: order.phone,
+    address: order.address,
+    deliveryTime: order.deliveryTime,
+    method: order.method,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    status: order.status,
+    total: order.total,
+    items: order.items,
+    discount: order.discount,
+    discountLabel: order.discountLabel,
+    delivery_lat: order.delivery_lat,
+    delivery_lng: order.delivery_lng,
+    delivery_address_label: order.delivery_address_label,
+    delivery_house_number: order.delivery_house_number,
+    delivery_reference: order.delivery_reference,
+    delivery_notes: order.delivery_notes,
+    delivery_method: order.delivery_method
+  };
+  const { error } = await supabase.from('orders').insert(dbOrder);
   if (error) console.error('Error inserting order:', error);
 };
 
 export const updateOrderInDb = async (id: string, updates: Partial<AdminOrder>): Promise<void> => {
-  const { error } = await supabase.from('orders').update(updates).eq('id', id).eq('branch_id', BRANCH_ID);
+  // Strip non-schema properties if they exist in updates
+  const dbUpdates = { ...updates };
+  delete dbUpdates.dni;
+  delete dbUpdates.paidAmount;
+  delete dbUpdates.source;
+  delete dbUpdates.discountOfferId;
+  delete dbUpdates.was_limit_override;
+  delete dbUpdates.override_reason;
+  
+  const { error } = await supabase.from('orders').update(dbUpdates).eq('id', id).eq('branch_id', BRANCH_ID);
   if (error) console.error('Error updating order:', error);
 };
 
@@ -38,7 +72,7 @@ export const insertCashMovement = async (movement: CashMovement): Promise<void> 
 
 // ─── CASH CLOSES ────────────────────────────────────────────────────────
 export const fetchCashCloses = async (): Promise<CashClose[]> => {
-  const { data, error } = await supabase.from('cash_closes').select('*').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('cash_closes').select('*').eq('branch_id', BRANCH_ID).order('timestamp', { ascending: false });
   if (error) { console.error('Error fetching cash closes:', error); return []; }
   return data || [];
 };
@@ -77,15 +111,15 @@ export const fetchCustomerProfiles = async (): Promise<Record<string, CustomerPr
   
   const profiles: Record<string, CustomerProfile> = {};
   data?.forEach((prof: any) => {
-    profiles[prof.dni || prof.phone] = prof as CustomerProfile;
+    profiles[prof.phone] = prof as CustomerProfile; // Primary tracking by phone
   });
   return profiles;
 };
 
 export const upsertCustomerProfile = async (profile: CustomerProfile): Promise<void> => {
-  // Uses DNI as primary key, or phone if DNI is not reliable. Supabase uses 'dni' as PK.
+  const dbProfile = { ...profile, branch_id: BRANCH_ID, dni: profile.dni || profile.phone }; // Ensure DNI is present as it's the PK
   const { error } = await supabase.from('customer_profiles').upsert(
-    { ...profile, branch_id: BRANCH_ID },
+    dbProfile,
     { onConflict: 'dni' }
   );
   if (error) console.error('Error upserting customer profile:', error);
