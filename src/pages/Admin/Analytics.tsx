@@ -188,13 +188,17 @@ export const Analytics: React.FC = () => {
 
     const revenueDiff = previousRevenue > 0 ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 : null;
 
-    // 2. Expenses (cashMovements of type 'Egreso' or 'Retiro')
+    // 2. Expenses (cashMovements of type 'Egreso' or 'Retiro' starting with 'PAGO PROVEEDOR:')
     const currentExpenses = cashMovements.filter(m => {
-      return m.timestamp >= currentFrom && m.timestamp <= currentTo && (m.type === 'Egreso' || m.type === 'Retiro');
+      return m.timestamp >= currentFrom && m.timestamp <= currentTo && 
+        (m.type === 'Egreso' || m.type === 'Retiro') && 
+        m.description.startsWith('PAGO PROVEEDOR:');
     }).reduce((s, m) => s + m.amount, 0);
 
     const previousExpenses = cashMovements.filter(m => {
-      return m.timestamp >= prevFrom && m.timestamp <= prevTo && (m.type === 'Egreso' || m.type === 'Retiro');
+      return m.timestamp >= prevFrom && m.timestamp <= prevTo && 
+        (m.type === 'Egreso' || m.type === 'Retiro') && 
+        m.description.startsWith('PAGO PROVEEDOR:');
     }).reduce((s, m) => s + m.amount, 0);
 
     const expensesDiff = previousExpenses > 0 ? ((currentExpenses - previousExpenses) / previousExpenses) * 100 : null;
@@ -839,23 +843,25 @@ export const Analytics: React.FC = () => {
                   })
                   .slice(0, 10)
                   .map(c => (
-                    <div key={c.id} 
-                      onClick={() => setShowCloseResult(c)}
-                      className="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:border-primary/40 hover:shadow-lg transition-all cursor-pointer group"
+                    <div key={c.id}
+                      className="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:border-primary/40 hover:shadow-lg transition-all group"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110 ${c.period === 'diario' ? 'bg-blue-100 text-blue-600' : c.period === 'semanal' ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'}`}>
+                      {/* Left — clickable for detail */}
+                      <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={() => setShowCloseResult(c)}>
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110 flex-shrink-0 ${c.period === 'diario' ? 'bg-blue-100 text-blue-600' : c.period === 'semanal' ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'}`}>
                           <span className="material-symbols-outlined text-[20px]">
                             {c.period === 'diario' ? 'today' : c.period === 'semanal' ? 'date_range' : 'calendar_month'}
                           </span>
                         </div>
-                        <div>
-                          <p className="font-bold text-sm capitalize">Cierre {c.period}</p>
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm capitalize">{`Cierre ${c.period}`}</p>
                           <p className="text-[10px] text-on-surface-variant">{c.date} · {c.totalOrders} pedidos</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
+
+                      {/* Right — amounts + opening control badge + button */}
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <div className="text-right cursor-pointer" onClick={() => setShowCloseResult(c)}>
                           <p className="font-bold text-primary">${formatCurrency(c.totalSales)}</p>
                           <div className="flex gap-2 mt-1">
                             {c.cashPayments > 0 && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Ef: ${formatCurrency(c.cashPayments)}</span>}
@@ -863,7 +869,24 @@ export const Analytics: React.FC = () => {
                             {c.transferPayments > 0 && <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Tr: ${formatCurrency(c.transferPayments)}</span>}
                           </div>
                         </div>
-                        <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
+
+                        {/* Badge de estado de arqueo de apertura — solo en cierres diarios */}
+                        {c.period === 'diario' && (() => {
+                          const isChecked = c.openingControlCounted != null;
+                          const diff = c.openingControlDifference ?? 0;
+                          const badgeColor = isChecked
+                            ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
+                            : 'bg-gray-100 text-gray-500';
+                          return (
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
+                              {isChecked
+                                ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `${formatCurrency(Math.abs(diff))} Faltante`)
+                                : 'Sin arqueo'}
+                            </span>
+                          );
+                        })()}
+
+                        <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setShowCloseResult(c)}>chevron_right</span>
                       </div>
                     </div>
                   ))}

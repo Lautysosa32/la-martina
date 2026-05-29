@@ -207,6 +207,13 @@ export interface CashClose {
   totalWithdrawals: number;
   movementIds: string[];
   initialAmount?: number;
+  // Control de Apertura (para el día siguiente)
+  openingControlExpected?: number;    // efectivo esperado calculado al cierre
+  openingControlCounted?: number;     // efectivo real encontrado al abrir
+  openingControlDifference?: number;  // counted - expected
+  openingControlNotes?: string;
+  openingControlCheckedAt?: string;   // ISO timestamp
+  openingControlCheckedBy?: string;
 }
 
 export interface CashMovement {
@@ -297,6 +304,7 @@ export interface AdminContextType {
   // Cash Close & Movements
   cashCloses: CashClose[];
   performCashClose: (period: 'diario' | 'semanal' | 'mensual', withdrawals?: CashWithdrawal[]) => CashClose;
+  updateCashCloseOpeningControl: (closeId: string, data: { counted: number; notes: string; checkedBy: string }) => void;
   cashMovements: CashMovement[];
   addCashMovement: (movement: Omit<CashMovement, 'id' | 'timestamp'>) => void;
   addCashWithdrawal: (withdrawal: Omit<CashWithdrawal, 'id' | 'timestamp'>) => void;
@@ -1486,16 +1494,35 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const from = fromDate.getTime();
     const to = now.getTime();
 
-    // Collect movements in this period (since last close)
+    // Collect movements and orders SINCE the last close (not since start of day)
+    // This prevents accumulation: each close only covers its own period
     const periodMovements = cashMovements.filter(m => m.timestamp >= lastPOSCloseTimestamp);
     const movementIds = periodMovements.map(m => m.id);
 
     const periodOrders = orders.filter(o => {
       const ts = getOrderTimestamp(o);
-      return ts >= from && ts <= to && o.status !== 'Cancelado';
+      return ts >= lastPOSCloseTimestamp && ts <= to && o.status !== 'Cancelado';
     });
 
     const totalWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
+
+    const cashPayments = periodOrders.filter(o => o.paymentMethod === 'cash').reduce((s, o) => s + o.total, 0);
+    const cardPayments = periodOrders.filter(o => o.paymentMethod === 'card').reduce((s, o) => s + o.total, 0);
+    const transferPayments = periodOrders.filter(o => o.paymentMethod === 'transfer').reduce((s, o) => s + o.total, 0);
+
+    // Calcular efectivo esperado al cierre (se guarda para el arqueo de apertura del día siguiente)
+    // Filtramos para que manualCashIncomes no incluya "Venta Local", ya que eso ya está en cashPayments
+    const manualCashIncomes = periodMovements
+      .filter(m => m.type === 'Ingreso' && !m.description.includes('Venta Local'))
+      .reduce((s, m) => s + m.amount, 0);
+    const manualCashExpenses = periodMovements
+      .filter(m => m.type === 'Egreso' && !m.description.startsWith('PAGO PROVEEDOR:'))
+      .reduce((s, m) => s + m.amount, 0);
+    const openingControlExpected = (cashRegister.initialAmount ?? 0)
+      + cashPayments
+      + manualCashIncomes
+      - totalWithdrawals
+      - manualCashExpenses;
 
     const close: CashClose = {
       id: 'CC_' + Date.now(),
@@ -1503,20 +1530,35 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       period,
       totalSales: periodOrders.reduce((s, o) => s + o.total, 0),
       totalOrders: periodOrders.length,
-      cashPayments: periodOrders.filter(o => o.paymentMethod === 'cash').reduce((s, o) => s + o.total, 0),
-      cardPayments: periodOrders.filter(o => o.paymentMethod === 'card').reduce((s, o) => s + o.total, 0),
-      transferPayments: periodOrders.filter(o => o.paymentMethod === 'transfer').reduce((s, o) => s + o.total, 0),
+      cashPayments,
+      cardPayments,
+      transferPayments,
       closedAt: now.toISOString(),
       withdrawals,
       totalWithdrawals,
       movementIds,
-      initialAmount: cashRegister.initialAmount
+      initialAmount: cashRegister.initialAmount,
+      openingControlExpected,
     };
     setCashCloses(prev => [close, ...prev]);
     setLastPOSCloseTimestamp(Date.now());
     // Close the cash register
     closeCashRegister();
     return close;
+  };
+
+  const updateCashCloseOpeningControl = (
+    closeId: string,
+    data: { counted: number; notes: string; checkedBy: string }
+  ) => {
+    setCashCloses(prev => prev.map(c => c.id === closeId ? {
+      ...c,
+      openingControlCounted: data.counted,
+      openingControlDifference: data.counted - (c.openingControlExpected ?? 0),
+      openingControlNotes: data.notes,
+      openingControlCheckedAt: new Date().toISOString(),
+      openingControlCheckedBy: data.checkedBy,
+    } : c));
   };
 
   const addCashMovement = (mov: Omit<CashMovement, 'id' | 'timestamp'>) => {
@@ -1737,7 +1779,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       currentAccountConfig, updateCurrentAccountConfig,
       storeStatus, updateStoreStatus,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
-      cashCloses, performCashClose,
+      cashCloses, performCashClose, updateCashCloseOpeningControl,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,
       ticketConfig, updateTicketConfig,
       cashRegister, openCashRegister, closeCashRegister, isCashRegisterOpen,

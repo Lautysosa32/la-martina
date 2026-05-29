@@ -127,12 +127,12 @@ export const AdminLayout: React.FC = () => {
     <div className="min-h-screen bg-[#f8f9fa] flex font-body-md overflow-x-hidden w-full">
 
       {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
-      <aside className="hidden lg:flex w-[260px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
-        <div className="p-8">
+      <aside className="hidden lg:flex w-[220px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
+        <div className="p-5">
           <div className="flex items-center justify-between">
             <Link to="/" className="flex flex-col">
-              <span className="text-[22px] font-bold text-primary leading-tight">Martina</span>
-              <span className="text-[11px] font-bold text-on-surface-variant/60 uppercase tracking-[0.2em]">Admin Suite</span>
+              <span className="text-[20px] font-bold text-primary leading-tight">Martina</span>
+              <span className="text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-[0.2em]">Admin Suite</span>
             </Link>
             <button
               onClick={togglePrivacyMode}
@@ -146,12 +146,12 @@ export const AdminLayout: React.FC = () => {
           </div>
         </div>
 
-        <nav className="flex-1 px-4 space-y-1">
+        <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
           {/* Skeleton mientras el auth se inicializa */}
           {!authReady ? (
             <div className="space-y-1 animate-pulse">
               {[...Array(6)].map((_, i) => (
-                <div key={i} className="h-11 bg-surface-container-low rounded-2xl" />
+                <div key={i} className="h-10 bg-surface-container-low rounded-xl" />
               ))}
             </div>
           ) : (
@@ -161,21 +161,21 @@ export const AdminLayout: React.FC = () => {
                 <Link
                   key={item.id}
                   to={item.path}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm relative ${
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all font-bold text-xs relative ${
                     isActive
                       ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
                       : 'text-on-surface-variant hover:bg-surface-container-low'
                   }`}
                 >
-                  <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">{item.icon}</span>
-                  {item.label}
+                  <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">{item.icon}</span>
+                  <span className="truncate">{item.label}</span>
                   {item.id === 'orders' && newOrdersCount > 0 && (
-                    <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-error text-white'}`}>
+                    <span className={`ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-error text-white'}`}>
                       {newOrdersCount}
                     </span>
                   )}
                   {item.id === 'inventory' && lowStockCount > 0 && (
-                    <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-orange-500 text-white'}`}>
+                    <span className={`ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-orange-500 text-white'}`}>
                       {lowStockCount}
                     </span>
                   )}
@@ -185,20 +185,20 @@ export const AdminLayout: React.FC = () => {
           )}
         </nav>
 
-        <div className="p-4 border-t border-outline-variant/10 space-y-2">
+        <div className="p-3 border-t border-outline-variant/10 space-y-1">
           <Link
             to="/"
-            className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-on-surface-variant font-bold text-sm hover:bg-surface-container-low transition-all"
+            className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl w-full text-on-surface-variant font-bold text-xs hover:bg-surface-container-low transition-all"
           >
-            <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">storefront</span>
-            Ir a la Tienda
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">storefront</span>
+            <span className="truncate">Ir a la Tienda</span>
           </Link>
           <button
             onClick={handleSignOut}
-            className="flex items-center gap-3 px-4 py-3 rounded-2xl w-full text-error font-bold text-sm hover:bg-red-50 hover:text-error transition-all"
+            className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl w-full text-error font-bold text-xs hover:bg-red-50 hover:text-error transition-all"
           >
-            <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">logout</span>
-            Cerrar Sesión
+            <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">logout</span>
+            <span className="truncate">Cerrar Sesión</span>
           </button>
         </div>
       </aside>
@@ -296,7 +296,7 @@ export const AdminLayout: React.FC = () => {
       </aside>
 
       {/* ── MAIN CONTENT ── */}
-      <main className="flex-1 lg:ml-[260px] min-w-0 overflow-x-hidden flex flex-col">
+      <main className="flex-1 lg:ml-[220px] min-w-0 overflow-x-hidden flex flex-col">
 
         {/* ── MOBILE TOP HEADER (hidden on desktop) ── */}
         <header className="lg:hidden sticky top-0 z-20 bg-white border-b border-outline-variant/10 flex items-center justify-between px-4 h-14 shrink-0">

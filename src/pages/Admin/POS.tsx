@@ -63,7 +63,7 @@ const createTab = (num: number): POSTab => ({
 });
 
 export const POS: React.FC = () => {
-  const { customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts, performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers, orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig, ticketConfig } = useAdmin();
+  const { customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts, performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers, orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig, ticketConfig, cashCloses, updateCashCloseOpeningControl } = useAdmin();
 
   const [headerPortal, setHeaderPortal] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -192,6 +192,10 @@ export const POS: React.FC = () => {
   // Cash Register Open modal
   const [showCashOpenModal, setShowCashOpenModal] = useState(false);
   const [cashOpenAmount, setCashOpenAmount] = useState('');
+  // Arqueo de apertura: 'arqueo' | 'open'
+  const [cashOpenStep, setCashOpenStep] = useState<'arqueo' | 'open'>('open');
+  const [arqueoContado, setArqueoContado] = useState('');
+  const [arqueoNotes, setArqueoNotes] = useState('');
 
   // Generic Product modal
   const [showGenericModal, setShowGenericModal] = useState(false);
@@ -289,16 +293,22 @@ export const POS: React.FC = () => {
     cashMovements.forEach(m => {
       if (m.timestamp > lastPOSCloseTimestamp) {
         const isVenta = m.description.includes('Venta Local');
-        const method = m.description.includes('(card)') ? 'card' :
-          m.description.includes('(transfer)') ? 'transfer' :
-            m.description.includes('(cuenta_corriente)') ? 'cuenta_corriente' : 'cash';
+        const descLower = m.description.toLowerCase();
+        const method = (descLower.includes('(card)') || descLower.includes('(tarjeta)')) ? 'card' :
+          (descLower.includes('(transfer)') || descLower.includes('(transferencia)')) ? 'transfer' :
+          (descLower.includes('(cuenta_corriente)') || descLower.includes('(cta. corriente)')) ? 'cuenta_corriente' : 'cash';
         if (isVenta) {
           if (method === 'cash') cash += m.amount;
           else if (method === 'card') card += m.amount;
           else if (method === 'transfer') transfer += m.amount;
         }
         if (m.type === 'Ingreso') currentBox += m.amount;
-        if (m.type === 'Egreso' || m.type === 'Retiro') currentBox -= m.amount;
+        if (m.type === 'Egreso' || m.type === 'Retiro') {
+          // Excluimos PAGO PROVEEDOR de restar de la caja chica/actual en vivo
+          if (!m.description.startsWith('PAGO PROVEEDOR:')) {
+            currentBox -= m.amount;
+          }
+        }
       }
     });
     return { cash, card, transfer, currentBox };
@@ -507,6 +517,15 @@ export const POS: React.FC = () => {
       setShowModal(true);
       setTimeout(() => inputRef.current?.focus(), 100);
     } else {
+      // Si hay un cierre anterior, mostrar primero el arqueo de apertura
+      const lastClose = cashCloses.find(c => c.period === 'diario');
+      if (lastClose && lastClose.openingControlExpected != null) {
+        setCashOpenStep('arqueo');
+        setArqueoContado('');
+        setArqueoNotes('');
+      } else {
+        setCashOpenStep('open');
+      }
       setShowCashOpenModal(true);
     }
   };
@@ -1232,66 +1251,177 @@ export const POS: React.FC = () => {
         <TicketPrinter ticket={showTicket} onClose={() => setShowTicket(null)} />
       )}
       {/* Cash Register Open Modal */}
-      {showCashOpenModal && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 animate-in fade-in">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCashOpenModal(false)} />
-          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden animate-in zoom-in-95">
-            <div className="p-6 border-b border-outline-variant/10 flex items-center gap-4 bg-surface-container-lowest">
-              <div className="w-12 h-12 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center">
-                <span className="material-symbols-outlined text-[28px]">point_of_sale</span>
-              </div>
-              <div>
-                <h3 className="text-xl font-black">Abrir Caja</h3>
-                <p className="text-xs text-on-surface-variant">Registrá el efectivo inicial para comenzar</p>
-              </div>
-            </div>
-            <div className="p-8 space-y-6">
-              <div>
-                <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-2 block">Efectivo Inicial en Caja</label>
-                <div className="relative">
-                  <span className="absolute left-5 top-1/2 -translate-y-1/2 text-2xl font-black text-on-surface-variant/50">$</span>
-                  <input
-                    type="number"
-                    value={cashOpenAmount}
-                    onChange={e => setCashOpenAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-2xl py-5 pl-12 pr-6 text-3xl font-black text-center outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
-                    autoFocus
-                    onKeyDown={e => { if (e.key === 'Enter') handleRegisterInitialCash(); }}
-                  />
-                </div>
-                <p className="text-[10px] text-on-surface-variant mt-2 text-center italic">Ingresá $0 si no hay efectivo inicial</p>
-              </div>
-              <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-on-surface-variant font-medium flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[16px]">person</span> Usuario
-                  </span>
-                  <span className="font-bold">Admin</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-on-surface-variant font-medium flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[16px]">schedule</span> Fecha / Hora
-                  </span>
-                  <span className="font-bold">{new Date().toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-              </div>
-            </div>
-            <div className="p-6 border-t border-outline-variant/10 flex gap-3">
-              <button onClick={() => setShowCashOpenModal(false)} className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors">
-                Cancelar
-              </button>
-              <button
-                onClick={handleRegisterInitialCash}
-                className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2"
-              >
-                <span className="material-symbols-outlined text-[20px]">lock_open</span>
-                Registrar dinero inicial en caja
-              </button>
+      {showCashOpenModal && (() => {
+        const lastDailyClose = cashCloses.find(c => c.period === 'diario');
+        const expected = lastDailyClose?.openingControlExpected ?? 0;
+        const arqueoNum = parseFloat(arqueoContado.replace(',', '.')) || 0;
+        const arqueoDiff = arqueoNum - expected;
+        const diffColor = arqueoDiff === 0 ? 'text-green-600' : arqueoDiff > 0 ? 'text-blue-600' : 'text-red-600';
+        const diffLabel = arqueoDiff === 0 ? 'Caja cuadrada ✓' : arqueoDiff > 0 ? 'Sobrante' : 'Faltante';
+
+        const handleConfirmArqueo = () => {
+          if (arqueoContado === '') return;
+          if (lastDailyClose) {
+            updateCashCloseOpeningControl(lastDailyClose.id, {
+              counted: arqueoNum,
+              notes: arqueoNotes,
+              checkedBy: 'Admin',
+            });
+          }
+          // Abre la caja directamente con el monto contado — sin segundo paso
+          openCashRegister(arqueoNum);
+          setShowCashOpenModal(false);
+          setShowModal(true);
+          setTimeout(() => inputRef.current?.focus(), 100);
+        };
+
+        const handleSkipArqueo = () => {
+          // Sin arqueo: va al paso clásico de ingresar monto inicial
+          setCashOpenStep('open');
+        };
+
+        return (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 animate-in fade-in">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCashOpenModal(false)} />
+            <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden animate-in zoom-in-95">
+
+              {cashOpenStep === 'arqueo' && lastDailyClose ? (
+                <>
+                  {/* PASO 1: Arqueo de apertura */}
+                  <div className="p-6 border-b border-outline-variant/10 flex items-center gap-4 bg-surface-container-lowest">
+                    <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center">
+                      <span className="material-symbols-outlined text-[28px]">lock_open</span>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black">Arqueo de Apertura</h3>
+                      <p className="text-xs text-on-surface-variant">Verificá el efectivo antes de abrir — Último cierre: {lastDailyClose.date}</p>
+                    </div>
+                  </div>
+                  <div className="p-6 space-y-5">
+                    {/* Efectivo esperado */}
+                    <div className="bg-surface-container-low rounded-2xl p-4 flex justify-between items-center">
+                      <span className="font-bold text-sm text-on-surface-variant">Efectivo esperado según último cierre:</span>
+                      <span className="font-black text-lg text-primary">${formatCurrency(expected)}</span>
+                    </div>
+                    {/* Campo: efectivo encontrado */}
+                    <div>
+                      <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest mb-2 block ml-1">Efectivo real encontrado *</label>
+                      <div className="relative">
+                        <span className="absolute left-5 top-1/2 -translate-y-1/2 text-2xl font-black text-on-surface-variant/50">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={arqueoContado}
+                          onChange={e => setArqueoContado(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-2xl py-5 pl-12 pr-6 text-3xl font-black text-center outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                          autoFocus
+                          onKeyDown={e => { if (e.key === 'Enter' && arqueoContado !== '') handleConfirmArqueo(); }}
+                        />
+                      </div>
+                    </div>
+                    {/* Diferencia en tiempo real */}
+                    {arqueoContado !== '' && (
+                      <div className={`rounded-2xl p-4 flex justify-between items-center ${
+                        arqueoDiff === 0 ? 'bg-green-50' : arqueoDiff > 0 ? 'bg-blue-50' : 'bg-red-50'
+                      }`}>
+                        <span className="font-black text-sm uppercase tracking-wide">Diferencia:</span>
+                        <div className="text-right">
+                          <p className={`font-black text-xl ${diffColor}`}>
+                            {arqueoDiff > 0 ? '+' : ''}{arqueoDiff < 0 ? '-' : ''}${formatCurrency(Math.abs(arqueoDiff))}
+                          </p>
+                          <p className={`text-[10px] font-black uppercase tracking-wider ${diffColor}`}>{diffLabel}</p>
+                        </div>
+                      </div>
+                    )}
+                    {/* Observaciones */}
+                    <div>
+                      <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest mb-2 block ml-1">Observaciones (opcional)</label>
+                      <input
+                        type="text"
+                        value={arqueoNotes}
+                        onChange={e => setArqueoNotes(e.target.value)}
+                        placeholder="Ej: Faltaban $2.000, consultado con cajero anterior..."
+                        className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-3 px-4 font-medium text-sm outline-none focus:border-primary transition-all"
+                      />
+                    </div>
+                  </div>
+                  <div className="p-6 border-t border-outline-variant/10 flex gap-3">
+                    <button onClick={handleSkipArqueo} className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors text-sm">
+                      Omitir arqueo
+                    </button>
+                    <button
+                      onClick={handleConfirmArqueo}
+                      disabled={arqueoContado === ''}
+                      className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+                      Confirmar y abrir caja
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* PASO 2: Efectivo inicial */}
+                  <div className="p-6 border-b border-outline-variant/10 flex items-center gap-4 bg-surface-container-lowest">
+                    <div className="w-12 h-12 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center">
+                      <span className="material-symbols-outlined text-[28px]">point_of_sale</span>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black">Abrir Caja</h3>
+                      <p className="text-xs text-on-surface-variant">Registrá el efectivo inicial para comenzar</p>
+                    </div>
+                  </div>
+                  <div className="p-8 space-y-6">
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-2 block">Efectivo Inicial en Caja</label>
+                      <div className="relative">
+                        <span className="absolute left-5 top-1/2 -translate-y-1/2 text-2xl font-black text-on-surface-variant/50">$</span>
+                        <input
+                          type="number"
+                          value={cashOpenAmount}
+                          onChange={e => setCashOpenAmount(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-2xl py-5 pl-12 pr-6 text-3xl font-black text-center outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                          autoFocus
+                          onKeyDown={e => { if (e.key === 'Enter') handleRegisterInitialCash(); }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-on-surface-variant mt-2 text-center italic">Ingresá $0 si no hay efectivo inicial</p>
+                    </div>
+                    <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10 space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-on-surface-variant font-medium flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">person</span> Usuario
+                        </span>
+                        <span className="font-bold">Admin</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-on-surface-variant font-medium flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">schedule</span> Fecha / Hora
+                        </span>
+                        <span className="font-bold">{new Date().toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-6 border-t border-outline-variant/10 flex gap-3">
+                    <button onClick={() => setShowCashOpenModal(false)} className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors">
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleRegisterInitialCash}
+                      className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">lock_open</span>
+                      Registrar dinero inicial en caja
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Generic Product Modal */}
       {showGenericModal && (
