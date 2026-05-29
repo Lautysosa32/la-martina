@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { products as catalogProducts, categories as catalogCategories, Product, Category } from '../data/mockData';
+import { products as catalogProducts, categories as catalogCategories, Product } from '../data/mockData';
+import type { Category } from '../data/mockData';
+export type { Category };
 import { useProductStore } from '../stores/useProductStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
@@ -10,7 +12,8 @@ import {
   fetchCashCloses, insertCashClose, 
   fetchOffers, insertOffer, updateOfferInDb, deleteOfferInDb,
   fetchCustomerProfiles, upsertCustomerProfile,
-  fetchSetting, saveSetting
+  fetchSetting, saveSetting,
+  fetchCategories, insertCategory, updateCategoryInDb, deleteCategoryFromDb
 } from '../services/admin.service';
 
 
@@ -365,6 +368,13 @@ function generateInitialStock(prods: Product[]): Record<string, number> {
 
 const initialTags = ['Oferta', 'Nuevo', 'Orgánico', '3x2', 'Local', 'Premium'];
 
+const parseDiscount = (d: any): number | null => {
+  if (d === undefined || d === null || d === '') return null;
+  if (typeof d === 'number') return d;
+  const parsed = parseFloat(String(d).replace('%', ''));
+  return isNaN(parsed) ? null : parsed;
+};
+
 const generateSeedOrders = (prods: Product[]): AdminOrder[] => {
   const now = new Date();
   const fmt = (d: Date) => d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -436,32 +446,7 @@ const generateSeedOrders = (prods: Product[]): AdminOrder[] => {
 // ─── Provider ──────────────────────────────────────────────
 
 export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [adminProducts, setAdminProducts] = useState<Product[]>(() => {
-    // Reset if catalog version changed (removes stale offer data)
-    const version = 'v3';
-    const storedVersion = localStorage.getItem('la-martina-catalog-version');
-    if (storedVersion !== version) {
-      // Clear info that has been created, but KEEP products, categories, and tags
-      const keysToClear = [
-        'la-martina-admin-orders',
-        'la-martina-admin-offers',
-        'la-martina-admin-offer-redemptions',
-        'la-martina-admin-cash-closes',
-        'la-martina-admin-cashmovements',
-        'la-martina-admin-last-pos-close',
-        'la-martina-admin-customer-profiles',
-        'la-martina-user',
-        'cart',
-        'la-martina-favorites',
-        'la-martina-admin-stock',
-        'la-martina-store-status'
-      ];
-      keysToClear.forEach(k => localStorage.removeItem(k));
-      localStorage.setItem('la-martina-catalog-version', version);
-    }
-    const saved = localStorage.getItem('la-martina-admin-products');
-    return saved ? JSON.parse(saved) : catalogProducts;
-  });
+  const [adminProducts, setAdminProducts] = useState<Product[]>([]);
 
   // Sincronización con Supabase (Zustand)
   const storeProducts = useProductStore((state) => state.products);
@@ -474,61 +459,53 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     if (!storeLoading) {
-      setAdminProducts(storeProducts as any);
-      // Sincronizar stockMap con el stock de la base de datos para asegurar consistencia
-      setStockMap(prev => {
-        const next = { ...prev };
-        storeProducts.forEach(p => {
-          if (p.id) {
-            next[p.id] = p.stock ?? 0;
-          }
+      if (storeProducts.length <= 1) {
+        console.log('🌱 Base de datos de productos vacía o de prueba, sembrando catálogo original...');
+        const toAdd = catalogProducts.map(p => ({
+          name: p.name,
+          brand: p.brand || '',
+          categoryId: p.categoryId,
+          price: p.price,
+          originalPrice: p.originalPrice || null,
+          image: p.image || '',
+          format: p.format || '',
+          isNew: p.isNew || false,
+          discount: p.discount || null,
+          badge: p.badge || '',
+          minStock: p.minStock || 15,
+          barcode: p.barcode || '',
+          stock: p.stock || 0,
+          branchId: 'main'
+        }));
+        useProductStore.getState().bulkAddProducts(toAdd as any)
+          .then(() => {
+            console.log('✅ Productos sembrados exitosamente');
+            storeFetch();
+          })
+          .catch(console.error);
+      } else {
+        setAdminProducts(storeProducts as any);
+        // Sincronizar stockMap con el stock de la base de datos para asegurar consistencia
+        setStockMap(prev => {
+          const next = { ...prev };
+          storeProducts.forEach(p => {
+            if (p.id) {
+              next[p.id] = p.stock ?? 0;
+            }
+          });
+          return next;
         });
-        return next;
-      });
+      }
     }
-  }, [storeProducts, storeLoading]);
+  }, [storeProducts, storeLoading, storeFetch]);
 
-  const [adminCategories, setAdminCategories] = useState<Category[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-categories');
-    return saved ? JSON.parse(saved) : catalogCategories;
-  });
+  const [adminCategories, setAdminCategories] = useState<Category[]>([]);
 
-  const [adminTags, setAdminTags] = useState<string[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-tags');
-    return saved ? JSON.parse(saved) : initialTags;
-  });
+  const [adminTags, setAdminTags] = useState<string[]>(initialTags);
 
-  const [stockMap, setStockMap] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem('la-martina-admin-stock');
-    return saved ? JSON.parse(saved) : {};
-  });
+  const [stockMap, setStockMap] = useState<Record<string, number>>({});
 
-  const [orders, setOrders] = useState<AdminOrder[]>(() => {
-    const saved = localStorage.getItem('la-martina-admin-orders');
-    if (saved) {
-      // Backfill timestamp for old orders that lack it
-      const parsed: AdminOrder[] = JSON.parse(saved);
-      return parsed.map(o => {
-        if (o.timestamp) return o;
-        // Try to parse es-AR date: "DD/MM/YYYY, HH:MM" or with AM/PM
-        const str = o.date;
-        const m = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (m) {
-          const timeM = str.match(/(\d{1,2}):(\d{2})/);
-          const h = timeM ? parseInt(timeM[1]) : 0;
-          const min = timeM ? parseInt(timeM[2]) : 0;
-          const isPM = /p\.?\s*m/i.test(str);
-          const isAM = /a\.?\s*m/i.test(str);
-          let hour = h;
-          if (isPM && h < 12) hour = h + 12;
-          if (isAM && h === 12) hour = 0;
-          return { ...o, timestamp: new Date(+m[3], +m[2] - 1, +m[1], hour, min).getTime() };
-        }
-        return { ...o, timestamp: new Date(str).getTime() };
-      });
-    }
-    return [];
-  });
+  const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [customerProfiles, setCustomerProfiles] = useState<Record<string, CustomerProfile>>({});
 
   const defaultCurrentAccountConfig: CurrentAccountConfig = {
@@ -543,7 +520,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [currentAccountConfig, setCurrentAccountConfig] = useState<CurrentAccountConfig>(defaultCurrentAccountConfig);
 
   const updateCurrentAccountConfig = (updates: Partial<CurrentAccountConfig>) => {
-    setCurrentAccountConfig(prev => ({ ...prev, ...updates }));
+    setCurrentAccountConfig(prev => {
+      const next = { ...prev, ...updates };
+      saveSetting('current_account_config', next).catch(console.error);
+      return next;
+    });
   };
 
   // Customers are now derived from orders for total consistency
@@ -669,7 +650,9 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setCustomerProfiles(prev => {
       const existing = prev[phone] || { phone, hasCurrentAccount: false };
-      return { ...prev, [phone]: { ...existing, hasCurrentAccount: !existing.hasCurrentAccount } };
+      const nextProfile = { ...existing, hasCurrentAccount: !existing.hasCurrentAccount };
+      upsertCustomerProfile(nextProfile).catch(console.error);
+      return { ...prev, [phone]: nextProfile };
     });
 
     return { success: true };
@@ -692,12 +675,14 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (newPhone !== oldPhone || updates.name || updates.dni) {
       setOrders(prev => prev.map(o => {
         if (o.phone === oldPhone) {
-          return {
+          const updated = {
             ...o,
             phone: newPhone,
             customer: updates.name || o.customer,
             dni: updates.dni || o.dni
           };
+          updateOrderInDb(o.id, updated).catch(console.error);
+          return updated;
         }
         return o;
       }));
@@ -707,13 +692,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCustomerProfiles(prev => {
       const newProfiles = { ...prev };
       const currentProfile = newProfiles[oldPhone] || { phone: oldPhone, hasCurrentAccount: false };
+      const updatedProfile = { 
+        ...currentProfile, 
+        ...updates,
+        nombre: updates.name || currentProfile.nombre || '',
+        phone: newPhone 
+      };
 
       if (newPhone !== oldPhone) {
         delete newProfiles[oldPhone];
-        newProfiles[newPhone] = { ...currentProfile, ...updates, phone: newPhone };
+        newProfiles[newPhone] = updatedProfile;
       } else {
-        newProfiles[oldPhone] = { ...currentProfile, ...updates };
+        newProfiles[oldPhone] = updatedProfile;
       }
+      upsertCustomerProfile(updatedProfile).catch(console.error);
       return newProfiles;
     });
   };
@@ -742,11 +734,15 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           if (remainingToSettle >= orderDebt) {
             remainingToSettle -= orderDebt;
-            return { ...o, paymentStatus: 'Pagado' as const, paidAmount: o.total };
+            const updated = { ...o, paymentStatus: 'Pagado' as const, paidAmount: o.total };
+            updateOrderInDb(o.id, { paymentStatus: 'Pagado' as const, paidAmount: o.total }).catch(console.error);
+            return updated;
           } else {
             const newPaid = (o.paidAmount || 0) + remainingToSettle;
             remainingToSettle = 0;
-            return { ...o, paidAmount: newPaid };
+            const updated = { ...o, paidAmount: newPaid };
+            updateOrderInDb(o.id, { paidAmount: newPaid }).catch(console.error);
+            return updated;
           }
         }
         return o;
@@ -780,18 +776,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ─── Manual Customer CRUD ─────────────────────────────────
   const addManualCustomer = (data: { nombre: string; apellido: string; telefono: string; direccion: string; dni?: string }) => {
     const phone = formatPhone(data.telefono);
+    const profile: CustomerProfile = {
+      dni: data.dni || phone,
+      phone,
+      hasCurrentAccount: false,
+      nombre: data.nombre,
+      apellido: data.apellido,
+      direccion: data.direccion,
+      isManual: true
+    };
     setCustomerProfiles(prev => ({
       ...prev,
-      [phone]: {
-        dni: data.dni || '',
-        phone,
-        hasCurrentAccount: false,
-        nombre: data.nombre,
-        apellido: data.apellido,
-        direccion: data.direccion,
-        isManual: true
-      }
+      [phone]: profile
     }));
+    upsertCustomerProfile(profile).catch(console.error);
   };
 
   const deleteCustomer = (phone: string): { success: boolean; message?: string } => {
@@ -804,6 +802,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       delete next[phone];
       return next;
     });
+    supabase.from('customer_profiles').delete().eq('phone', phone).eq('branch_id', 'main').then(({ error }) => { if (error) console.error('Error deleting customer profile:', error); });
     return { success: true };
   };
 
@@ -823,7 +822,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     // 1. Fetch initial data from Supabase
     const loadAllData = async () => {
-      const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing] = await Promise.all([
+      const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
         fetchCashCloses(),
@@ -833,7 +832,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('current_account_config', defaultCurrentAccountConfig),
         fetchSetting('cash_register', { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' } as CashRegister),
         fetchSetting('invoices', [] as Invoice[]),
-        fetchSetting('billing_customers', [] as BillingCustomer[])
+        fetchSetting('billing_customers', [] as BillingCustomer[]),
+        fetchSetting('last_pos_close_timestamp', 0),
+        fetchCategories(),
+        fetchSetting<string[]>('admin_tags', initialTags)
       ]);
 
       setOrders(_orders);
@@ -846,6 +848,19 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCashRegister(_cashReg);
       setInvoices(_invoices);
       setBillingCustomers(_billing);
+      setLastPOSCloseTimestamp(_lastCloseTs);
+      setAdminTags(_tags);
+
+      // Seed categories if empty
+      let finalCategories = _categories;
+      if (_categories.length === 0) {
+        console.log('🌱 No se encontraron categorías en Supabase. Sembrando categorías...');
+        for (const cat of catalogCategories) {
+          await insertCategory(cat);
+        }
+        finalCategories = await fetchCategories();
+      }
+      setAdminCategories(finalCategories);
 
       // Store Status
       supabase.from('settings').select('value').eq('key', 'store_status').single().then(({ data }) => {
@@ -876,8 +891,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       
     // Sync new orders from other devices
     const ordersSub = supabase.channel('orders_channel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-        // Simple strategy: refetch all orders to avoid complex diffing logic and keep it robust
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchOrders().then(setOrders);
       })
       .subscribe();
@@ -888,9 +902,54 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
       .subscribe();
 
+    const closesSub = supabase.channel('cash_closes_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_closes' }, () => {
+        fetchCashCloses().then(setCashCloses);
+      })
+      .subscribe();
+
+    const profilesSub = supabase.channel('customer_profiles_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_profiles' }, () => {
+        fetchCustomerProfiles().then(setCustomerProfiles);
+      })
+      .subscribe();
+
+    const settingsSub = supabase.channel('settings_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, () => {
+        fetchSetting('ticket_config', defaultTicketConfig).then(setTicketConfig);
+        fetchSetting('current_account_config', defaultCurrentAccountConfig).then(setCurrentAccountConfig);
+        fetchSetting('cash_register', { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' } as CashRegister).then(setCashRegister);
+        fetchSetting('invoices', [] as Invoice[]).then(setInvoices);
+        fetchSetting('billing_customers', [] as BillingCustomer[]).then(setBillingCustomers);
+        fetchSetting('last_pos_close_timestamp', 0).then(setLastPOSCloseTimestamp);
+        fetchSetting<string[]>('admin_tags', initialTags).then(setAdminTags);
+      })
+      .subscribe();
+
+    const productsSub = supabase.channel('products_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        console.log('🔔 Cambio en tabla products detectado, re-fecheando...');
+        storeFetch();
+      })
+      .subscribe();
+
+    const categoriesSub = supabase.channel('categories_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
+        console.log('🔔 Cambio en tabla categories detectado, re-fecheando...');
+        fetchCategories().then(setAdminCategories);
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(statusSub);
       supabase.removeChannel(redemptionsSub);
+      supabase.removeChannel(ordersSub);
+      supabase.removeChannel(movementsSub);
+      supabase.removeChannel(closesSub);
+      supabase.removeChannel(profilesSub);
+      supabase.removeChannel(settingsSub);
+      supabase.removeChannel(productsSub);
+      supabase.removeChannel(categoriesSub);
     };
   }, []);
 
@@ -936,7 +995,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
   const [ticketConfig, setTicketConfig] = useState<TicketConfig>(defaultTicketConfig);
   const updateTicketConfig = (updates: Partial<TicketConfig>) => {
-    setTicketConfig(prev => ({ ...prev, ...updates }));
+    setTicketConfig(prev => {
+      const next = { ...prev, ...updates };
+      saveSetting('ticket_config', next).catch(console.error);
+      return next;
+    });
   };
 
   // ─── Cash Register ────────────────────────────────────────
@@ -945,9 +1008,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const openCashRegister = (amount: number, user: string = 'Admin') => {
     const reg: CashRegister = { isOpen: true, initialAmount: amount, openedBy: user, openedAt: new Date().toISOString() };
     setCashRegister(reg);
+    saveSetting('cash_register', reg).catch(console.error);
   };
   const closeCashRegister = () => {
-    setCashRegister({ isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' });
+    const reg: CashRegister = { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' };
+    setCashRegister(reg);
+    saveSetting('cash_register', reg).catch(console.error);
   };
 
   // ─── Invoices ─────────────────────────────────────────────
@@ -957,92 +1023,155 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addInvoice = (invoiceData: Omit<Invoice, 'id' | 'folio'>): Invoice => {
     const folio = String(invoices.length + 1).padStart(6, '0');
     const invoice: Invoice = { ...invoiceData, id: `INV-${Date.now()}`, folio };
-    setInvoices(prev => [invoice, ...prev]);
+    setInvoices(prev => {
+      const next = [invoice, ...prev];
+      saveSetting('invoices', next).catch(console.error);
+      return next;
+    });
     return invoice;
   };
   const updateInvoice = (id: string, updates: Partial<Invoice>) => {
-    setInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv));
+    setInvoices(prev => {
+      const next = prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv);
+      saveSetting('invoices', next).catch(console.error);
+      return next;
+    });
   };
   const addBillingCustomer = (data: Omit<BillingCustomer, 'id'>) => {
-    setBillingCustomers(prev => [...prev, { ...data, id: `BC-${Date.now()}` }]);
+    setBillingCustomers(prev => {
+      const next = [...prev, { ...data, id: `BC-${Date.now()}` }];
+      saveSetting('billing_customers', next).catch(console.error);
+      return next;
+    });
   };
   const updateBillingCustomer = (id: string, updates: Partial<BillingCustomer>) => {
-    setBillingCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    setBillingCustomers(prev => {
+      const next = prev.map(c => c.id === id ? { ...c, ...updates } : c);
+      saveSetting('billing_customers', next).catch(console.error);
+      return next;
+    });
   };
   const deleteBillingCustomer = (id: string) => {
-    setBillingCustomers(prev => prev.filter(c => c.id !== id));
+    setBillingCustomers(prev => {
+      const next = prev.filter(c => c.id !== id);
+      saveSetting('billing_customers', next).catch(console.error);
+      return next;
+    });
   };
-
-  // Persistence
-  useEffect(() => { localStorage.setItem('la-martina-admin-products', JSON.stringify(adminProducts)); }, [adminProducts]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-categories', JSON.stringify(adminCategories)); }, [adminCategories]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-tags', JSON.stringify(adminTags)); }, [adminTags]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-stock', JSON.stringify(stockMap)); }, [stockMap]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-orders', JSON.stringify(orders)); }, [orders]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-offers', JSON.stringify(offers)); }, [offers]);
-
-  // Handle Storage events (multi-tab sync) for legacy localStorage keys
-  const handleStorageChange = (e: StorageEvent) => {
-    if (e.key === 'la-martina-admin-orders' && e.newValue) {
-      setOrders(JSON.parse(e.newValue));
-    }
-  };
-
-  // Sync store status across tabs (e.g. if an admin pauses the store in one tab, the customer tab should know instantly)
-  useEffect(() => {
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
-  useEffect(() => { localStorage.setItem('la-martina-admin-cash-closes', JSON.stringify(cashCloses)); }, [cashCloses]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-cashmovements', JSON.stringify(cashMovements)); }, [cashMovements]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-last-pos-close', lastPOSCloseTimestamp.toString()); }, [lastPOSCloseTimestamp]);
-  useEffect(() => { localStorage.setItem('la-martina-admin-customer-profiles', JSON.stringify(customerProfiles)); }, [customerProfiles]);
-  useEffect(() => { localStorage.setItem('la-martina-ticket-config', JSON.stringify(ticketConfig)); }, [ticketConfig]);
-  useEffect(() => { localStorage.setItem('la-martina-current-account-config', JSON.stringify(currentAccountConfig)); }, [currentAccountConfig]);
-  useEffect(() => { localStorage.setItem('la-martina-cash-register', JSON.stringify(cashRegister)); }, [cashRegister]);
-  useEffect(() => { localStorage.setItem('la-martina-invoices', JSON.stringify(invoices)); }, [invoices]);
-  useEffect(() => { localStorage.setItem('la-martina-billing-customers', JSON.stringify(billingCustomers)); }, [billingCustomers]);
 
   // Handlers: Products
-  const addProduct = (p: Product) => { setAdminProducts(prev => [...prev, p]); if (!stockMap[p.id]) updateStock(p.id, 0); };
-  const updateProduct = (id: string, up: Partial<Product>) => setAdminProducts(prev => prev.map(p => p.id === id ? { ...p, ...up } : p));
-  const deleteProduct = (id: string) => {
-    setAdminProducts(prev => prev.filter(p => p.id !== id));
-    setStockMap(prev => { const n = { ...prev }; delete n[id]; return n; });
-  };
-  const bulkUpdatePrice = (ids: string[], pct: number) => {
-    const m = 1 + (pct / 100);
-    setAdminProducts(prev => prev.map(p => ids.includes(p.id) ? { ...p, price: Math.round(p.price * m), originalPrice: p.originalPrice ? Math.round(p.originalPrice * m) : p.originalPrice } : p));
+  const addProduct = (p: Product) => {
+    const input = {
+      name: p.name,
+      brand: p.brand || '',
+      categoryId: p.categoryId,
+      price: p.price,
+      originalPrice: p.originalPrice || null,
+      image: p.image || '',
+      format: p.format || '',
+      isNew: p.isNew || false,
+      discount: parseDiscount(p.discount),
+      badge: p.badge || '',
+      minStock: p.minStock || 15,
+      barcode: p.barcode || '',
+      stock: p.stock || 0,
+      branchId: 'main'
+    };
+    useProductStore.getState().addProduct(input).catch(console.error);
   };
 
-  const bulkAddProducts = (newProds: Product[], stockUpdates: Record<string, number>) => {
-    setAdminProducts(prev => [...prev, ...newProds]);
-    setStockMap(prev => ({ ...prev, ...stockUpdates }));
+  const updateProduct = (id: string, up: Partial<Product>) => {
+    const input = {
+      ...(up.name !== undefined && { name: up.name }),
+      ...(up.brand !== undefined && { brand: up.brand }),
+      ...(up.categoryId !== undefined && { categoryId: up.categoryId }),
+      ...(up.price !== undefined && { price: up.price }),
+      ...(up.originalPrice !== undefined && { originalPrice: up.originalPrice }),
+      ...(up.image !== undefined && { image: up.image }),
+      ...(up.format !== undefined && { format: up.format }),
+      ...(up.isNew !== undefined && { isNew: up.isNew }),
+      ...(up.discount !== undefined && { discount: parseDiscount(up.discount) }),
+      ...(up.badge !== undefined && { badge: up.badge }),
+      ...(up.minStock !== undefined && { minStock: up.minStock }),
+      ...(up.barcode !== undefined && { barcode: up.barcode }),
+      ...(up.stock !== undefined && { stock: up.stock }),
+    };
+    useProductStore.getState().updateProduct(id, input).catch(console.error);
+  };
+
+  const deleteProduct = (id: string) => {
+    useProductStore.getState().deleteProduct(id).catch(console.error);
+    setStockMap(prev => { const n = { ...prev }; delete n[id]; return n; });
+  };
+
+  const bulkUpdatePrice = (ids: string[], pct: number) => {
+    useProductStore.getState().bulkUpdatePrice(ids, pct).catch(console.error);
+  };
+
+  const bulkAddProducts = (newProds: Product[], stockUpdates?: Record<string, number>) => {
+    const inputs = newProds.map(p => ({
+      name: p.name,
+      brand: p.brand || '',
+      categoryId: p.categoryId,
+      price: p.price,
+      originalPrice: p.originalPrice || null,
+      image: p.image || '',
+      format: p.format || '',
+      isNew: p.isNew || false,
+      discount: parseDiscount(p.discount),
+      badge: p.badge || '',
+      minStock: p.minStock || 15,
+      barcode: p.barcode || '',
+      stock: p.stock || 0,
+      branchId: 'main'
+    }));
+    useProductStore.getState().bulkAddProducts(inputs).catch(console.error);
   };
 
   // Handlers: Categories
-  const addCategory = (c: Category) => setAdminCategories(prev => [...prev, c]);
+  const addCategory = (c: Category) => {
+    setAdminCategories(prev => [...prev, c]);
+    insertCategory(c).catch(console.error);
+  };
+
   const updateCategory = (id: string, up: Partial<Category>) => {
-    // Si cambia el ID (slug), hay que actualizar todos los productos que lo usan
     if (up.id && up.id !== id) {
       setAdminProducts(prev => prev.map(p => p.categoryId === id ? { ...p, categoryId: up.id! } : p));
     }
     setAdminCategories(prev => prev.map(c => c.id === id ? { ...c, ...up } : c));
+    updateCategoryInDb(id, up).catch(console.error);
   };
+
   const deleteCategory = (id: string) => {
     setAdminCategories(prev => prev.filter(c => c.id !== id));
-    // Opcional: mover productos a una categoría 'sin-categoria'
     setAdminProducts(prev => prev.map(p => p.categoryId === id ? { ...p, categoryId: 'general' } : p));
+    deleteCategoryFromDb(id).catch(console.error);
   };
 
   // Handlers: Tags
-  const addTag = (t: string) => setAdminTags(prev => prev.includes(t) ? prev : [...prev, t]);
+  const addTag = (t: string) => {
+    setAdminTags(prev => {
+      const next = prev.includes(t) ? prev : [...prev, t];
+      saveSetting('admin_tags', next).catch(console.error);
+      return next;
+    });
+  };
+
   const updateTag = (oldT: string, newT: string) => {
-    setAdminTags(prev => prev.map(t => t === oldT ? newT : t));
+    setAdminTags(prev => {
+      const next = prev.map(t => t === oldT ? newT : t);
+      saveSetting('admin_tags', next).catch(console.error);
+      return next;
+    });
     setAdminProducts(prev => prev.map(p => p.badge === oldT ? { ...p, badge: newT } : p));
   };
+
   const deleteTag = (t: string) => {
-    setAdminTags(prev => prev.filter(tag => tag !== t));
+    setAdminTags(prev => {
+      const next = prev.filter(tag => tag !== t);
+      saveSetting('admin_tags', next).catch(console.error);
+      return next;
+    });
     setAdminProducts(prev => prev.map(p => p.badge === t ? { ...p, badge: '' } : p));
   };
 
@@ -1210,6 +1339,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         discount_amount: o.discount
       });
     }
+    insertOrder(o).catch(console.error);
   };
   const updateOrderStatus = (id: string, s: AdminOrder['status']) => {
     // Buscar la orden previa para ver su estado actual antes del cambio
@@ -1219,6 +1349,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setOrders(prev => prev.map(o => o.id === id ? { ...o, status: s } : o));
     // Sincronizar con el perfil del cliente (usando Zustand directamente)
     useAuthStore.getState().updateOrderStatus(id, s);
+
+    updateOrderInDb(id, { status: s }).catch(console.error);
 
     // Encolar mensaje si el estado cambió realmente
     if (targetOrder && prevStatus !== s) {
@@ -1232,9 +1364,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
   const updateOrderMethod = (id: string, method: string) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, method } : o));
+    updateOrderInDb(id, { method }).catch(console.error);
   };
   const updateOrderPaymentMethod = (id: string, paymentMethod: string) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, paymentMethod } : o));
+    updateOrderInDb(id, { paymentMethod }).catch(console.error);
   };
 
   const ordersRevenue = orders
@@ -1565,7 +1699,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       openingControlExpected,
     };
     setCashCloses(prev => [close, ...prev]);
-    setLastPOSCloseTimestamp(Date.now());
+    insertCashClose(close).catch(console.error);
+    const newTs = Date.now();
+    setLastPOSCloseTimestamp(newTs);
+    saveSetting('last_pos_close_timestamp', newTs).catch(console.error);
     // Close the cash register
     closeCashRegister();
     return close;
@@ -1575,14 +1712,21 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     closeId: string,
     data: { counted: number; notes: string; checkedBy: string }
   ) => {
-    setCashCloses(prev => prev.map(c => c.id === closeId ? {
-      ...c,
-      openingControlCounted: data.counted,
-      openingControlDifference: data.counted - (c.openingControlExpected ?? 0),
-      openingControlNotes: data.notes,
-      openingControlCheckedAt: new Date().toISOString(),
-      openingControlCheckedBy: data.checkedBy,
-    } : c));
+    setCashCloses(prev => prev.map(c => {
+      if (c.id === closeId) {
+        const updated = {
+          ...c,
+          openingControlCounted: data.counted,
+          openingControlDifference: data.counted - (c.openingControlExpected ?? 0),
+          openingControlNotes: data.notes,
+          openingControlCheckedAt: new Date().toISOString(),
+          openingControlCheckedBy: data.checkedBy,
+        };
+        supabase.from('cash_closes').update(updated).eq('id', closeId).eq('branch_id', 'main').then(({ error }) => { if (error) console.error('Error updating cash close:', error); });
+        return updated;
+      }
+      return c;
+    }));
   };
 
   const addCashMovement = (mov: Omit<CashMovement, 'id' | 'timestamp'>) => {
@@ -1592,6 +1736,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       timestamp: Date.now()
     };
     setCashMovements(prev => [newMov, ...prev]);
+    insertCashMovement(newMov).catch(console.error);
   };
 
   const addCashWithdrawal = (w: Omit<CashWithdrawal, 'id' | 'timestamp'>) => {

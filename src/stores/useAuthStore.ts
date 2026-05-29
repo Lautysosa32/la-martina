@@ -475,41 +475,73 @@ export const useAuth = () => {
   const isCustomer = !!store.session && !store.employeeProfile;
   const isEmployee = !!store.session && !!store.employeeProfile;
 
-  // Retrieve matching storefront orders from the derived database (localStorage + filter by phone)
-  // This guarantees perfect history matching without complex synchronization logic!
-  const customerOrders = React.useMemo(() => {
+  const [dbOrders, setDbOrders] = React.useState<Order[]>([]);
+
+  React.useEffect(() => {
     const activePhone = isCustomer && store.customerProfile ? store.customerProfile.phone : store.guestProfile.phone;
-    if (!activePhone) return isCustomer ? [] : store.guestProfile.orders;
-    
-    // Fetch all admin orders from localStorage to get the full global history, and filter by phone!
-    try {
-      const globalOrdersStr = localStorage.getItem('la-martina-admin-orders');
-      if (globalOrdersStr) {
-        const globalOrders: Order[] = JSON.parse(globalOrdersStr);
+    if (!activePhone) {
+      setDbOrders([]);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchCustomerOrdersFromSupabase = async () => {
+      try {
         const clean = (p: string) => p.replace(/\D/g, '');
         const targetClean = clean(activePhone);
-        
-        return globalOrders
-          .filter(o => clean(o.phone || '') === targetClean)
-          .map(o => ({
-            id: o.id,
-            date: o.date,
-            total: o.total,
-            itemsCount: o.itemsCount || (o.items ? o.items.reduce((s: number, i: any) => s + (i.quantity || 1), 0) : 0),
-            status: o.status,
-            address: o.address,
-            deliveryTime: o.deliveryTime,
-            items: o.items || [],
-            discount: o.discount,
-            discountLabel: o.discountLabel,
-          }));
+
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('branch_id', 'main')
+          .order('timestamp', { ascending: false });
+
+        if (error) throw error;
+        if (!isMounted) return;
+
+        if (data) {
+          const filtered = data
+            .filter(o => clean(o.phone || '') === targetClean)
+            .map(o => ({
+              id: o.id,
+              date: o.date,
+              total: o.total,
+              itemsCount: o.itemsCount || (o.items ? o.items.reduce((s: number, i: any) => s + (i.quantity || 1), 0) : 0),
+              status: o.status,
+              address: o.address,
+              deliveryTime: o.deliveryTime,
+              items: o.items || [],
+              discount: o.discount,
+              discountLabel: o.discountLabel,
+            }));
+          setDbOrders(filtered);
+        }
+      } catch (err) {
+        console.error("Error fetching customer orders from Supabase:", err);
       }
-    } catch (err) {
-      console.error("Error extracting customer orders from local store", err);
-    }
-    
-    return store.guestProfile.orders;
-  }, [store.customerProfile, store.guestProfile, isCustomer]);
+    };
+
+    fetchCustomerOrdersFromSupabase();
+
+    const channel = supabase.channel(`customer_orders_${activePhone}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchCustomerOrdersFromSupabase();
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [store.customerProfile, store.guestProfile.phone, isCustomer]);
+
+  // Retrieve matching storefront orders from the derived database (Supabase + filter by phone)
+  const customerOrders = React.useMemo(() => {
+    const activePhone = isCustomer && store.customerProfile ? store.customerProfile.phone : store.guestProfile.phone;
+    if (!activePhone) return store.guestProfile.orders;
+    return dbOrders;
+  }, [dbOrders, store.guestProfile.orders, store.customerProfile, isCustomer]);
 
   // Memoizar el objeto "user" para evitar referencias nuevas en cada render que causen bucles infinitos en useEffect
   const derivedUser = React.useMemo(() => {

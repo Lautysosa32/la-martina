@@ -127,8 +127,8 @@ export const AdminLayout: React.FC = () => {
     <div className="min-h-screen bg-[#f8f9fa] flex font-body-md overflow-x-hidden w-full">
 
       {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
-      <aside className="hidden lg:flex w-[220px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
-        <div className="p-5">
+      <aside className="hidden lg:flex w-[180px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
+        <div className="p-4">
           <div className="flex items-center justify-between">
             <Link to="/" className="flex flex-col">
               <span className="text-[20px] font-bold text-primary leading-tight">Martina</span>
@@ -296,7 +296,7 @@ export const AdminLayout: React.FC = () => {
       </aside>
 
       {/* ── MAIN CONTENT ── */}
-      <main className="flex-1 lg:ml-[220px] min-w-0 overflow-x-hidden flex flex-col">
+      <main className="flex-1 lg:ml-[180px] min-w-0 overflow-x-hidden flex flex-col">
 
         {/* ── MOBILE TOP HEADER (hidden on desktop) ── */}
         <header className="lg:hidden sticky top-0 z-20 bg-white border-b border-outline-variant/10 flex items-center justify-between px-4 h-14 shrink-0">

@@ -43,8 +43,22 @@ client.on('qr', (qr) => {
   qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', () => {
+client.on('ready', async () => {
   console.log('✨ ¡Cliente de WhatsApp listo y conectado!');
+  
+  // Limpiar cualquier mensaje que haya quedado colgado en 'sending' en ejecuciones anteriores
+  try {
+    const { error } = await supabase
+      .from('whatsapp_messages')
+      .update({ status: 'pending' })
+      .eq('status', 'sending');
+    if (!error) {
+      console.log('🧹 Se resetearon mensajes colgados en "sending".');
+    }
+  } catch (err) {
+    console.error('Error limpiando mensajes colgados:', err);
+  }
+
   // Iniciar ciclo de chequeo infinito cada 10 segundos
   startWorkerLoop();
 });

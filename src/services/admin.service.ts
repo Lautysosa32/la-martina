@@ -2,7 +2,8 @@ import { supabase } from '../lib/supabase';
 import { 
   AdminOrder, CashMovement, CashClose, Offer, 
   CustomerProfile, TicketConfig, CurrentAccountConfig, 
-  StoreStatus, CashRegister, Invoice, BillingCustomer 
+  StoreStatus, CashRegister, Invoice, BillingCustomer,
+  Category
 } from '../context/AdminContext';
 
 const BRANCH_ID = 'main';
@@ -146,4 +147,26 @@ export const saveSetting = async <T>(key: string, value: T): Promise<void> => {
     { onConflict: 'key, branch_id' }
   );
   if (error) console.error(`Error saving setting ${key}:`, error);
+};
+
+// ─── CATEGORIES ─────────────────────────────────────────────────────────
+export const fetchCategories = async (): Promise<Category[]> => {
+  const { data, error } = await supabase.from('categories').select('*').order('title', { ascending: true });
+  if (error) { console.error('Error fetching categories:', error); return []; }
+  return data || [];
+};
+
+export const insertCategory = async (category: Category): Promise<void> => {
+  const { error } = await supabase.from('categories').insert(category);
+  if (error) console.error('Error inserting category:', error);
+};
+
+export const updateCategoryInDb = async (id: string, updates: Partial<Category>): Promise<void> => {
+  const { error } = await supabase.from('categories').update(updates).eq('id', id);
+  if (error) console.error('Error updating category:', error);
+};
+
+export const deleteCategoryFromDb = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('categories').delete().eq('id', id);
+  if (error) console.error('Error deleting category:', error);
 };
