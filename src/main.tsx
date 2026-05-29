@@ -16,7 +16,8 @@ const cleanupLegacyKeys = () => {
     'la-martina-admin-cash-closes', 'la-martina-admin-customer-profiles',
     'la-martina-admin-offers', 'la-martina-billing-customers',
     'la-martina-cash-register', 'la-martina-current-account-config',
-    'la-martina-ticket-config'
+    'la-martina-ticket-config', 'la-martina-admin-last-pos-close',
+    'la-martina-catalog-version', 'la-martina-invoices'
   ];
   legacyKeys.forEach(key => localStorage.removeItem(key));
 };
