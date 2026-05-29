@@ -73,7 +73,7 @@ export const insertCashMovement = async (movement: CashMovement): Promise<void> 
 
 // ─── CASH CLOSES ────────────────────────────────────────────────────────
 export const fetchCashCloses = async (): Promise<CashClose[]> => {
-  const { data, error } = await supabase.from('cash_closes').select('*').eq('branch_id', BRANCH_ID).order('timestamp', { ascending: false });
+  const { data, error } = await supabase.from('cash_closes').select('*').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
   if (error) { console.error('Error fetching cash closes:', error); return []; }
   return data || [];
 };
