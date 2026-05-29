@@ -863,7 +863,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setAdminCategories(finalCategories);
 
       // Store Status
-      supabase.from('settings').select('value').eq('key', 'store_status').single().then(({ data }) => {
+      supabase.from('settings').select('value').eq('key', 'store_status').maybeSingle().then(({ data }) => {
         if (data?.value) setStoreStatusState(data.value as StoreStatus);
       });
       // Offer Redemptions
@@ -956,7 +956,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateStoreStatus = async (updates: Partial<StoreStatus>) => {
     const nextStatus = { ...storeStatus, ...updates };
     setStoreStatusState(nextStatus); // optimistic update
-    await supabase.from('settings').upsert({ id: 'store_status', value: nextStatus, updated_at: new Date().toISOString() });
+    await saveSetting('store_status', nextStatus);
   };
 
   const addOfferRedemption = async (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => {
