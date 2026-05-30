@@ -10,9 +10,32 @@ const BRANCH_ID = 'main';
 
 // ─── ORDERS ─────────────────────────────────────────────────────────────
 export const fetchOrders = async (): Promise<AdminOrder[]> => {
-  const { data, error } = await supabase.from('orders').select('*').eq('branch_id', BRANCH_ID).order('timestamp', { ascending: false });
+  const { data, error } = await supabase.from('orders').select('*, order_items(*)').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
   if (error) { console.error('Error fetching orders:', error); return []; }
-  return data || [];
+  
+  return (data || []).map((dbOrder: any) => ({
+    id: dbOrder.id,
+    date: dbOrder.date,
+    timestamp: dbOrder.timestamp,
+    customer: dbOrder.customer,
+    phone: dbOrder.phone,
+    address: dbOrder.address,
+    deliveryTime: dbOrder.delivery_time,
+    method: dbOrder.method,
+    paymentMethod: dbOrder.payment_method,
+    paymentStatus: dbOrder.payment_status,
+    status: dbOrder.status,
+    total: dbOrder.total,
+    discount: dbOrder.discount,
+    discountLabel: dbOrder.discount_label,
+    items: (dbOrder.order_items || []).map((item: any) => ({
+      id: item.product_id,
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      image: item.image
+    }))
+  }));
 };
 
 export const insertOrder = async (order: AdminOrder): Promise<void> => {
@@ -24,44 +47,54 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
     customer: order.customer,
     phone: order.phone,
     address: order.address,
-    deliveryTime: order.deliveryTime,
+    delivery_time: order.deliveryTime,
     method: order.method,
-    paymentMethod: order.paymentMethod,
-    paymentStatus: order.paymentStatus,
+    payment_method: order.paymentMethod,
+    payment_status: order.paymentStatus,
     status: order.status,
     total: order.total,
-    items: order.items,
     discount: order.discount,
-    discountLabel: order.discountLabel,
-    delivery_lat: order.delivery_lat,
-    delivery_lng: order.delivery_lng,
-    delivery_address_label: order.delivery_address_label,
-    delivery_house_number: order.delivery_house_number,
-    delivery_reference: order.delivery_reference,
-    delivery_notes: order.delivery_notes,
-    delivery_method: order.delivery_method
+    discount_label: order.discountLabel
   };
   const { error } = await supabase.from('orders').insert(dbOrder);
-  if (error) console.error('Error inserting order:', error);
+  if (error) {
+    console.error('Error inserting order:', error);
+    return;
+  }
+
+  if (order.items && order.items.length > 0) {
+    const dbOrderItems = order.items.map(i => ({
+      order_id: order.id,
+      product_id: i.id,
+      quantity: i.quantity,
+      price: i.price,
+      name: i.name,
+      image: i.image
+    }));
+    const { error: itemsError } = await supabase.from('order_items').insert(dbOrderItems);
+    if (itemsError) console.error('Error inserting order items:', itemsError);
+  }
 };
 
 export const updateOrderInDb = async (id: string, updates: Partial<AdminOrder>): Promise<void> => {
-  // Strip non-schema properties if they exist in updates
-  const dbUpdates = { ...updates };
-  delete dbUpdates.dni;
-  delete dbUpdates.paidAmount;
-  delete dbUpdates.source;
-  delete dbUpdates.discountOfferId;
-  delete dbUpdates.was_limit_override;
-  delete dbUpdates.override_reason;
+  const dbUpdates: any = {};
+  if (updates.status !== undefined) dbUpdates.status = updates.status;
+  if (updates.paymentStatus !== undefined) dbUpdates.payment_status = updates.paymentStatus;
+  if (updates.paymentMethod !== undefined) dbUpdates.payment_method = updates.paymentMethod;
+  if (updates.deliveryTime !== undefined) dbUpdates.delivery_time = updates.deliveryTime;
+  if (updates.address !== undefined) dbUpdates.address = updates.address;
+  if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
+  if (updates.customer !== undefined) dbUpdates.customer = updates.customer;
   
+  if (Object.keys(dbUpdates).length === 0) return;
+
   const { error } = await supabase.from('orders').update(dbUpdates).eq('id', id).eq('branch_id', BRANCH_ID);
   if (error) console.error('Error updating order:', error);
 };
 
 // ─── CASH MOVEMENTS ─────────────────────────────────────────────────────
 export const fetchCashMovements = async (): Promise<CashMovement[]> => {
-  const { data, error } = await supabase.from('cash_movements').select('*').eq('branch_id', BRANCH_ID).order('timestamp', { ascending: false });
+  const { data, error } = await supabase.from('cash_movements').select('*').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
   if (error) { console.error('Error fetching cash movements:', error); return []; }
   return data || [];
 };

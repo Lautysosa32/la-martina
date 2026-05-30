@@ -405,7 +405,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .update({ ...updates, updated_at: new Date().toISOString() })
           .eq('id', profile.id)
           .select()
-          .single();
+          .maybeSingle();
 
         if (error) {
           console.error('❌ Error al actualizar perfil:', error.message, error.details);
@@ -495,7 +495,7 @@ export const useAuth = () => {
           .from('orders')
           .select('*')
           .eq('branch_id', 'main')
-          .order('timestamp', { ascending: false });
+          .order('created_at', { ascending: false });
 
         if (error) throw error;
         if (!isMounted) return;
