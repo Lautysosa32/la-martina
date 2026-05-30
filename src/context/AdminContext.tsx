@@ -272,7 +272,7 @@ export interface AdminContextType {
 
   // Orders
   orders: AdminOrder[];
-  addAdminOrder: (order: AdminOrder) => void;
+  addAdminOrder: (order: AdminOrder) => Promise<void>;
   updateOrderStatus: (orderId: string, status: AdminOrder['status']) => void;
   updateOrderMethod: (orderId: string, method: string) => void;
   updateOrderPaymentMethod: (orderId: string, paymentMethod: string) => void;
@@ -1276,7 +1276,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return null;
   };
 
-  const addAdminOrder = (o: AdminOrder) => {
+  const addAdminOrder = async (o: AdminOrder) => {
     setOrders(prev => [o, ...prev]);
     // Don't deduct stock for generic/common products
     o.items.forEach(i => {
@@ -1339,7 +1339,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         discount_amount: o.discount
       });
     }
-    insertOrder(o).catch(console.error);
+    await insertOrder(o);
   };
   const updateOrderStatus = (id: string, s: AdminOrder['status']) => {
     // Buscar la orden previa para ver su estado actual antes del cambio

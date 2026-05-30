@@ -583,7 +583,7 @@ export const POS: React.FC = () => {
     setShowManualModal(false);
   };
 
-  const handleCompleteSale = (override = false) => {
+  const handleCompleteSale = async (override = false) => {
     if (cart.length === 0) return;
     if (selectedPaymentMethod === 'cuenta_corriente') {
       if (!validatedCustomer) {
@@ -629,7 +629,7 @@ export const POS: React.FC = () => {
       ? `${orderOfferCalc.offerLabel}${globalDiscount > 0 ? ` + Descuento ${globalDiscount}%` : ''}`
       : (globalDiscount > 0 ? `Descuento ${globalDiscount}%` : undefined);
 
-    addAdminOrder({
+    await addAdminOrder({
       id: orderId,
       date: dateStr,
       timestamp: Date.now(),
