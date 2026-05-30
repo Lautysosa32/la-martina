@@ -11,7 +11,11 @@ const BRANCH_ID = 'main';
 // ─── ORDERS ─────────────────────────────────────────────────────────────
 export const fetchOrders = async (): Promise<AdminOrder[]> => {
   const { data, error } = await supabase.from('orders').select('*, order_items(*)').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
-  if (error) { console.error('Error fetching orders:', error); return []; }
+  if (error) { 
+    console.error('Error fetching orders:', error); 
+    alert(`Error AL CARGAR órdenes: ${error.message}`);
+    return []; 
+  }
   
   return (data || []).map((dbOrder: any) => ({
     id: dbOrder.id,
@@ -59,6 +63,7 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
   const { error } = await supabase.from('orders').insert(dbOrder);
   if (error) {
     console.error('Error inserting order:', error);
+    alert(`Error guardando orden: ${error.message}`);
     return;
   }
 
@@ -68,11 +73,14 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
       product_id: i.id,
       quantity: i.quantity,
       price: i.price,
-      name: i.name,
-      image: i.image
+      name: i.name
+      // Omitimos la imagen porque si es un base64 gigante rompe el límite de 1MB de Supabase y da "Failed to fetch"
     }));
     const { error: itemsError } = await supabase.from('order_items').insert(dbOrderItems);
-    if (itemsError) console.error('Error inserting order items:', itemsError);
+    if (itemsError) {
+      console.error('Error inserting order items:', itemsError);
+      alert(`Error guardando ítems: ${itemsError.message}`);
+    }
   }
 };
 
@@ -94,14 +102,36 @@ export const updateOrderInDb = async (id: string, updates: Partial<AdminOrder>):
 
 // ─── CASH MOVEMENTS ─────────────────────────────────────────────────────
 export const fetchCashMovements = async (): Promise<CashMovement[]> => {
-  const { data, error } = await supabase.from('cash_movements').select('*').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('cash_movements').select('*').eq('branch_id', BRANCH_ID).order('timestamp', { ascending: false });
   if (error) { console.error('Error fetching cash movements:', error); return []; }
-  return data || [];
+  
+  return (data || []).map((dbMov: any) => ({
+    id: dbMov.id,
+    type: dbMov.type,
+    amount: dbMov.amount,
+    description: dbMov.description,
+    timestamp: dbMov.timestamp,
+    cashier: dbMov.cashier,
+    orderId: dbMov.order_id
+  }));
 };
 
-export const insertCashMovement = async (movement: CashMovement): Promise<void> => {
-  const { error } = await supabase.from('cash_movements').insert({ ...movement, branch_id: BRANCH_ID });
-  if (error) console.error('Error inserting cash movement:', error);
+export const insertCashMovement = async (mov: CashMovement): Promise<void> => {
+  const dbMov = {
+    id: mov.id,
+    branch_id: BRANCH_ID,
+    type: mov.type,
+    amount: mov.amount,
+    description: mov.description,
+    timestamp: mov.timestamp || Date.now(),
+    cashier: mov.cashier,
+    order_id: mov.orderId
+  };
+  const { error } = await supabase.from('cash_movements').insert(dbMov);
+  if (error) {
+    console.error('Error inserting cash movement:', error);
+    alert(`Error guardando movimiento de caja: ${error.message}`);
+  }
 };
 
 // ─── CASH CLOSES ────────────────────────────────────────────────────────
