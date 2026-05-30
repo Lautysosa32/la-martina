@@ -26,6 +26,7 @@ export const fetchOrders = async (): Promise<AdminOrder[]> => {
     address: dbOrder.address,
     deliveryTime: dbOrder.delivery_time,
     method: dbOrder.method,
+    source: dbOrder.method === 'Caja Fija' ? 'pos' : 'web',
     paymentMethod: dbOrder.payment_method,
     paymentStatus: dbOrder.payment_status,
     status: dbOrder.status,

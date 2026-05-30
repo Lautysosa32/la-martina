@@ -219,9 +219,9 @@ export const AdminOrders: React.FC = () => {
                           </div>
                         </td>
                         <td className="px-6 py-5 text-center">
-                          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider ${order.method === 'Retiro' ? 'bg-green-50 text-green-600 border border-green-200/50' : 'bg-orange-50 text-orange-600 border border-orange-200/50'}`}>
-                            <span className="material-symbols-outlined text-[14px]">{order.method === 'Retiro' ? 'storefront' : 'local_shipping'}</span>
-                            {order.method === 'Retiro' ? 'Retiro' : 'Envío'}
+                          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider ${order.method === 'Caja Fija' ? 'bg-blue-50 text-blue-600 border border-blue-200/50' : order.method === 'Retiro' ? 'bg-green-50 text-green-600 border border-green-200/50' : 'bg-orange-50 text-orange-600 border border-orange-200/50'}`}>
+                            <span className="material-symbols-outlined text-[14px]">{order.method === 'Caja Fija' ? 'point_of_sale' : order.method === 'Retiro' ? 'storefront' : 'local_shipping'}</span>
+                            {order.method === 'Caja Fija' ? 'Local' : order.method === 'Retiro' ? 'Retiro' : 'Envío'}
                           </span>
                         </td>
                         <td className="px-6 py-5">
@@ -321,7 +321,7 @@ export const AdminOrders: React.FC = () => {
                               <div className="space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
                                   <div className="col-span-1 space-y-3">
-                                    <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Entrega ({order.method || 'Envío'})</h4>
+                                    <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Entrega ({order.method === 'Caja Fija' ? 'Local' : order.method || 'Envío'})</h4>
                                     {order.delivery_lat && order.delivery_lng ? (
                                       <div className="space-y-2 text-xs">
                                         <p className="flex items-start gap-2">
@@ -553,9 +553,9 @@ export const AdminOrders: React.FC = () => {
                     {/* Badges: Method, Payment Status, Payment Method */}
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {/* Delivery Method */}
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold tracking-wider ${order.method === 'Retiro' ? 'bg-green-50 text-green-600 border border-green-200/30' : 'bg-orange-50 text-orange-600 border border-orange-200/30'}`}>
-                        <span className="material-symbols-outlined text-[12px]">{order.method === 'Retiro' ? 'storefront' : 'local_shipping'}</span>
-                        {order.method === 'Retiro' ? 'Retiro' : 'Envío'}
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold tracking-wider ${order.method === 'Caja Fija' ? 'bg-blue-50 text-blue-600 border border-blue-200/30' : order.method === 'Retiro' ? 'bg-green-50 text-green-600 border border-green-200/30' : 'bg-orange-50 text-orange-600 border border-orange-200/30'}`}>
+                        <span className="material-symbols-outlined text-[12px]">{order.method === 'Caja Fija' ? 'point_of_sale' : order.method === 'Retiro' ? 'storefront' : 'local_shipping'}</span>
+                        {order.method === 'Caja Fija' ? 'Local' : order.method === 'Retiro' ? 'Retiro' : 'Envío'}
                       </span>
 
                       {/* Payment Status Light */}
