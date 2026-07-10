@@ -2,8 +2,10 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import { Product } from '../../data/mockData';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { TicketPrinter, TicketData, TicketItem } from '../../components/TicketPrinter';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
+import { WeightInputModal } from '../../components/WeightInputModal';
 import type { CashWithdrawal, CashMovement } from '../../context/AdminContext';
 import { shoppingSessionService } from '../../services/shopping-session.service';
 
@@ -21,6 +23,7 @@ interface POSCartItem {
   lineDiscount?: number;
   offerId?: string | null;
   discountedQuantity?: number;
+  saleType?: 'unit' | 'weight';
 }
 
 interface POSTab {
@@ -64,6 +67,9 @@ const createTab = (num: number): POSTab => ({
 
 export const POS: React.FC = () => {
   const { customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts, performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers, orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig, ticketConfig, cashCloses, updateCashCloseOpeningControl } = useAdmin();
+
+  const employeeProfile = useAuthStore((state) => state.employeeProfile);
+  const cashierName = employeeProfile ? employeeProfile.name : 'Admin';
 
   const [headerPortal, setHeaderPortal] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -144,7 +150,8 @@ export const POS: React.FC = () => {
           name: item.name,
           price: matchingProduct ? matchingProduct.price : item.price,
           quantity: item.quantity,
-          image: matchingProduct ? matchingProduct.image : (item.image || '')
+          image: matchingProduct ? matchingProduct.image : (item.image || ''),
+          saleType: matchingProduct?.saleType || 'unit'
         };
       });
 
@@ -188,6 +195,8 @@ export const POS: React.FC = () => {
 
   const [showModal, setShowModal] = useState(false);
   const [showCloseSuccess, setShowCloseSuccess] = useState(false);
+  const [activeWeightItemIdx, setActiveWeightItemIdx] = useState<number | null>(null);
+  const [inlineWeightEdit, setInlineWeightEdit] = useState<{ idx: number; str: string } | null>(null);
 
   // Cash Register Open modal
   const [showCashOpenModal, setShowCashOpenModal] = useState(false);
@@ -232,7 +241,8 @@ export const POS: React.FC = () => {
   const setValidatedCustomer = (v: any) => updateTab({ validatedCustomer: v });
 
   const [searchCode, setSearchCode] = useState('');
-  const [searchQty, setSearchQty] = useState(1);
+  const [searchQty, setSearchQty] = useState<number>(1);
+  const [searchQtyStr, setSearchQtyStr] = useState<string>('1');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
@@ -276,6 +286,7 @@ export const POS: React.FC = () => {
 
   // --- LIVE SEARCH STATE ---
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState<number>(-1);
 
   const filteredProducts = useMemo(() => {
     if (!searchCode.trim()) return [];
@@ -289,20 +300,28 @@ export const POS: React.FC = () => {
 
   // Stats
   const stats = useMemo(() => {
-    let cash = 0, card = 0, transfer = 0, currentBox = 0;
+    let cash = cashRegister?.initialAmount || 0;
+    let card = 0, transfer = 0;
+    let currentBox = cashRegister?.initialAmount || 0;
     cashMovements.forEach(m => {
       if (m.timestamp > lastPOSCloseTimestamp) {
         const isVenta = m.description.includes('Venta Local');
+        const isPagoCC = m.description.includes('Pago Cta. Corriente');
         const descLower = m.description.toLowerCase();
         const method = (descLower.includes('(card)') || descLower.includes('(tarjeta)')) ? 'card' :
           (descLower.includes('(transfer)') || descLower.includes('(transferencia)')) ? 'transfer' :
           (descLower.includes('(cuenta_corriente)') || descLower.includes('(cta. corriente)')) ? 'cuenta_corriente' : 'cash';
-        if (isVenta) {
+        if (isVenta || isPagoCC) {
           if (method === 'cash') cash += m.amount;
           else if (method === 'card') card += m.amount;
           else if (method === 'transfer') transfer += m.amount;
         }
-        if (m.type === 'Ingreso') currentBox += m.amount;
+        if (m.type === 'Ingreso') {
+          // No sumamos las ventas a cuenta corriente a la caja física (es dinero no ingresado)
+          if (method !== 'cuenta_corriente') {
+            currentBox += m.amount;
+          }
+        }
         if (m.type === 'Egreso' || m.type === 'Retiro') {
           // Excluimos PAGO PROVEEDOR de restar de la caja chica/actual en vivo
           if (!m.description.startsWith('PAGO PROVEEDOR:')) {
@@ -312,7 +331,7 @@ export const POS: React.FC = () => {
       }
     });
     return { cash, card, transfer, currentBox };
-  }, [cashMovements, lastPOSCloseTimestamp]);
+  }, [cashMovements, lastPOSCloseTimestamp, cashRegister?.initialAmount]);
 
   const recentActivity = useMemo(() => {
     return cashMovements
@@ -366,7 +385,15 @@ export const POS: React.FC = () => {
   const handleCashClose = () => {
     // Register withdrawals as movements before close
     withdrawals.forEach(w => addCashWithdrawal(w));
-    performCashClose('diario', withdrawals);
+    const result = performCashClose(withdrawals);
+    if (result === null) {
+      // Register was already closed — show feedback and abort
+      setShowCloseConfirm(false);
+      setWithdrawals([]);
+      setShowWithdrawalModal(false);
+      alert('La caja ya se encuentra cerrada.');
+      return;
+    }
     setShowCloseConfirm(false);
     setWithdrawals([]);
     setShowWithdrawalModal(false);
@@ -412,6 +439,7 @@ export const POS: React.FC = () => {
     let name: string;
     let price: number;
     let image: string;
+    let saleType: 'unit' | 'weight' = 'unit';
 
     if (typeof productOrCode !== 'string') {
       productId = productOrCode.id;
@@ -419,6 +447,7 @@ export const POS: React.FC = () => {
       name = productOrCode.name;
       price = productOrCode.price;
       image = productOrCode.image;
+      saleType = productOrCode.saleType || 'unit';
     } else {
       if (!productOrCode.trim()) return;
       const exactMatch = adminProducts.find(p => (p.barcode && p.barcode === productOrCode) || p.id.toLowerCase() === productOrCode.toLowerCase());
@@ -428,6 +457,7 @@ export const POS: React.FC = () => {
         name = exactMatch.name;
         price = exactMatch.price;
         image = exactMatch.image;
+        saleType = exactMatch.saleType || 'unit';
       } else if (filteredProducts.length > 0) {
         const firstSug = filteredProducts[0];
         productId = firstSug.id;
@@ -435,6 +465,7 @@ export const POS: React.FC = () => {
         name = firstSug.name;
         price = firstSug.price;
         image = firstSug.image;
+        saleType = firstSug.saleType || 'unit';
       } else {
         productId = 'GENERIC';
         productCode = productOrCode.toUpperCase();
@@ -461,12 +492,14 @@ export const POS: React.FC = () => {
         newCart[existingIdx] = { ...newCart[existingIdx], quantity: newCart[existingIdx].quantity + searchQty };
         return newCart;
       }
-      return [{ id: Date.now().toString() + Math.random(), productId, productCode, name, price, quantity: searchQty, image }, ...prev];
+      return [{ id: Date.now().toString() + Math.random(), productId, productCode, name, price, quantity: searchQty, image, saleType }, ...prev];
     });
 
     setSearchCode('');
     setSearchQty(1);
+    setSearchQtyStr('1');
     setShowSuggestions(false);
+    setFocusedSuggestionIndex(-1);
     setSelectedIndex(null);
     inputRef.current?.focus();
   };
@@ -575,7 +608,7 @@ export const POS: React.FC = () => {
     addCashMovement({
       type: 'Egreso',
       description: `PAGO PROVEEDOR: ${description}`,
-      cashier: 'Admin',
+      cashier: cashierName,
       amount: parseFloat(amount)
     });
     setAmount('');
@@ -643,7 +676,7 @@ export const POS: React.FC = () => {
       paymentStatus: selectedPaymentMethod === 'cuenta_corriente' ? 'Pendiente' : 'Pagado',
       status: 'Entregado',
       total: total,
-      items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId || undefined, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity })),
+      items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId || undefined, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity, saleType: i.saleType })),
       source: 'pos',
       discount: totalOrderDiscount,
       discountLabel: totalOrderDiscountLabel,
@@ -651,16 +684,15 @@ export const POS: React.FC = () => {
       override_reason: override ? 'Aprobado manualmente en caja' : undefined
     });
 
-    // Only add cash movement if it's not a credit account sale (money not received yet)
-    if (selectedPaymentMethod !== 'cuenta_corriente') {
-      addCashMovement({
-        type: 'Ingreso',
-        description: `Venta Local (${getPaymentMethodDisplay(selectedPaymentMethod)}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
-        cashier: 'Admin',
-        amount: total,
-        orderId: orderId
-      });
-    }
+    // Registramos el movimiento en la caja, incluso para cuenta corriente (para que figure en historial)
+    // El cálculo de stats (currentBox) ignora las ventas por cuenta corriente.
+    addCashMovement({
+      type: 'Ingreso',
+      description: `Venta Local (${getPaymentMethodDisplay(selectedPaymentMethod)}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
+      cashier: cashierName,
+      amount: total,
+      orderId: orderId
+    });
 
     // Build ticket data for printing
     const ticketData: TicketData = {
@@ -674,6 +706,7 @@ export const POS: React.FC = () => {
         lineDiscount: i.lineDiscount,
         discountedQuantity: i.discountedQuantity,
         offerLabel: i.offerLabel || null,
+        saleType: i.saleType,
       })),
       subtotal,
       globalDiscount,
@@ -684,7 +717,7 @@ export const POS: React.FC = () => {
       total,
       paymentMethod: selectedPaymentMethod,
       customer: customerName !== 'Cliente Local' ? customerName : undefined,
-      cashier: 'Admin',
+      cashier: cashierName,
     };
     setLastSaleTicket(ticketData);
 
@@ -755,7 +788,7 @@ export const POS: React.FC = () => {
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(prev => (cart.length === 0 ? null : prev === null ? cart.length - 1 : Math.max(prev - 1, 0))); }
       if (e.key === 'Delete') { e.preventDefault(); if (selectedIndex !== null) handleRemoveItem(selectedIndex); else if (cart.length > 0) handleRemoveItem(0); }
       if (e.key === 'F2') { e.preventDefault(); if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }
-      if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }
+      if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); setSearchQty(1); setSearchQtyStr('1'); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -786,6 +819,18 @@ export const POS: React.FC = () => {
     if (showPaymentModal && selectedPaymentMethod === 'cuenta_corriente' && !validatedCustomer) setTimeout(() => ccInputRef.current?.focus(), 100);
   }, [selectedPaymentMethod, showPaymentModal, validatedCustomer]);
 
+  useEffect(() => {
+    if (!showSuccessModal) return;
+    const handleSuccessKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        setShowSuccessModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleSuccessKeyDown);
+    return () => window.removeEventListener('keydown', handleSuccessKeyDown);
+  }, [showSuccessModal]);
+
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 flex flex-col pb-20">
       {/* Header Portal for Buttons */}
@@ -801,7 +846,19 @@ export const POS: React.FC = () => {
               Caja abierta — Inicio: ${formatCurrency(cashRegister.initialAmount, true, true)}
             </span>
           )}
-          <button onClick={() => setShowCloseConfirm(true)} className="bg-error text-white font-bold px-6 py-2 rounded-full hover:bg-error/90 transition-all flex items-center gap-2 shadow-lg shadow-error/20 text-xs">
+          <button
+            onClick={() => {
+              if (!isCashRegisterOpen) {
+                alert('La caja ya se encuentra cerrada.');
+              } else {
+                setShowCloseConfirm(true);
+              }
+            }}
+            className={isCashRegisterOpen 
+              ? "bg-error text-white font-bold px-6 py-2 rounded-full hover:bg-error/90 transition-all flex items-center gap-2 shadow-lg shadow-error/20 text-xs"
+              : "bg-gray-200 text-gray-400 font-bold px-6 py-2 rounded-full transition-all flex items-center gap-2 text-xs cursor-pointer"
+            }
+          >
             <span className="material-symbols-outlined text-[16px]">lock</span>
             Cierre de Caja
           </button>
@@ -821,7 +878,7 @@ export const POS: React.FC = () => {
         <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm relative overflow-hidden">
           <span className="absolute top-6 right-6 bg-error/10 text-error text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">En Vivo</span>
           <div className="w-12 h-12 bg-[#FFD700] rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-[#8B6508]">account_balance_wallet</span></div>
-          <p className="text-sm font-medium text-on-surface-variant">Caja Actual</p>
+          <p className="text-sm font-medium text-on-surface-variant">Total</p>
           <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.currentBox)}</p>
         </div>
         <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm">
@@ -846,7 +903,7 @@ export const POS: React.FC = () => {
         <div className="p-6 border-b border-outline-variant/10"><h2 className="text-xl font-bold">Actividad de Caja Reciente</h2></div>
         <div>
           <table className="w-full text-left">
-            <thead className="sticky top-0 bg-white z-10"><tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider"><th className="px-6 py-4">Hora</th><th className="px-6 py-4">Tipo</th><th className="px-6 py-4">Descripción</th><th className="px-6 py-4">Pago</th><th className="px-6 py-4 text-right">Monto</th><th className="px-4 py-4 w-16"></th></tr></thead>
+            <thead className="sticky top-0 bg-white z-10"><tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider"><th className="px-6 py-4">Hora</th><th className="px-6 py-4">Tipo</th><th className="px-6 py-4">Descripción</th><th className="px-6 py-4">Pago</th><th className="px-6 py-4">Responsable</th><th className="px-6 py-4 text-right">Monto</th><th className="px-4 py-4 w-16"></th></tr></thead>
             <tbody className="divide-y divide-outline-variant/10">
               {recentActivity.map(act => (
                 <tr key={act.id} onClick={() => setSelectedMovement(act.rawMovement)} className="hover:bg-surface-container-lowest transition-colors cursor-pointer group">
@@ -854,11 +911,12 @@ export const POS: React.FC = () => {
                   <td className="px-6 py-4"><span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${act.isVenta ? 'bg-[#FFD700]/20 text-[#8B6508]' : act.type === 'Retiro' ? 'bg-orange-100 text-orange-700' : act.type === 'Ingreso' ? 'bg-green-100 text-green-700' : 'bg-error/10 text-error'}`}>{act.isVenta ? 'Venta' : act.type}</span></td>
                   <td className="px-6 py-4 text-sm font-bold text-on-background">{act.detail}</td>
                   <td className="px-6 py-4 text-[10px] font-black uppercase text-on-surface-variant tracking-widest">{getPaymentMethodDisplay(act.paymentMethod)}</td>
+                  <td className="px-6 py-4 text-xs font-bold text-on-surface-variant">{act.cashier || 'Sistema'}</td>
                   <td className={`px-6 py-4 text-sm font-black text-right ${act.amount > 0 ? 'text-on-background' : 'text-error'}`}>{act.amount > 0 ? '+' : ''}${formatCurrency(Math.abs(act.amount))}</td>
                   <td className="px-4 py-4"><span className="material-symbols-outlined text-[18px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">visibility</span></td>
                 </tr>
               ))}
-              {recentActivity.length === 0 && (<tr><td colSpan={6} className="px-6 py-12 text-center text-on-surface-variant">No hay movimientos.</td></tr>)}
+              {recentActivity.length === 0 && (<tr><td colSpan={7} className="px-6 py-12 text-center text-on-surface-variant">No hay movimientos.</td></tr>)}
             </tbody>
           </table>
         </div>
@@ -895,12 +953,76 @@ export const POS: React.FC = () => {
                     <div className="flex-1 relative">
                       <label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Busca o escanea Producto</label>
                       <div className="relative">
-                        <input ref={inputRef} type="text" value={searchCode} onChange={e => { setSearchCode(e.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} placeholder="Código o nombre..." className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-4 px-5 focus:outline-none focus:border-[#9c1c1c] focus:ring-4 focus:ring-[#9c1c1c]/10 font-bold text-lg" />
+                        <input 
+                          ref={inputRef} 
+                          type="text" 
+                          value={searchCode} 
+                          onChange={e => { setSearchCode(e.target.value); setShowSuggestions(true); setFocusedSuggestionIndex(-1); }} 
+                          onFocus={() => setShowSuggestions(true)} 
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              setFocusedSuggestionIndex(prev => Math.min(prev + 1, filteredProducts.length - 1));
+                            } else if (e.key === 'ArrowUp') {
+                              e.preventDefault();
+                              setFocusedSuggestionIndex(prev => Math.max(prev - 1, -1));
+                            } else if (e.key === 'ArrowRight') {
+                              if (showSuggestions && focusedSuggestionIndex >= 0) {
+                                e.preventDefault();
+                                setSearchQty(q => {
+                                  const n = parseFloat((q + 1).toFixed(2));
+                                  setSearchQtyStr(n.toString());
+                                  return n;
+                                });
+                              }
+                            } else if (e.key === 'ArrowLeft') {
+                              if (showSuggestions && focusedSuggestionIndex >= 0) {
+                                e.preventDefault();
+                                setSearchQty(q => {
+                                  const n = Math.max(1, parseFloat((q - 1).toFixed(2)));
+                                  setSearchQtyStr(n.toString());
+                                  return n;
+                                });
+                              }
+                            } else if (e.key === 'Enter') {
+                              if (showSuggestions && focusedSuggestionIndex >= 0 && focusedSuggestionIndex < filteredProducts.length) {
+                                e.preventDefault();
+                                handleAddItem(filteredProducts[focusedSuggestionIndex]);
+                                setFocusedSuggestionIndex(-1);
+                                setShowSuggestions(false);
+                              }
+                            } else if (e.key === 'Escape') {
+                              setShowSuggestions(false);
+                              setFocusedSuggestionIndex(-1);
+                            }
+                          }}
+                          placeholder="Código o nombre..." 
+                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-4 px-5 focus:outline-none focus:border-[#9c1c1c] focus:ring-4 focus:ring-[#9c1c1c]/10 font-bold text-lg" 
+                        />
                         <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
                       </div>
-                      {showSuggestions && filteredProducts.length > 0 && (<div className="absolute top-full left-0 right-0 z-[300] mt-2 bg-white rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden">{filteredProducts.map(p => (<button key={p.id} onClick={() => handleAddItem(p)} className="w-full p-4 flex items-center gap-4 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/5"><div className="w-10 h-10 bg-surface-container-lowest rounded-lg overflow-hidden border border-outline-variant/10"><img src={p.image} alt="" className="w-full h-full object-contain" /></div><div className="flex-1"><p className="font-bold text-sm">{p.name}</p><p className="text-[10px] text-on-surface-variant font-medium">Cód: {p.barcode || p.id}</p></div><p className="font-black text-primary">${formatCurrency(p.price, true, true)}</p></button>))}</div>)}
+                      {showSuggestions && filteredProducts.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 z-[300] mt-2 bg-white rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden">
+                          {filteredProducts.map((p, idx) => (
+                            <button 
+                              key={p.id} 
+                              onClick={() => { handleAddItem(p); setFocusedSuggestionIndex(-1); }} 
+                              className={`w-full p-4 flex items-center gap-4 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/5 ${idx === focusedSuggestionIndex ? 'bg-surface-container-low border-l-4 border-primary' : ''}`}
+                            >
+                              <div className="w-10 h-10 bg-surface-container-lowest rounded-lg overflow-hidden border border-outline-variant/10">
+                                <img src={p.image} alt="" className="w-full h-full object-contain" />
+                              </div>
+                              <div className="flex-1">
+                                <p className="font-bold text-sm">{p.name}</p>
+                                <p className="text-[10px] text-on-surface-variant font-medium">Cód: {p.barcode || p.id}</p>
+                              </div>
+                              <p className="font-black text-primary">${formatCurrency(p.price, true, true)}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="w-32"><label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Cant.</label><div className="flex bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl overflow-hidden h-[60px]"><button type="button" onClick={() => setSearchQty(Math.max(1, searchQty - 1))} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">-</button><input type="number" min="1" className="flex-1 w-full text-center font-bold text-xl bg-transparent outline-none" value={searchQty} onChange={e => setSearchQty(parseInt(e.target.value) || 1)} /><button type="button" onClick={() => setSearchQty(searchQty + 1)} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">+</button></div></div>
+                    <div className="w-36"><label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Cant.</label><div className="flex bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl overflow-hidden h-[60px]"><button type="button" onClick={() => { const n = Math.max(0.01, parseFloat((searchQty - (searchQty > 1 ? 1 : 0.1)).toFixed(2))); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">-</button><input type="text" inputMode="decimal" className="flex-1 w-full text-center font-bold text-xl bg-transparent outline-none" value={searchQtyStr} onChange={e => { const raw = e.target.value.replace(',', '.'); if (/^\d*\.?\d{0,2}$/.test(raw)) { setSearchQtyStr(raw); const n = parseFloat(raw); if (!isNaN(n) && n > 0) setSearchQty(n); } }} onBlur={() => { if (!searchQtyStr || isNaN(parseFloat(searchQtyStr))) { setSearchQtyStr('1'); setSearchQty(1); } }} /><button type="button" onClick={() => { const n = parseFloat((searchQty + 1).toFixed(2)); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">+</button></div></div>
                   </form>
                 </div>
                 <div className="flex-1 mt-2 border border-outline-variant/20 rounded-2xl overflow-hidden flex flex-col bg-white shadow-sm min-h-0 relative">
@@ -922,7 +1044,54 @@ export const POS: React.FC = () => {
                                 )}
                               </div>
                             </td>
-                            <td className="px-6 py-5 text-center font-bold text-sm align-middle h-[70px]"><div className="flex items-center justify-center h-full"><div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute"><button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">-</button><span className="w-8">{item.quantity}</span><button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">+</button></div><span className="group-hover:hidden">{item.quantity}</span></div></td>
+                            <td className="px-6 py-5 text-center font-bold text-sm align-middle h-[70px]">
+                              <div className="flex items-center justify-center h-full">
+                                <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute">
+                                  <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">-</button>
+                                  {item.saleType === 'weight' ? (
+                                    inlineWeightEdit?.idx === idx ? (
+                                      <input
+                                        autoFocus
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={inlineWeightEdit.str}
+                                        className="w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary"
+                                        onChange={(e) => {
+                                          const raw = e.target.value.replace(',', '.');
+                                          if (/^\d*\.?\d{0,2}$/.test(raw)) setInlineWeightEdit({ idx, str: raw });
+                                        }}
+                                        onBlur={() => {
+                                          const n = parseFloat(inlineWeightEdit.str);
+                                          if (!isNaN(n) && n > 0) updateItemQty(idx, n);
+                                          setInlineWeightEdit(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            const n = parseFloat(inlineWeightEdit.str);
+                                            if (!isNaN(n) && n > 0) updateItemQty(idx, n);
+                                            setInlineWeightEdit(null);
+                                          }
+                                          if (e.key === 'Escape') setInlineWeightEdit(null);
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                      />
+                                    ) : (
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setInlineWeightEdit({ idx, str: parseFloat(item.quantity.toFixed(2)).toString() }); }}
+                                        className="w-12 text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate"
+                                      >{parseFloat(item.quantity.toFixed(2)).toString()}</button>
+                                    )
+                                  ) : (
+                                    <span className="w-8 text-center">{item.quantity}</span>
+                                  )}
+                                  <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">+</button>
+                                </div>
+                                <span className="group-hover:hidden">
+                                  {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg` : item.quantity}
+                                </span>
+                              </div>
+                            </td>
                             <td className="px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px]">
                               <div className="flex flex-col justify-center items-end h-full">
                                 {item.price === 0 ? (
@@ -1120,38 +1289,38 @@ export const POS: React.FC = () => {
             {showSuccessModal && (
               <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-[500] flex items-center justify-center p-8 animate-in fade-in">
                 <div className="bg-white rounded-[3rem] w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 p-10 text-center relative">
-                  <div className="w-20 h-20 bg-green-100 text-green-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                    <span className="material-symbols-outlined text-[48px]">check_circle</span>
+                  <div className="w-20 h-20 bg-[#e6fcf0] text-[#00c853] rounded-[2rem] flex items-center justify-center mx-auto mb-6">
+                    <span className="material-symbols-outlined text-[42px] font-black">check</span>
                   </div>
-                  <h3 className="text-2xl font-black mb-2">¡Venta Exitosa!</h3>
-                  <p className="text-on-surface-variant mb-8 font-medium">La operación #{showSuccessModal.orderId} se ha registrado correctamente.</p>
+                  <h3 className="text-2xl font-black mb-2 text-[#2d2828]">¡Venta Exitosa!</h3>
+                  <p className="text-on-surface-variant mb-8 font-medium text-sm text-[#5d5454]">La operación #{showSuccessModal.orderId} se ha registrado correctamente.</p>
 
-                  <div className="bg-surface-container-low rounded-3xl p-6 mb-8 text-left space-y-2">
-                    <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Cliente</span><span className="font-bold">{showSuccessModal.customer}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Total</span><span className="text-xl font-black text-primary">${formatCurrency(showSuccessModal.total, true, true)}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-xs font-bold text-on-surface-variant uppercase">Pago</span><span className="text-xs font-black uppercase bg-white px-2 py-1 rounded-lg border border-outline-variant/10">{getPaymentMethodDisplay(showSuccessModal.paymentMethod)}</span></div>
+                  <div className="bg-[#f5f3f3] rounded-[1.75rem] p-6 mb-8 text-left space-y-3.5">
+                    <div className="flex justify-between items-center"><span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider">Cliente</span><span className="font-extrabold text-sm text-[#2d2828]">{showSuccessModal.customer}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider">Total</span><span className="text-lg font-black text-[#b71c1c]">${formatCurrency(showSuccessModal.total, true, true)}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider">Pago</span><span className="text-[10px] font-black uppercase bg-white text-[#2d2828] px-3 py-1 rounded-full border border-outline-variant/10 shadow-sm">{getPaymentMethodDisplay(showSuccessModal.paymentMethod)}</span></div>
                   </div>
 
                   <div className="space-y-3">
                     {lastSaleTicket && (
                       <button
                         onClick={() => { setShowTicket(lastSaleTicket); }}
-                        className="w-full bg-primary text-white font-black py-5 rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+                        className="w-full bg-[#b71c1c] text-white font-black py-4.5 rounded-[1.25rem] shadow-lg shadow-red-900/10 hover:bg-[#a31919] transition-all flex items-center justify-center gap-2.5 text-sm"
                       >
-                        <span className="material-symbols-outlined">receipt_long</span>
+                        <span className="material-symbols-outlined text-[20px]">print</span>
                         Imprimir Ticket
                       </button>
                     )}
                     <button
                       onClick={() => handleSendWhatsApp(showSuccessModal)}
-                      className="w-full bg-[#25D366] text-white font-black py-5 rounded-2xl shadow-lg shadow-green-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+                      className="w-full bg-[#20ba56] text-white font-black py-4.5 rounded-[1.25rem] shadow-lg shadow-green-500/10 hover:bg-[#1caa4e] transition-all flex items-center justify-center gap-2.5 text-sm"
                     >
-                      <span className="material-symbols-outlined">chat</span>
+                      <span className="material-symbols-outlined text-[20px]">chat</span>
                       Notificar por WhatsApp
                     </button>
                     <button
                       onClick={() => setShowSuccessModal(null)}
-                      className="w-full py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors"
+                      className="w-full py-3 font-black text-sm text-[#5d5454] hover:bg-black/5 rounded-[1.25rem] transition-colors mt-2"
                     >
                       Cerrar
                     </button>
@@ -1197,7 +1366,7 @@ export const POS: React.FC = () => {
                   <input type="text" placeholder="Motivo" value={wdReason} onChange={e => setWdReason(e.target.value)} className="flex-[2] bg-white border border-outline-variant/20 rounded-xl px-0 py-2 text-sm font-medium outline-none focus:border-primary" />
                   <button onClick={() => {
                     if (!wdAmount || parseFloat(wdAmount) <= 0 || !wdReason) return;
-                    setWithdrawals(prev => [...prev, { id: `WD-${Date.now()}`, amount: parseFloat(wdAmount), reason: wdReason, user: 'Admin', timestamp: Date.now() }]);
+                    setWithdrawals(prev => [...prev, { id: `WD-${Date.now()}`, amount: parseFloat(wdAmount), reason: wdReason, user: cashierName, timestamp: Date.now() }]);
                     setWdAmount(''); setWdReason('');
                   }} className="bg-primary text-white font-bold px-4 py-2 rounded-xl text-sm hover:bg-primary/90 transition-colors">Agregar</button>
                 </div>
@@ -1205,7 +1374,7 @@ export const POS: React.FC = () => {
                   <div className="space-y-2 mt-2">
                     {withdrawals.map((w, i) => (
                       <div key={w.id} className="flex items-center justify-between bg-orange-50 rounded-xl px-3 py-2 border border-orange-100">
-                        <div><p className="text-xs font-bold text-orange-800">{w.reason}</p><p className="text-[10px] text-orange-600">Admin</p></div>
+                        <div><p className="text-xs font-bold text-orange-800">{w.reason}</p><p className="text-[10px] text-orange-600">{w.user}</p></div>
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-black text-orange-700">-${formatCurrency(w.amount, true, true)}</span>
                           <button onClick={() => setWithdrawals(prev => prev.filter((_, idx) => idx !== i))} className="text-error hover:bg-error/10 rounded-full w-5 h-5 flex items-center justify-center text-xs">&times;</button>

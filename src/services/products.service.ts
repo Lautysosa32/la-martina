@@ -18,6 +18,7 @@ const toSupabaseProduct = (input: Partial<CreateProductInput>): Partial<Supabase
     ...(input.minStock !== undefined && { min_stock: input.minStock }),
     ...(input.barcode !== undefined && { barcode: input.barcode }),
     ...(input.stock !== undefined && { stock: input.stock }),
+    ...(input.saleType !== undefined && { sale_type: input.saleType }),
   };
 };
 
@@ -39,6 +40,7 @@ const toFrontendProduct = (product: SupabaseProduct): Product => {
     minStock: product.min_stock,
     barcode: product.barcode,
     stock: product.stock,
+    saleType: product.sale_type || 'unit',
     createdAt: product.created_at,
     updatedAt: product.updated_at,
   };

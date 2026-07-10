@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
-import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
+import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
 
 export const Dashboard: React.FC = () => {
@@ -21,7 +21,7 @@ export const Dashboard: React.FC = () => {
   const [selectedForReport, setSelectedForReport] = useState<Set<string>>(new Set());
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
-  const [period, setPeriod] = useState('Últimos 7 días');
+  const [period, setPeriod] = useState('Últimos 30 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
 
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
@@ -29,32 +29,21 @@ export const Dashboard: React.FC = () => {
     setPortalTarget(document.getElementById('admin-header-portal'));
   }, []);
 
-  // Enforce 7 days period for common employees
+  // Enforce Últimos 30 días period for common employees
   useEffect(() => {
-    if (employeeProfile?.role === 'employee' && period !== 'Últimos 7 días') {
-      setPeriod('Últimos 7 días');
+    if (employeeProfile?.role === 'employee' && period !== 'Últimos 30 días') {
+      setPeriod('Últimos 30 días');
     }
   }, [employeeProfile, period]);
 
   const analyticsParams = useMemo(() => {
-    if (period === 'Personalizado' && customRange.from && customRange.to) {
-      return { from: new Date(customRange.from).getTime(), to: new Date(customRange.to).getTime() + 86400000 };
-    }
-    return PERIOD_DAYS[period] || 7;
+    return getPeriodRange(period, customRange);
   }, [period, customRange]);
 
   const filteredOrders = useMemo(() => {
-    let from: number;
-    let to: number = Date.now();
-    if (typeof analyticsParams === 'number') {
-      from = to - analyticsParams * 24 * 60 * 60 * 1000;
-    } else {
-      from = analyticsParams.from;
-      to = analyticsParams.to;
-    }
     return orders.filter(o => {
       const ts = getOrderTimestamp(o);
-      return ts >= from && ts <= to;
+      return ts >= analyticsParams.from && ts <= analyticsParams.to;
     });
   }, [orders, analyticsParams]);
 
@@ -84,7 +73,7 @@ export const Dashboard: React.FC = () => {
         { 
           label: 'Ventas por Pedidos', 
           value: `$${formatCurrency(ordersRev)}`, 
-          change: 'Web / WhatsApp', 
+          change: 'Ventas por web', 
           icon: 'local_shipping', 
           color: 'bg-indigo-100 text-indigo-600' 
         }

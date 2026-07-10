@@ -1,9 +1,11 @@
 import React from 'react';
 import { useCart } from '../context/CartContext';
 import { Link } from 'react-router-dom';
+import { WeightInputModal } from '../components/WeightInputModal';
 
 export const Cart: React.FC = () => {
   const { items, updateQuantity, removeItem, totalPrice, totalItems, originalPriceSum, discountApplied, getStock, stockWarnings } = useCart();
+  const [activeWeightItem, setActiveWeightItem] = React.useState<any>(null);
   const deliveryMethod = localStorage.getItem('la-martina-delivery-method') || 'envio';
   const isPickup = deliveryMethod === 'retiro';
   const shippingCost = isPickup ? 0 : (totalItems > 0 ? 1500 : 0);
@@ -72,67 +74,86 @@ export const Cart: React.FC = () => {
             const canAddMore = item.quantity < stock;
 
             return (
-              <div key={item.id} className={`bg-white p-4 rounded-xl shadow-sm flex gap-4 items-center border ${isOverStock ? 'border-red-300 bg-red-50/30' : 'border-outline-variant/10'}`}>
-                <div className="w-20 h-20 bg-[#fcf9f8] flex-shrink-0 rounded-lg overflow-hidden p-2">
+              <div key={item.id} className={`bg-white p-3 sm:p-4 rounded-xl shadow-sm flex gap-4 items-center border relative ${isOverStock ? 'border-red-300 bg-red-50/30' : 'border-outline-variant/10'}`}>
+                {/* Trash button absolutely positioned at top right */}
+                <button
+                  onClick={() => removeItem(item.id)}
+                  className="absolute top-3 right-3 text-on-surface-variant hover:text-error transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px] sm:text-[20px]" aria-hidden="true" translate="no">delete</span>
+                </button>
+
+                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-[#fcf9f8] flex-shrink-0 rounded-lg overflow-hidden p-1.5 sm:p-2">
                   <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain mix-blend-multiply" />
                 </div>
-                <div className="flex-1">
-                  <span className="text-[10px] uppercase font-bold text-on-surface-variant/60">{item.brand}</span>
-                  <h3 className="font-body-md text-on-surface font-semibold line-clamp-2 md:line-clamp-1 flex flex-col gap-0.5">
+
+                <div className="flex-1 min-w-0 pr-6 sm:pr-8">
+                  <span className="text-[9px] sm:text-[10px] uppercase font-bold text-on-surface-variant/60">{item.brand}</span>
+                  <h3 className="font-body-md text-on-surface font-semibold line-clamp-2 md:line-clamp-1 flex flex-col gap-0.5 text-sm sm:text-base">
                     <span>{item.name}</span>
                     {item.offerLabel && (
-                      <span className="text-[10px] text-error font-extrabold flex items-center gap-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full mt-1 w-fit">
-                        <span className="material-symbols-outlined text-[12px]">local_offer</span>
+                      <span className="text-[9px] sm:text-[10px] text-error font-extrabold flex items-center gap-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full mt-1 w-fit">
+                        <span className="material-symbols-outlined text-[10px] sm:text-[12px]">local_offer</span>
                         {item.offerLabel}
-                        {item.discountedQuantity && item.discountedQuantity < item.quantity && ` (Cupo: ${item.discountedQuantity} unid.)`}
+                        {item.discountedQuantity && item.discountedQuantity < item.quantity && ` (Cupo: ${item.discountedQuantity} u)`}
                       </span>
                     )}
                   </h3>
-                  <div className="font-price-display mt-2 flex items-center gap-2">
-                    {item.finalPrice && item.finalPrice < item.price ? (
-                      <>
-                        <span className="text-xs text-on-surface-variant/50 line-through">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
-                        <span className="text-primary font-bold">${item.finalPrice.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
-                      </>
-                    ) : (
-                      <span className="text-primary font-bold">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
-                    )}
-                  </div>
+
                   {/* Stock info per line */}
                   <div className="mt-1">
                     {isOverStock ? (
-                      <span className="text-[10px] font-bold text-red-600">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-red-600">
                         ⚠ Solo {stock === 0 ? 'sin stock' : `${stock} disponible${stock > 1 ? 's' : ''}`}
                       </span>
                     ) : (
-                      <span className="text-[10px] font-bold text-green-600">
+                      <span className="text-[9px] sm:text-[10px] font-bold text-green-600">
                         {stock <= 5 ? `${stock} disponible${stock > 1 ? 's' : ''}` : '+5 disponibles'}
                       </span>
                     )}
                   </div>
-                </div>
-                <div className="flex flex-col items-center gap-3">
-                  <button
-                    onClick={() => removeItem(item.id)}
-                    className="text-on-surface-variant hover:text-error transition-colors"
-                  >
-                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">delete</span>
-                  </button>
-                  <div className="flex items-center gap-3 border border-outline-variant/30 rounded-full px-2 py-1 bg-[#fcf9f8]">
-                    <button
-                      onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                      className="text-on-surface-variant w-6 h-6 flex items-center justify-center hover:text-primary transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">remove</span>
-                    </button>
-                    <span className={`font-body-md font-bold w-8 flex-shrink-0 text-center ${isOverStock ? 'text-red-600' : ''}`}>{item.quantity}</span>
-                    <button
-                      onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                      disabled={!canAddMore}
-                      className={`w-6 h-6 flex items-center justify-center transition-colors ${canAddMore ? 'text-on-surface-variant hover:text-primary' : 'text-gray-300 cursor-not-allowed'}`}
-                    >
-                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">add</span>
-                    </button>
+
+                  {/* Price and selector row */}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-outline-variant/5 w-full">
+                    <div className="font-price-display flex items-center gap-1.5">
+                      {item.finalPrice && item.finalPrice < item.price ? (
+                        <>
+                          <span className="text-[11px] sm:text-xs text-on-surface-variant/50 line-through">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                          <span className="text-primary font-bold text-sm sm:text-base">${item.finalPrice.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                        </>
+                      ) : (
+                        <span className="text-primary font-bold text-sm sm:text-base">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                      )}
+                    </div>
+
+                    {/* Compact Quantity selector */}
+                    <div className="flex items-center gap-2 border border-outline-variant/30 rounded-full p-0.5 bg-[#fcf9f8] shrink-0">
+                      <button
+                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                        className="text-on-surface-variant w-6 h-6 flex items-center justify-center hover:text-primary transition-colors shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-[14px] sm:text-[16px]" aria-hidden="true" translate="no">remove</span>
+                      </button>
+                      
+                      {item.saleType === 'weight' ? (
+                        <button
+                          onClick={() => setActiveWeightItem(item)}
+                          className={`font-body-md text-xs font-bold min-w-[28px] sm:min-w-[32px] flex-shrink-0 text-center px-0.5 text-primary underline decoration-primary/30 hover:decoration-primary transition-colors cursor-pointer ${isOverStock ? 'text-red-600 decoration-red-300 hover:decoration-red-600' : ''}`}
+                        >
+                          {parseFloat(item.quantity.toFixed(2)).toString()}
+                        </button>
+                      ) : (
+                        <span className={`font-body-md text-xs sm:text-sm font-bold w-6 sm:w-8 flex-shrink-0 text-center ${isOverStock ? 'text-red-600' : ''}`}>{item.quantity}</span>
+                      )}
+
+                      <button
+                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                        disabled={!canAddMore}
+                        className={`w-6 h-6 flex items-center justify-center transition-colors shrink-0 ${canAddMore ? 'text-on-surface-variant hover:text-primary' : 'text-gray-300 cursor-not-allowed'}`}
+                      >
+                        <span className="material-symbols-outlined text-[14px] sm:text-[16px]" aria-hidden="true" translate="no">add</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -141,18 +162,18 @@ export const Cart: React.FC = () => {
         </div>
       </div>
 
-      <div className="w-full md:w-[380px] bg-white p-6 rounded-xl shadow-md border border-outline-variant/10 h-fit sticky top-24">
-        <h2 className="text-[25px] font-bold text-on-background mb-6">Resumen de Compra</h2>
+      <div className="w-full md:w-[380px] bg-white p-5 sm:p-6 rounded-xl shadow-md border border-outline-variant/10 h-fit sticky top-24">
+        <h2 className="text-[22px] sm:text-[25px] font-bold text-on-background mb-6">Resumen de Compra</h2>
 
         <div className="mb-6">
-          <label className="font-label-sm text-on-surface-variant block mb-2">Código de Descuento</label>
-          <div className="flex gap-2">
+          <label className="font-label-sm text-on-surface-variant block mb-2 text-xs sm:text-sm">Código de Descuento</label>
+          <div className="flex gap-2 w-full min-w-0">
             <input
               type="text"
               placeholder="Ingresá tu código"
-              className="flex-1 bg-[#fcf9f8] border border-outline-variant/30 focus:border-primary rounded-lg px-3 py-2 font-body-md text-on-surface outline-none"
+              className="flex-1 min-w-0 bg-[#fcf9f8] border border-outline-variant/30 focus:border-primary rounded-lg px-3 py-2 font-body-md text-on-surface text-sm sm:text-base outline-none"
             />
-            <button className="bg-secondary-container text-on-secondary-container px-4 rounded-lg font-label-sm font-bold hover:opacity-80 transition-colors">
+            <button className="bg-secondary-container text-on-secondary-container px-4 rounded-lg font-label-sm font-bold hover:opacity-80 transition-colors shrink-0 text-sm sm:text-base">
               Aplicar
             </button>
           </div>
@@ -195,6 +216,20 @@ export const Cart: React.FC = () => {
           </Link>
         )}
       </div>
+
+      <WeightInputModal
+        isOpen={!!activeWeightItem}
+        onClose={() => setActiveWeightItem(null)}
+        initialValue={activeWeightItem?.quantity || 1}
+        productName={activeWeightItem?.name || ''}
+        pricePerKg={activeWeightItem?.price || 0}
+        onConfirm={(val) => {
+          if (activeWeightItem) {
+            updateQuantity(activeWeightItem.id, val);
+          }
+          setActiveWeightItem(null);
+        }}
+      />
     </div>
   );
 };

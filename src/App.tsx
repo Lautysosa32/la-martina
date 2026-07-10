@@ -31,6 +31,7 @@ import { POS } from './pages/Admin/POS';
 import { Billing } from './pages/Admin/Billing';
 import { Settings } from './pages/Admin/Settings';
 import { WhatsAppMessages } from './pages/Admin/WhatsAppMessages';
+import { Expenses } from './pages/Admin/Expenses';
 import { AdminLogin } from './pages/AdminLogin';
 
 export default function App() {
@@ -71,6 +72,7 @@ export default function App() {
           <Route path="employees" element={<AuthGuard requiredPermission="employees.view"><Employees /></AuthGuard>} />
           <Route path="pos" element={<AuthGuard requiredPermission="pos.access"><POS /></AuthGuard>} />
           <Route path="billing" element={<AuthGuard requiredPermission="billing.view"><Billing /></AuthGuard>} />
+          <Route path="expenses" element={<AuthGuard requiredPermission="expenses.view"><Expenses /></AuthGuard>} />
           <Route path="settings" element={<AuthGuard requiredPermission="settings.access"><Settings /></AuthGuard>} />
           <Route path="whatsapp" element={<AuthGuard requiredPermission="settings.access"><WhatsAppMessages /></AuthGuard>} />
         </Route>

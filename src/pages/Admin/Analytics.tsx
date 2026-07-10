@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import type { Offer, CashClose, CashMovement } from '../../context/AdminContext';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
-import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
+import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
 const CATEGORY_COLORS: Record<string, string> = {
   carnes: "#DC2626",      // rojo fuerte
@@ -27,24 +27,23 @@ export const Analytics: React.FC = () => {
     adminProducts, adminCategories, orders, totalRevenue, activeOffers, offers,
     addOffer, deleteOffer, cashCloses, performCashClose, getCashCloseMovements,
     getTopSellingProducts, getRevenueByCategory, getRevenueByDay, getOrderTimestamp,
-    formatCurrency, customers, cashMovements, offerRedemptions
+    formatCurrency, customers, cashMovements, offerRedemptions, expenses, isCashRegisterOpen
   } = useAdmin();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
 
-  const [period, setPeriod] = useState('Últimos 7 días');
+  const [period, setPeriod] = useState('Últimos 30 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
-  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setPortalTarget(document.getElementById('admin-header-portal'));
   }, []);
 
-  // Enforce 7 days period for common employees
+  // Enforce Últimos 30 días period for common employees
   useEffect(() => {
-    if (employeeProfile?.role === 'employee' && period !== 'Últimos 7 días') {
-      setPeriod('Últimos 7 días');
+    if (employeeProfile?.role === 'employee' && period !== 'Últimos 30 días') {
+      setPeriod('Últimos 30 días');
     }
   }, [employeeProfile, period]);
   
@@ -62,17 +61,13 @@ export const Analytics: React.FC = () => {
     per_customer_daily_limit: '',
     total_quantity_limit: ''
   });
-  const [closePeriodFilter, setClosePeriodFilter] = useState('todos');
   const [closeSortOrder, setCloseSortOrder] = useState<'date-desc' | 'date-asc' | 'revenue-desc' | 'revenue-asc'>('date-desc');
 
   // Movement detail within cash close
   const [selectedCloseMovement, setSelectedCloseMovement] = useState<CashMovement | null>(null);
 
   const analyticsParams = useMemo(() => {
-    if (period === 'Personalizado' && customRange.from && customRange.to) {
-      return { from: new Date(customRange.from).getTime(), to: new Date(customRange.to).getTime() + 86400000 };
-    }
-    return PERIOD_DAYS[period] || 7;
+    return getPeriodRange(period, customRange);
   }, [period, customRange]);
 
   const topProducts = getTopSellingProducts(analyticsParams);
@@ -83,10 +78,7 @@ export const Analytics: React.FC = () => {
   const filteredOrdersForPeriod = useMemo(() => {
     return orders.filter(o => {
       const t = getOrderTimestamp(o);
-      if (typeof analyticsParams === 'object') {
-        return t >= analyticsParams.from && t <= analyticsParams.to;
-      }
-      return t >= Date.now() - (analyticsParams as number) * 86400000;
+      return t >= analyticsParams.from && t <= analyticsParams.to;
     }).filter(o => o.status !== 'Cancelado');
   }, [orders, analyticsParams, getOrderTimestamp]);
 
@@ -138,42 +130,67 @@ export const Analytics: React.FC = () => {
     return catData.reduce((s, c) => s + c.revenue, 0);
   }, [catData]);
 
-  // Payment methods breakdown from ORDERS in the selected period (Real-time)
+  // Payment methods breakdown: ingresos desde órdenes + egresos desde tabla expenses
   const paymentMethodData = useMemo(() => {
+    // --- Ingresos (órdenes no canceladas en el período) ---
     const filteredOrders = orders.filter(o => {
       const t = getOrderTimestamp(o);
-      if (typeof analyticsParams === 'object') {
-        return t >= analyticsParams.from && t <= analyticsParams.to;
-      }
-      return t >= Date.now() - (analyticsParams as number) * 86400000;
+      return t >= analyticsParams.from && t <= analyticsParams.to;
     }).filter(o => o.status !== 'Cancelado');
 
-    const cash = filteredOrders.filter(o => o.paymentMethod === 'cash').reduce((s, o) => s + o.total, 0);
-    const card = filteredOrders.filter(o => o.paymentMethod === 'card').reduce((s, o) => s + o.total, 0);
-    const transfer = filteredOrders.filter(o => o.paymentMethod === 'transfer').reduce((s, o) => s + o.total, 0);
-    const cc = filteredOrders.filter(o => o.paymentMethod === 'cuenta_corriente').reduce((s, o) => s + o.total, 0);
+    let cashIn = filteredOrders.filter(o => o.paymentMethod === 'cash').reduce((s, o) => s + o.total, 0);
+    let cardIn = filteredOrders.filter(o => o.paymentMethod === 'card').reduce((s, o) => s + o.total, 0);
+    let transferIn = filteredOrders.filter(o => o.paymentMethod === 'transfer').reduce((s, o) => s + o.total, 0);
     
-    return { cash, card, transfer, cc, total: cash + card + transfer + cc };
-  }, [orders, analyticsParams, getOrderTimestamp]);
+    // Ventas CC en el periodo
+    const ccSales = filteredOrders.filter(o => o.paymentMethod === 'cuenta_corriente').reduce((s, o) => s + o.total, 0);
+
+    // --- Cobros de Cuenta Corriente (Clientes) en el período ---
+    const filteredMovements = cashMovements.filter(m => {
+      const ts = m.timestamp;
+      return ts >= analyticsParams.from && ts <= analyticsParams.to;
+    });
+
+    const ccCollectionsCash = filteredMovements.filter(m => m.type === 'Ingreso' && m.description.includes('Pago Cta. Corriente (Efectivo)')).reduce((s, m) => s + m.amount, 0);
+    const ccCollectionsCard = filteredMovements.filter(m => m.type === 'Ingreso' && m.description.includes('Pago Cta. Corriente (Tarjeta)')).reduce((s, m) => s + m.amount, 0);
+    const ccCollectionsTransfer = filteredMovements.filter(m => m.type === 'Ingreso' && m.description.includes('Pago Cta. Corriente (Transferencia)')).reduce((s, m) => s + m.amount, 0);
+
+    // --- Egresos en el período ---
+    const filteredExpenses = expenses.filter(e => {
+      const ts = new Date(e.last_activity_at || e.created_at).getTime();
+      return ts >= analyticsParams.from && ts <= analyticsParams.to && e.status === 'active';
+    });
+
+    // Para efectivo, tarjeta y transferencia, sumamos los egresos creados con ese método 
+    // Y los egresos de CC que fueron cancelados con ese método.
+    const cashExpenses = filteredExpenses.filter(e => e.payment_method === 'cash' || (e.payment_method === 'cuenta_corriente' && e.payment_status === 'paid' && e.cancellation_method === 'cash')).reduce((s, e) => s + e.amount, 0);
+    const cardExpenses = filteredExpenses.filter(e => e.payment_method === 'card' || (e.payment_method === 'cuenta_corriente' && e.payment_status === 'paid' && e.cancellation_method === 'card')).reduce((s, e) => s + e.amount, 0);
+    const transferExpenses = filteredExpenses.filter(e => e.payment_method === 'transfer' || (e.payment_method === 'cuenta_corriente' && e.payment_status === 'paid' && e.cancellation_method === 'transfer')).reduce((s, e) => s + e.amount, 0);
+    
+    // Compras a cuenta corriente (histórico en el periodo)
+    const ccPurchases = filteredExpenses.filter(e => e.payment_method === 'cuenta_corriente').reduce((s, e) => s + e.amount, 0);
+
+    // Pendientes globales (No filtrados por fecha, muestran la realidad actual)
+    const currentCustomerDebt = customers.reduce((s, c) => s + (c.currentDebt || 0), 0);
+    const currentSupplierDebt = expenses.filter(e => e.status === 'active' && e.payment_method === 'cuenta_corriente' && e.payment_status === 'pending').reduce((s, e) => s + e.amount, 0);
+
+    return {
+      cash:     { sales: cashIn, collections: ccCollectionsCash, expenses: cashExpenses, net: cashIn + ccCollectionsCash - cashExpenses },
+      card:     { sales: cardIn, collections: ccCollectionsCard, expenses: cardExpenses, net: cardIn + ccCollectionsCard - cardExpenses },
+      transfer: { sales: transferIn, collections: ccCollectionsTransfer, expenses: transferExpenses, net: transferIn + ccCollectionsTransfer - transferExpenses },
+      cc:       { sales: ccSales, purchases: ccPurchases, pendingCollections: currentCustomerDebt, pendingPayments: currentSupplierDebt },
+      totalIn: cashIn + cardIn + transferIn + ccSales, // Sólo ventas para el revenue (excluye cobranzas CC para no duplicar en otras métricas)
+      totalOut: cashExpenses + cardExpenses + transferExpenses + ccPurchases
+    };
+  }, [orders, expenses, cashMovements, customers, analyticsParams, getOrderTimestamp]);
 
   // Period comparison: current vs previous equivalent period
   const periodComparison = useMemo(() => {
-    let currentFrom: number, currentTo: number, prevFrom: number, prevTo: number;
-
-    if (typeof analyticsParams === 'object') {
-      currentFrom = analyticsParams.from;
-      currentTo = analyticsParams.to;
-      const duration = currentTo - currentFrom;
-      prevFrom = currentFrom - duration;
-      prevTo = currentFrom;
-    } else {
-      const days = analyticsParams as number;
-      const ms = days * 86400000;
-      currentTo = Date.now();
-      currentFrom = currentTo - ms;
-      prevFrom = currentFrom - ms;
-      prevTo = currentFrom;
-    }
+    const currentFrom = analyticsParams.from;
+    const currentTo = analyticsParams.to;
+    const duration = currentTo - currentFrom;
+    const prevFrom = currentFrom - duration;
+    const prevTo = currentFrom;
 
     // 1. Revenues (Orders total excluding canceled)
     const currentRevenue = orders.filter(o => { 
@@ -188,18 +205,16 @@ export const Analytics: React.FC = () => {
 
     const revenueDiff = previousRevenue > 0 ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 : null;
 
-    // 2. Expenses (cashMovements of type 'Egreso' or 'Retiro' starting with 'PAGO PROVEEDOR:')
-    const currentExpenses = cashMovements.filter(m => {
-      return m.timestamp >= currentFrom && m.timestamp <= currentTo && 
-        (m.type === 'Egreso' || m.type === 'Retiro') && 
-        m.description.startsWith('PAGO PROVEEDOR:');
-    }).reduce((s, m) => s + m.amount, 0);
+    // 2. Expenses from the expenses table (active only)
+    const currentExpenses = expenses.filter(e => {
+      const ts = new Date(e.created_at).getTime();
+      return ts >= currentFrom && ts <= currentTo && e.status === 'active';
+    }).reduce((s, e) => s + e.amount, 0);
 
-    const previousExpenses = cashMovements.filter(m => {
-      return m.timestamp >= prevFrom && m.timestamp <= prevTo && 
-        (m.type === 'Egreso' || m.type === 'Retiro') && 
-        m.description.startsWith('PAGO PROVEEDOR:');
-    }).reduce((s, m) => s + m.amount, 0);
+    const previousExpenses = expenses.filter(e => {
+      const ts = new Date(e.created_at).getTime();
+      return ts >= prevFrom && ts <= prevTo && e.status === 'active';
+    }).reduce((s, e) => s + e.amount, 0);
 
     const expensesDiff = previousExpenses > 0 ? ((currentExpenses - previousExpenses) / previousExpenses) * 100 : null;
 
@@ -284,10 +299,6 @@ export const Analytics: React.FC = () => {
     setShowOfferModal(false);
   };
 
-  const handleCashClose = (p: 'diario' | 'semanal' | 'mensual') => {
-    const result = performCashClose(p);
-    setShowCloseResult(result);
-  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
@@ -520,24 +531,28 @@ export const Analytics: React.FC = () => {
         </div>
       </div>
 
-      {/* Payment Methods Chart */}
+      {/* Payment Methods Chart — Ingreso vs Egreso por método */}
       <div className="bg-white p-8 rounded-[2rem] border border-outline-variant/5 shadow-sm">
-        <div className="mb-8">
+        <div className="mb-5">
           <h3 className="text-xl font-bold text-on-background">Métodos de Pago</h3>
-          <p className="text-sm text-on-surface-variant">Distribución por forma de cobro ({period.toLowerCase()})</p>
+          <p className="text-sm text-on-surface-variant">Ingresos vs egresos por forma de pago ({period.toLowerCase()})</p>
         </div>
-        {paymentMethodData.total > 0 ? (
-          <div className="flex flex-col md:flex-row items-center gap-10">
+        {paymentMethodData.totalIn > 0 ? (
+          <div className="flex flex-col xl:flex-row items-center gap-10">
+
+            {/* Barras simples */}
             <div className="flex-1 w-full space-y-5">
               {[
-                { label: 'Efectivo', value: paymentMethodData.cash, color: 'bg-green-500', textColor: 'text-green-600', bg: 'bg-green-50' },
-                { label: 'Tarjeta', value: paymentMethodData.card, color: 'bg-blue-500', textColor: 'text-blue-600', bg: 'bg-blue-50' },
-                { label: 'Transferencia', value: paymentMethodData.transfer, color: 'bg-purple-500', textColor: 'text-purple-600', bg: 'bg-purple-50' },
-                { label: 'Cta. Corriente', value: paymentMethodData.cc, color: 'bg-orange-500', textColor: 'text-orange-600', bg: 'bg-orange-50' },
-              ].map(({ label, value, color, textColor, bg }) => {
-                const pct = paymentMethodData.total > 0 ? (value / paymentMethodData.total) * 100 : 0;
+                { key: 'cash',     label: 'Efectivo',       color: 'bg-green-500',  textColor: 'text-green-600',  bg: 'bg-green-50' },
+                { key: 'card',     label: 'Tarjeta',        color: 'bg-blue-500',   textColor: 'text-blue-600',   bg: 'bg-blue-50' },
+                { key: 'transfer', label: 'Transferencia',  color: 'bg-purple-500', textColor: 'text-purple-600', bg: 'bg-purple-50' },
+                { key: 'cc',       label: 'Cta. Corriente', color: 'bg-orange-500', textColor: 'text-orange-600', bg: 'bg-orange-50' },
+              ].map(({ key, label, color, textColor, bg }) => {
+                const d = paymentMethodData[key as 'cash' | 'card' | 'transfer' | 'cc'] as any;
+                const totalInCard = key === 'cc' ? d.sales : (d.sales + d.collections);
+                const pct = paymentMethodData.totalIn > 0 ? (totalInCard / paymentMethodData.totalIn) * 100 : 0;
                 return (
-                  <div key={label} className="space-y-2">
+                  <div key={key} className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <div className="flex items-center gap-2">
                         <div className={`w-2.5 h-2.5 rounded-full ${color}`}></div>
@@ -554,27 +569,75 @@ export const Analytics: React.FC = () => {
                 );
               })}
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-1 gap-3 md:w-48 w-full">
+
+            {/* Tarjetas laterales en matriz 2x2 */}
+            <div className="grid grid-cols-2 gap-4 w-full xl:w-[520px] shrink-0">
               {[
-                { label: 'Efectivo', value: paymentMethodData.cash, icon: 'payments', color: 'text-green-600', bg: 'bg-green-50' },
-                { label: 'Tarjeta', value: paymentMethodData.card, icon: 'credit_card', color: 'text-blue-600', bg: 'bg-blue-50' },
-                { label: 'Transferencia', value: paymentMethodData.transfer, icon: 'account_balance', color: 'text-purple-600', bg: 'bg-purple-50' },
-                { label: 'Cta. Corriente', value: paymentMethodData.cc, icon: 'menu_book', color: 'text-orange-600', bg: 'bg-orange-50' },
-              ].map(({ label, value, icon, color, bg }) => (
-                <div key={label} className={`rounded-2xl p-3 ${bg} flex items-center gap-3 md:flex-col md:items-start md:gap-1`}>
-                  <span className={`material-symbols-outlined text-[20px] ${color}`}>{icon}</span>
-                  <div>
-                    <p className={`text-base font-black leading-none ${color}`}>${formatCurrency(value)}</p>
-                    <p className="text-[9px] font-bold text-on-surface-variant uppercase">{label}</p>
+                { key: 'cash',     label: 'Efectivo',       icon: 'payments',         color: 'text-green-700',  bg: 'bg-green-50',   border: 'border-green-100' },
+                { key: 'card',     label: 'Tarjeta',        icon: 'credit_card',       color: 'text-blue-700',   bg: 'bg-blue-50',    border: 'border-blue-100' },
+                { key: 'transfer', label: 'Transferencia',  icon: 'account_balance',   color: 'text-purple-700', bg: 'bg-purple-50',  border: 'border-purple-100' },
+              ].map(({ key, label, icon, color, bg, border }) => {
+                const d = paymentMethodData[key as 'cash' | 'card' | 'transfer'] as any;
+                return (
+                  <div key={key} className={`rounded-2xl p-4 ${bg} border ${border} space-y-2.5 shadow-sm`}>
+                    <div className="flex items-center gap-2">
+                      <span className={`material-symbols-outlined text-[20px] ${color}`}>{icon}</span>
+                      <p className={`text-[10px] font-black uppercase tracking-wider ${color}`}>{label}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-bold text-on-surface-variant uppercase">Ventas</span>
+                        <span className={`text-sm font-black ${color}`}>${formatCurrency(d.sales)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-bold text-on-surface-variant uppercase">Cobros CC</span>
+                        <span className={`text-sm font-black ${color}`}>${formatCurrency(d.collections)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-bold text-on-surface-variant uppercase">Egresos</span>
+                        <span className="text-sm font-black text-rose-600">-${formatCurrency(d.expenses)}</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-1.5 border-t border-current/10">
+                        <span className="text-[9px] font-bold text-on-surface-variant uppercase">Neto</span>
+                        <span className={`text-sm font-black ${d.net >= 0 ? color : 'text-rose-600'}`}>{d.net < 0 ? '-' : ''}${formatCurrency(Math.abs(d.net))}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              {/* Tarjeta especial para Cuenta Corriente */}
+              <div className="rounded-2xl p-4 bg-orange-50 border border-orange-100 space-y-2.5 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[20px] text-orange-700">menu_book</span>
+                  <p className="text-[10px] font-black uppercase tracking-wider text-orange-700">Cta. Corriente</p>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase">Ventas CC</span>
+                    <span className="text-sm font-black text-orange-700">${formatCurrency(paymentMethodData.cc.sales)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase">Compras CC</span>
+                    <span className="text-sm font-black text-rose-600">${formatCurrency(paymentMethodData.cc.purchases)}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1.5 border-t border-current/10">
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase">Pend. Cobro</span>
+                    <span className="text-sm font-black text-orange-700">${formatCurrency(paymentMethodData.cc.pendingCollections)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase">Pend. Pago</span>
+                    <span className="text-sm font-black text-rose-600">${formatCurrency(paymentMethodData.cc.pendingPayments)}</span>
                   </div>
                 </div>
-              ))}
+              </div>
+
             </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-40 text-on-surface-variant/50">
             <span className="material-symbols-outlined text-4xl mb-2">payments</span>
-            <p className="text-sm font-medium">Sin pagos registrados en este período</p>
+            <p className="text-sm font-medium">Sin datos en este período</p>
           </div>
         )}
       </div>
@@ -758,143 +821,105 @@ export const Analytics: React.FC = () => {
         )}
       </div>
 
-      {/* Cash Register Close */}
-      <div className="bg-white rounded-[2.5rem] shadow-sm border border-outline-variant/5 overflow-hidden">
-        <div className="p-8 border-b border-outline-variant/10">
-          <h2 className="text-xl font-bold mb-1">Cierre de Caja</h2>
-          <p className="text-sm text-on-surface-variant">Genera un resumen de ventas por período</p>
-        </div>
-        
-        <div className="p-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
-            {(['diario', 'semanal', 'mensual'] as const).map(p => (
-              <button key={p} onClick={() => handleCashClose(p)}
-                className="p-6 rounded-2xl border-2 border-dashed border-outline-variant/20 hover:border-primary/40 hover:bg-primary/[0.02] transition-all flex flex-col items-center gap-3 group">
-                <div className="w-14 h-14 bg-primary/10 text-primary rounded-2xl flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-all">
-                  <span className="material-symbols-outlined text-[28px]">
-                    {p === 'diario' ? 'today' : p === 'semanal' ? 'date_range' : 'calendar_month'}
-                  </span>
-                </div>
-                <span className="font-bold text-sm capitalize">Cierre {p}</span>
-                <span className="text-[10px] text-on-surface-variant uppercase tracking-wider">
-                  {p === 'diario' ? 'Hoy' : p === 'semanal' ? 'Últimos 7 días' : 'Este mes'}
-                </span>
-              </button>
-            ))}
+      {/* Cash Closes History */}
+      {cashCloses.length > 0 && (
+        <div className="bg-white rounded-[2.5rem] shadow-sm border border-outline-variant/5 overflow-hidden">
+          <div className="p-8 border-b border-outline-variant/10">
+            <h2 className="text-xl font-bold mb-1">Historial de Cierres de Caja</h2>
+            <p className="text-sm text-on-surface-variant">Revisá los cierres de caja registrados</p>
           </div>
-
-          {/* Recent Closes with Filters */}
-          {cashCloses.length > 0 && (
-            <div className="space-y-6">
-              <div className="flex flex-col md:flex-row justify-between items-end gap-4">
-                <div>
-                  <h3 className="text-sm font-black text-on-surface-variant uppercase tracking-[0.2em] mb-1">Historial de Cierres</h3>
-                  <p className="text-xs text-on-surface-variant font-medium">Gestioná y revisá tus cierres anteriores</p>
-                </div>
-                
-                <div className="flex gap-2 w-full md:w-auto">
-                  <div className="flex-1 md:w-48">
-                    <label className="text-[9px] font-black text-on-surface-variant uppercase mb-1.5 block ml-1">Período</label>
-                    <select 
-                      value={closePeriodFilter}
-                      onChange={e => setClosePeriodFilter(e.target.value)}
-                      className="w-full bg-surface-container-low border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 ring-primary/10 transition-all"
-                    >
-                      <option value="todos">Todos los Períodos</option>
-                      <option value="diario">Diarios</option>
-                      <option value="semanal">Semanales</option>
-                      <option value="mensual">Mensuales</option>
-                    </select>
-                  </div>
-                  
-                  <div className="flex-1 md:w-48">
-                    <label className="text-[9px] font-black text-on-surface-variant uppercase mb-1.5 block ml-1">Ordenar por</label>
-                    <select 
-                      value={closeSortOrder}
-                      onChange={e => setCloseSortOrder(e.target.value as any)}
-                      className="w-full bg-surface-container-low border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 ring-primary/10 transition-all"
-                    >
-                      <option value="date-desc">Fecha (Más reciente)</option>
-                      <option value="date-asc">Fecha (Más antiguo)</option>
-                      <option value="revenue-desc">Ingresos (Mayor a menor)</option>
-                      <option value="revenue-asc">Ingresos (Menor a mayor)</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {cashCloses
-                  .filter(c => closePeriodFilter === 'todos' || c.period === closePeriodFilter)
-                  .sort((a, b) => {
-                    if (closeSortOrder.startsWith('revenue')) {
-                      return closeSortOrder === 'revenue-desc' 
-                        ? b.totalSales - a.totalSales 
-                        : a.totalSales - b.totalSales;
-                    }
-                    const parseDate = (d: string) => {
-                      const [date, time] = d.split(', ');
-                      const [day, month, year] = date.split('/');
-                      return new Date(`${year}-${month}-${day}T${time}`).getTime();
-                    };
-                    return closeSortOrder === 'date-desc' 
-                      ? parseDate(b.date) - parseDate(a.date)
-                      : parseDate(a.date) - parseDate(b.date);
-                  })
-                  .slice(0, 10)
-                  .map(c => (
-                    <div key={c.id}
-                      className="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:border-primary/40 hover:shadow-lg transition-all group"
-                    >
-                      {/* Left — clickable for detail */}
-                      <div className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer" onClick={() => setShowCloseResult(c)}>
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110 flex-shrink-0 ${c.period === 'diario' ? 'bg-blue-100 text-blue-600' : c.period === 'semanal' ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'}`}>
-                          <span className="material-symbols-outlined text-[20px]">
-                            {c.period === 'diario' ? 'today' : c.period === 'semanal' ? 'date_range' : 'calendar_month'}
-                          </span>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-sm capitalize">{`Cierre ${c.period}`}</p>
-                          <p className="text-[10px] text-on-surface-variant">{c.date} · {c.totalOrders} pedidos</p>
-                        </div>
-                      </div>
-
-                      {/* Right — amounts + opening control badge + button */}
-                      <div className="flex items-center gap-3 flex-shrink-0">
-                        <div className="text-right cursor-pointer" onClick={() => setShowCloseResult(c)}>
-                          <p className="font-bold text-primary">${formatCurrency(c.totalSales)}</p>
-                          <div className="flex gap-2 mt-1">
-                            {c.cashPayments > 0 && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Ef: ${formatCurrency(c.cashPayments)}</span>}
-                            {c.cardPayments > 0 && <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Tar: ${formatCurrency(c.cardPayments)}</span>}
-                            {c.transferPayments > 0 && <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Tr: ${formatCurrency(c.transferPayments)}</span>}
-                          </div>
-                        </div>
-
-                        {/* Badge de estado de arqueo de apertura — solo en cierres diarios */}
-                        {c.period === 'diario' && (() => {
-                          const isChecked = c.openingControlCounted != null;
-                          const diff = c.openingControlDifference ?? 0;
-                          const badgeColor = isChecked
-                            ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
-                            : 'bg-gray-100 text-gray-500';
-                          return (
-                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
-                              {isChecked
-                                ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `${formatCurrency(Math.abs(diff))} Faltante`)
-                                : 'Sin arqueo'}
-                            </span>
-                          );
-                        })()}
-
-                        <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setShowCloseResult(c)}>chevron_right</span>
-                      </div>
-                    </div>
-                  ))}
+          
+          <div className="p-8 space-y-6">
+            <div className="flex flex-col md:flex-row justify-between items-end gap-4">
+              <div className="w-full md:w-auto ml-auto">
+                <label className="text-[9px] font-black text-on-surface-variant uppercase mb-1.5 block ml-1">Ordenar por</label>
+                <select 
+                  value={closeSortOrder}
+                  onChange={e => setCloseSortOrder(e.target.value as any)}
+                  className="w-full bg-surface-container-low border-none rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:ring-2 ring-primary/10 transition-all min-w-[200px]"
+                >
+                  <option value="date-desc">Fecha (Más reciente)</option>
+                  <option value="date-asc">Fecha (Más antiguo)</option>
+                  <option value="revenue-desc">Ingresos (Mayor a menor)</option>
+                  <option value="revenue-asc">Ingresos (Menor a mayor)</option>
+                </select>
               </div>
             </div>
-          )}
+
+            <div className="space-y-3">
+              {cashCloses
+                .filter(c => c.period === 'diario' || !c.period) // Show daily closes (legacy closes might not have period)
+                .filter(c => c.totalSales > 0)
+                .sort((a, b) => {
+                  if (closeSortOrder.startsWith('revenue')) {
+                    return closeSortOrder === 'revenue-desc' 
+                      ? b.totalSales - a.totalSales 
+                      : a.totalSales - b.totalSales;
+                  }
+                  const parseDate = (d: string) => {
+                    const [date, time] = d.split(', ');
+                    const [day, month, year] = date.split('/');
+                    return new Date(`${year}-${month}-${day}T${time}`).getTime();
+                  };
+                  return closeSortOrder === 'date-desc' 
+                    ? parseDate(b.date) - parseDate(a.date)
+                    : parseDate(a.date) - parseDate(b.date);
+                })
+                .slice(0, 10)
+                .map(c => (
+                  <div key={c.id}
+                    className="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:border-primary/40 hover:shadow-lg transition-all group cursor-pointer"
+                    onClick={() => setShowCloseResult(c)}
+                  >
+                    {/* Left */}
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110 flex-shrink-0 bg-blue-100 text-blue-600">
+                        <span className="material-symbols-outlined text-[20px]">
+                          today
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-sm capitalize">Cierre Diario</p>
+                        <p className="text-[10px] text-on-surface-variant">{c.date} · {c.totalOrders} pedidos</p>
+                      </div>
+                    </div>
+
+                    {/* Right */}
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="text-right">
+                        <p className="font-bold text-primary">${formatCurrency(c.totalSales)}</p>
+                        <div className="flex gap-2 mt-1 flex-wrap justify-end">
+                          {c.cashPayments > 0 && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Ef: ${formatCurrency(c.cashPayments)}</span>}
+                          {c.cardPayments > 0 && <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Tar: ${formatCurrency(c.cardPayments)}</span>}
+                          {c.transferPayments > 0 && <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Tr: ${formatCurrency(c.transferPayments)}</span>}
+                          {c.cuentaCorrientePayments !== undefined && c.cuentaCorrientePayments > 0 && <span className="text-[9px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">Cc: ${formatCurrency(c.cuentaCorrientePayments)}</span>}
+                        </div>
+                      </div>
+
+                      {/* Badge de estado de arqueo de apertura */}
+                      {(() => {
+                        const isChecked = c.openingControlCounted != null;
+                        const diff = c.openingControlDifference ?? 0;
+                        const badgeColor = isChecked
+                          ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
+                          : 'bg-gray-100 text-gray-500';
+                        return (
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
+                            {isChecked
+                              ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `${formatCurrency(Math.abs(diff))} Faltante`)
+                              : 'Sin arqueo'}
+                          </span>
+                        );
+                      })()}
+
+                      <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Add Offer Modal */}
       {showOfferModal && (
@@ -1132,11 +1157,11 @@ export const Analytics: React.FC = () => {
           <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 overflow-hidden printable-area">
             {/* Header */}
             <div className="p-6 border-b border-outline-variant/10 flex items-center gap-4 bg-surface-container-lowest">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${showCloseResult.period === 'diario' ? 'bg-blue-100 text-blue-600' : showCloseResult.period === 'semanal' ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'}`}>
-                <span className="material-symbols-outlined text-[28px]">{showCloseResult.period === 'diario' ? 'receipt_long' : 'analytics'}</span>
+              <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-100 text-blue-600">
+                <span className="material-symbols-outlined text-[28px]">receipt_long</span>
               </div>
               <div className="flex-1">
-                <h3 className="text-xl font-black capitalize">Cierre {showCloseResult.period}</h3>
+                <h3 className="text-xl font-black capitalize">Cierre Diario</h3>
                 <p className="text-xs text-on-surface-variant">{showCloseResult.date}</p>
               </div>
               <button onClick={() => setShowCloseResult(null)} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 no-print"><span className="material-symbols-outlined">close</span></button>
@@ -1158,6 +1183,9 @@ export const Analytics: React.FC = () => {
                   <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500"></span><span className="text-xs text-on-surface-variant font-bold">Efectivo</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.cashPayments)}</span></div>
                   <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500"></span><span className="text-xs text-on-surface-variant font-bold">Tarjeta</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.cardPayments)}</span></div>
                   <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-purple-500"></span><span className="text-xs text-on-surface-variant font-bold">Transferencia</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.transferPayments)}</span></div>
+                  {showCloseResult.cuentaCorrientePayments !== undefined && (
+                    <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span><span className="text-xs text-on-surface-variant font-bold">Cuenta Corriente</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.cuentaCorrientePayments)}</span></div>
+                  )}
                 </div>
               </div>
 

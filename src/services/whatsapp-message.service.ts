@@ -282,5 +282,26 @@ export const whatsappMessageService = {
       console.error('Exception retrying message:', err);
       return false;
     }
+  },
+
+  /**
+   * Elimina todos los mensajes de la tabla
+   */
+  async clearMessages(): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('whatsapp_messages')
+        .delete()
+        .not('id', 'is', null);
+
+      if (error) {
+        console.error('Error clearing messages:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Exception clearing messages:', err);
+      return false;
+    }
   }
 };

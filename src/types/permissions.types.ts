@@ -47,7 +47,12 @@ export type PermissionKey =
   | 'offers.view'
   | 'offers.create'
   | 'offers.update'
-  | 'offers.delete';
+  | 'offers.delete'
+  // Egresos
+  | 'expenses.view'
+  | 'expenses.create'
+  | 'expenses.update'
+  | 'expenses.delete';
 
 export interface PermissionsOverride {
   allow: PermissionKey[];

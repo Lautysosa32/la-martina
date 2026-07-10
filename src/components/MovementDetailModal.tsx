@@ -52,7 +52,8 @@ export const MovementDetailModal: React.FC<MovementDetailModalProps> = ({
       quantity: i.quantity,
       price: i.price,
       finalPrice: i.price,
-      offerLabel: null
+      offerLabel: null,
+      saleType: i.saleType
     })),
     subtotal: relatedOrder.total,
     globalDiscount: 0,
@@ -141,7 +142,9 @@ export const MovementDetailModal: React.FC<MovementDetailModalProps> = ({
                     {relatedOrder.items.map((item, i) => (
                       <tr key={i}>
                         <td className="px-4 py-3 font-medium text-on-background text-xs">{item.name}</td>
-                        <td className="px-4 py-3 text-center font-bold text-xs">{item.quantity}</td>
+                        <td className="px-4 py-3 text-center font-bold text-xs">
+                          {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg` : item.quantity}
+                        </td>
                         <td className="px-4 py-3 text-right text-xs">${formatCurrency(item.price, true, true)}</td>
                         <td className="px-4 py-3 text-right font-bold text-xs">${formatCurrency(item.price * item.quantity, true, true)}</td>
                       </tr>

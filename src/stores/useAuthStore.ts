@@ -253,7 +253,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     console.log(`📧 Email sintético para registro: "${syntheticEmail}"`);
 
-    const { data, error } = await supabase.auth.signUp({
+    let { data, error } = await supabase.auth.signUp({
       email: syntheticEmail,
       password,
       options: {
@@ -265,15 +265,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     });
 
-    if (error) {
+    if (error && error.message.toLowerCase().includes('already registered')) {
+      console.warn("⚠️ Usuario ya registrado en Auth. Intentando Iniciar Sesión...");
+      const loginRes = await supabase.auth.signInWithPassword({
+        email: syntheticEmail,
+        password
+      });
+      if (loginRes.error) {
+        console.error("❌ Error al iniciar sesión tras conflicto de registro:", loginRes.error.message);
+        set({ loading: false });
+        return { data: null, error: loginRes.error };
+      }
+      data = loginRes.data;
+      error = null;
+    } else if (error) {
       console.error("❌ Error al registrar en Supabase Auth:", error.message, error.status);
       set({ loading: false });
       return { data, error };
     }
 
-    // Caso: el usuario ya existía (Supabase devuelve user pero sin session cuando el email está sin confirmar)
+    // Caso: el usuario ya existía o confirmación pendiente
     if (data.user && !data.session) {
-      console.warn("⚠️ Usuario creado pero sin sesión activa. Posiblemente la confirmación de email está habilitada en Supabase, o el usuario ya existía.");
+      console.warn("⚠️ Usuario creado pero sin sesión activa. Posiblemente la confirmación de email está habilitada en Supabase.");
       // Intentamos hacer login directo para obtener la sesión
       const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
         email: syntheticEmail,
@@ -442,6 +455,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   updateUser: (data) => {
+    const isCustomer = !!get().session && !get().employeeProfile;
+    if (isCustomer) {
+      get().updateCustomerProfileInDb({
+        address: data.address,
+        address_lat: data.address_lat,
+        address_lng: data.address_lng,
+        name: data.name,
+        phone: data.phone
+      }).catch(console.error);
+    }
+
     set((state) => {
       const updated = { ...state.guestProfile, ...data };
       localStorage.setItem('la-martina-user', JSON.stringify(updated));
@@ -524,7 +548,7 @@ export const useAuth = () => {
 
     fetchCustomerOrdersFromSupabase();
 
-    const channel = supabase.channel(`customer_orders_${activePhone}`)
+    const channel = supabase.channel(`customer_orders_${activePhone}_${Math.random().toString(36).substring(2, 9)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchCustomerOrdersFromSupabase();
       })

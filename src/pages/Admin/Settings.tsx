@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAdmin } from '../../context/AdminContext';
+import type { AutoCashCloseConfig } from '../../context/AdminContext';
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
@@ -9,14 +10,32 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 export const Settings: React.FC = () => {
-  const { ticketConfig, updateTicketConfig, currentAccountConfig, updateCurrentAccountConfig, storeStatus, updateStoreStatus } = useAdmin();
+  const { ticketConfig, updateTicketConfig, currentAccountConfig, updateCurrentAccountConfig, storeStatus, updateStoreStatus, autoCashCloseConfig, updateAutoCashCloseConfig } = useAdmin();
   const [saved, setSaved] = useState(false);
-  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'account' | 'online_store'>('ticket');
+  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'account' | 'online_store' | 'auto_close'>('ticket');
 
   // Local state mirrors config for form editing
   const [form, setForm] = useState({ ...ticketConfig });
   const [accountForm, setAccountForm] = useState({ ...currentAccountConfig });
   const [storeForm, setStoreForm] = useState({ ...storeStatus });
+  const [autoCloseForm, setAutoCloseForm] = useState<AutoCashCloseConfig>({ enabled: false, time: '22:00' });
+
+  // Sync local forms when context loads data from Supabase
+  useEffect(() => {
+    setForm(ticketConfig);
+  }, [ticketConfig]);
+
+  useEffect(() => {
+    setAccountForm(currentAccountConfig);
+  }, [currentAccountConfig]);
+
+  useEffect(() => {
+    setStoreForm(storeStatus);
+  }, [storeStatus]);
+
+  useEffect(() => {
+    setAutoCloseForm(autoCashCloseConfig);
+  }, [autoCashCloseConfig]);
 
   const handleSave = () => {
     if (activeSection === 'ticket') {
@@ -25,6 +44,8 @@ export const Settings: React.FC = () => {
       updateCurrentAccountConfig(accountForm);
     } else if (activeSection === 'online_store') {
       updateStoreStatus(storeForm);
+    } else if (activeSection === 'auto_close') {
+      updateAutoCashCloseConfig(autoCloseForm);
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -84,7 +105,7 @@ export const Settings: React.FC = () => {
   const mockTotal = mockItems.reduce((s, i) => s + i.finalPrice * i.quantity, 0);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700 max-w-[1400px]">
+    <div className="space-y-5 animate-in fade-in duration-700 max-w-[1400px]">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         {saved && (
@@ -120,6 +141,14 @@ export const Settings: React.FC = () => {
         >
           <span className="material-symbols-outlined text-[20px]">store_mall_directory</span>
           Tienda Online
+        </button>
+        <button
+          onClick={() => setActiveSection('auto_close')}
+          className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 ${activeSection === 'auto_close' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-on-surface-variant border border-outline-variant/10 hover:bg-surface-container-lowest'
+            }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">schedule</span>
+          Cierre Automático
         </button>
         <button
           onClick={() => setActiveSection('general')}
@@ -580,6 +609,119 @@ export const Settings: React.FC = () => {
                 <li className="flex items-start gap-2">
                   <span className="material-symbols-outlined text-[18px] mt-0.5">edit_document</span>
                   <p><strong>Seguridad:</strong> Ideal para usar cuando necesitas actualizar muchos precios y evitar que alguien compre con el precio viejo antes de que termines.</p>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'auto_close' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            {/* Toggle */}
+            <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
+              <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
+                    <span className="material-symbols-outlined text-primary text-[20px]">schedule</span>
+                  </div>
+                  <div>
+                    <h3 className="font-black text-lg">Cierre Automático de Caja</h3>
+                    <p className="text-xs text-on-surface-variant">Cierra la caja automáticamente todos los días a la hora configurada</p>
+                  </div>
+                </div>
+              </div>
+              <div className="p-6 space-y-6">
+                {/* Enabled toggle */}
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-bold text-sm">Activar cierre automático</p>
+                    <p className="text-xs text-on-surface-variant mt-0.5">Si está activo, la caja se cerrará sola a la hora indicada</p>
+                  </div>
+                  <button
+                    onClick={() => setAutoCloseForm(f => ({ ...f, enabled: !f.enabled }))}
+                    className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${
+                      autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
+                    }`}
+                  >
+                    <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${
+                      autoCloseForm.enabled ? 'left-7' : 'left-0.5'
+                    }`} />
+                  </button>
+                </div>
+
+                {/* Time picker */}
+                <div>
+                  <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Hora del Cierre</label>
+                  <input
+                    type="time"
+                    value={autoCloseForm.time}
+                    onChange={e => setAutoCloseForm(f => ({ ...f, time: e.target.value }))}
+                    className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-lg outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                  />
+                </div>
+
+                {/* Current status badge */}
+                <div className={`rounded-2xl p-4 flex items-center gap-3 ${
+                  autoCashCloseConfig.enabled ? 'bg-green-50 border border-green-100' : 'bg-surface-container-lowest border border-outline-variant/10'
+                }`}>
+                  <span className={`material-symbols-outlined text-[22px] ${
+                    autoCashCloseConfig.enabled ? 'text-green-600' : 'text-on-surface-variant'
+                  }`}>
+                    {autoCashCloseConfig.enabled ? 'check_circle' : 'radio_button_unchecked'}
+                  </span>
+                  <div>
+                    <p className="text-sm font-bold">
+                      {autoCashCloseConfig.enabled
+                        ? `Cierre automático activo a las ${autoCashCloseConfig.time} hs`
+                        : 'Cierre automático desactivado'}
+                    </p>
+                    <p className="text-xs text-on-surface-variant">
+                      {autoCashCloseConfig.enabled
+                        ? 'La caja se cerrará automáticamente si está abierta a esa hora'
+                        : 'El cierre de caja solo ocurre de forma manual'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Save button */}
+            <div className="flex gap-3">
+              <button
+                onClick={handleSave}
+                className="flex-1 bg-primary text-white font-bold py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                Guardar Configuración
+              </button>
+            </div>
+          </div>
+
+          {/* Info panel */}
+          <div>
+            <div className="bg-blue-50/50 rounded-[2rem] border border-blue-100 p-8">
+              <div className="flex items-center gap-3 mb-4">
+                <span className="material-symbols-outlined text-blue-600 text-2xl">info</span>
+                <h4 className="font-black text-blue-900">¿Cómo funciona?</h4>
+              </div>
+              <ul className="space-y-4 text-sm text-blue-800">
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">schedule</span>
+                  <p><strong>Detección por minuto:</strong> El sistema revisa cada minuto si llegó la hora configurada y si hay una caja abierta.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">point_of_sale</span>
+                  <p><strong>Misma lógica:</strong> El cierre automático usa exactamente el mismo proceso que el cierre manual, generando el mismo historial.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">security</span>
+                  <p><strong>Sin caja abierta:</strong> Si a la hora configurada no hay ninguna caja abierta, no se genera ningún registro ni error.</p>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] mt-0.5">devices</span>
+                  <p><strong>Requiere sesión activa:</strong> El cierre automático funciona mientras haya una sesión de administrador abierta en el navegador.</p>
                 </li>
               </ul>
             </div>

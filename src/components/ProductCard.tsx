@@ -1,15 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Product } from '../data/mockData';
 import { useCart } from '../context/CartContext';
 import { useFavorites } from '../context/FavoritesContext';
 import { useAuth } from '../stores/useAuthStore';
 import { useNavigate } from 'react-router-dom';
+import { WeightInputModal } from './WeightInputModal';
 
 export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }> = ({ product, showQuantity = false }) => {
   const { items, addItem, updateQuantity, getStock } = useCart();
   const { toggleFavorite, isFavorite } = useFavorites();
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const [isWeightModalOpen, setIsWeightModalOpen] = useState(false);
 
   const cartItem = items.find(item => item.id === product.id);
   const quantity = cartItem ? cartItem.quantity : 0;
@@ -30,7 +32,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
   };
 
   return (
-    <article className={`bg-white rounded-xl p-3 flex flex-col shadow-[0_4px_20px_0_rgba(26,26,26,0.03)] border border-outline-variant/10 hover:border-primary/20 transition-all h-full ${isOutOfStock ? 'opacity-60' : ''}`}>
+    <article className={`bg-white rounded-xl px-2 py-3 flex flex-col shadow-[0_4px_20px_0_rgba(26,26,26,0.03)] border border-outline-variant/10 hover:border-primary/20 transition-all h-full ${isOutOfStock ? 'opacity-60' : ''}`}>
       <div className="w-full aspect-square mb-3 bg-[#fcf9f8] rounded-lg p-2 flex items-center justify-center relative group overflow-hidden">
 
         {product.discount && (
@@ -89,51 +91,81 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
         {product.name}
       </h3>
 
-      <div className="flex items-center justify-between mt-auto pt-2">
-        <div className="flex flex-col">
-          <div className="font-price-display text-[18px] text-on-surface font-bold">
+      {/* Bottom row: price + quantity control (forced on a single line, no wrapping) */}
+      <div className="flex items-center justify-between mt-auto pt-2 gap-0.5 w-full min-w-0">
+        {/* Price: gets smaller when the selector is open to optimize space */}
+        <div className="flex flex-col min-w-0 shrink">
+          <div className={`font-price-display font-bold truncate transition-all duration-250 ${
+            (quantity > 0 || showQuantity) 
+              ? 'text-[13px] xs:text-[14px] sm:text-[15px]' 
+              : 'text-[16px] xs:text-[17px] sm:text-[18px]'
+          }`}>
             ${(product.price ?? 0).toLocaleString('es-AR')}
           </div>
           {product.originalPrice && (
-            <div className="text-[12px] text-on-surface-variant line-through">
+            <div className={`text-on-surface-variant line-through truncate transition-all duration-250 ${
+              (quantity > 0 || showQuantity)
+                ? 'text-[9px] sm:text-[10px]'
+                : 'text-[11px] sm:text-[12px]'
+            }`}>
               ${product.originalPrice.toLocaleString('es-AR')}
             </div>
           )}
         </div>
 
-        {isOutOfStock ? (
-          <button
-            disabled
-            className="w-10 h-10 rounded-full bg-gray-200 text-gray-400 flex items-center justify-center cursor-not-allowed shrink-0"
-          >
-            <span className="material-symbols-outlined" aria-hidden="true" translate="no">block</span>
-          </button>
-        ) : quantity > 0 || showQuantity ? (
-          <div className="flex items-center justify-between bg-surface-container-high rounded-full p-1 min-w-[90px]">
+        {/* Quantity control: shifts to the right edge (-mr-2) when open */}
+        <div className="shrink-0">
+          {isOutOfStock ? (
             <button
-              onClick={() => updateQuantity(product.id, quantity - 1)}
-              className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest transition-colors"
+              disabled
+              className="w-7 h-7 rounded-full bg-gray-200 text-gray-400 flex items-center justify-center cursor-not-allowed"
             >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">remove</span>
+              <span className="material-symbols-outlined text-[15px]" aria-hidden="true" translate="no">block</span>
             </button>
-            <span className="font-body-md text-sm font-bold w-6 text-center">{quantity || 1}</span>
+          ) : quantity > 0 || showQuantity ? (
+            <div className="flex items-center bg-surface-container-high rounded-full p-0.5 gap-0.5 border border-outline-variant/5 -mr-2">
+              {/* − button */}
+              <button
+                onClick={() => updateQuantity(product.id, quantity - 1)}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-highest transition-colors shrink-0"
+              >
+                <span className="material-symbols-outlined text-[15px]" aria-hidden="true" translate="no">remove</span>
+              </button>
+
+              {/* Number */}
+              {product.saleType === 'weight' ? (
+                <button
+                  onClick={() => setIsWeightModalOpen(true)}
+                  className="text-[11px] font-bold text-primary underline decoration-primary/30 hover:decoration-primary transition-colors cursor-pointer shrink-0 min-w-[1.5rem] text-center px-0.5"
+                >
+                  {parseFloat((quantity || 1).toFixed(2)).toString()}
+                </button>
+              ) : (
+                <span className="text-xs font-bold shrink-0 min-w-[1.1rem] text-center px-0.5">
+                  {quantity || 1}
+                </span>
+              )}
+
+              {/* + button */}
+              <button
+                onClick={handleAdd}
+                disabled={!canAddMore}
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors shrink-0 ${canAddMore ? 'bg-primary-container text-on-primary-container hover:bg-primary shadow-sm' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                <span className="material-symbols-outlined text-[15px]" aria-hidden="true" translate="no">add</span>
+              </button>
+            </div>
+          ) : (
             <button
               onClick={handleAdd}
-              disabled={!canAddMore}
-              className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors shadow-sm ${canAddMore ? 'bg-primary-container text-on-primary-container hover:bg-primary' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              className="w-8 h-8 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center hover:bg-primary transition-colors shadow-sm shrink-0"
             >
-              <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">add</span>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">add</span>
             </button>
-          </div>
-        ) : (
-          <button
-            onClick={handleAdd}
-            className="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center hover:bg-primary transition-colors shadow-sm shrink-0"
-          >
-            <span className="material-symbols-outlined" aria-hidden="true" translate="no">add</span>
-          </button>
-        )}
+          )}
+        </div>
       </div>
+
 
       {/* Stock indicator - Now at the very bottom in premium grey */}
       <div className="mt-2 pt-1.5 border-t border-outline-variant/5">
@@ -141,6 +173,32 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
           {stockLabel}
         </span>
       </div>
+
+      <WeightInputModal
+        isOpen={isWeightModalOpen}
+        onClose={() => setIsWeightModalOpen(false)}
+        initialValue={quantity || 1}
+        productName={product.name}
+        pricePerKg={product.price}
+        onConfirm={(val) => {
+          // If it was 0, it means it's not in the cart, but if they confirm a value we add it directly
+          // updateQuantity handles adding if not exist? Actually updateQuantity in CartContext: 
+          // "if (quantity <= 0) { removeItem } else { map(item => item.id === id ? { quantity } : item) }"
+          // Wait! CartContext's updateQuantity doesn't add a new item if it doesn't exist.
+          // Let's check CartContext.
+          
+          setIsWeightModalOpen(false);
+          // We need to ensure it's in the cart. If quantity was 0, it's not in the cart.
+          if (quantity === 0) {
+            addItem(product);
+            // Then update the quantity in the next tick, but CartContext updateQuantity is synchronous for the setRawItems call.
+            // A better way is to update CartContext to handle this, or just use setTimeout.
+            setTimeout(() => updateQuantity(product.id, val), 0);
+          } else {
+            updateQuantity(product.id, val);
+          }
+        }}
+      />
     </article>
   );
 };

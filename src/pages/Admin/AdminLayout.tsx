@@ -20,6 +20,7 @@ const navItems: NavItem[] = [
   { id: 'orders', label: 'Pedidos', icon: 'shopping_bag', path: '/admin/orders', requiredPermission: 'orders.view' },
   { id: 'pos', label: 'Caja', icon: 'point_of_sale', path: '/admin/pos', requiredPermission: 'pos.access' },
   { id: 'analytics', label: 'Analíticas', icon: 'analytics', path: '/admin/analytics', requiredPermission: 'dashboard.view_financial' },
+  { id: 'expenses', label: 'Egresos', icon: 'arrow_circle_down', path: '/admin/expenses', requiredPermission: 'expenses.view' },
   { id: 'customers', label: 'Clientes', icon: 'group', path: '/admin/customers', requiredPermission: 'customers.view' },
   { id: 'employees', label: 'Empleados', icon: 'badge', path: '/admin/employees', requiredPermission: 'employees.view' },
   { id: 'billing', label: 'Facturación', icon: 'receipt_long', path: '/admin/billing', requiredPermission: 'billing.view' },
@@ -331,69 +332,71 @@ export const AdminLayout: React.FC = () => {
 
           <div className="flex items-center gap-4 min-w-0 shrink">
             {/* Search */}
-            <div className="relative" ref={searchRef}>
-              <input
-                type="text"
-                placeholder="Buscar pedidos, productos..."
-                value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setIsSearchOpen(true); }}
-                onFocus={() => setIsSearchOpen(true)}
-                className="bg-surface-container-low border-none rounded-2xl px-6 py-3 pl-12 w-[220px] lg:w-[280px] text-sm outline-none focus:ring-2 ring-primary/20 transition-all"
-              />
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" aria-hidden="true" translate="no">search</span>
+            {location.pathname !== '/admin/expenses' && (
+              <div className="relative" ref={searchRef}>
+                <input
+                  type="text"
+                  placeholder="Buscar pedidos, productos..."
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setIsSearchOpen(true); }}
+                  onFocus={() => setIsSearchOpen(true)}
+                  className="bg-surface-container-low border-none rounded-2xl px-6 py-3 pl-12 w-[220px] lg:w-[280px] text-sm outline-none focus:ring-2 ring-primary/20 transition-all"
+                />
+                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" aria-hidden="true" translate="no">search</span>
 
-              {isSearchOpen && q.length >= 2 && (
-                <div className="absolute top-full mt-2 left-0 w-full bg-white rounded-2xl shadow-2xl border border-outline-variant/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
-                  {hasResults ? (
-                    <>
-                      {matchedProducts.length > 0 && (
-                        <div>
-                          <p className="px-4 pt-4 pb-2 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Productos</p>
-                          {matchedProducts.map(p => (
-                            <button
-                              key={p.id}
-                              onClick={() => { navigate('/admin/inventory'); setSearchQuery(''); setIsSearchOpen(false); }}
-                              className="flex items-center gap-3 w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors text-left"
-                            >
-                              <img src={p.image} alt="" className="w-8 h-8 object-contain rounded-lg bg-surface-container-low p-0.5" />
-                              <div>
-                                <p className="text-sm font-bold line-clamp-1">{p.name}</p>
-                                <p className="text-[11px] text-on-surface-variant">${formatCurrency(p.price)}</p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {matchedOrders.length > 0 && (
-                        <div className="border-t border-outline-variant/10">
-                          <p className="px-4 pt-4 pb-2 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Pedidos</p>
-                          {matchedOrders.map(o => (
-                            <button
-                              key={o.id}
-                              onClick={() => { navigate('/admin/orders'); setSearchQuery(''); setIsSearchOpen(false); }}
-                              className="flex items-center justify-between w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors"
-                            >
-                              <div className="flex items-center gap-3">
-                                <span className="material-symbols-outlined text-on-surface-variant text-[20px]" aria-hidden="true" translate="no">receipt_long</span>
-                                <div className="text-left">
-                                  <p className="text-sm font-bold">#{o.id}</p>
-                                  <p className="text-[11px] text-on-surface-variant">{o.customer}</p>
+                {isSearchOpen && q.length >= 2 && (
+                  <div className="absolute top-full mt-2 left-0 w-full bg-white rounded-2xl shadow-2xl border border-outline-variant/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                    {hasResults ? (
+                      <>
+                        {matchedProducts.length > 0 && (
+                          <div>
+                            <p className="px-4 pt-4 pb-2 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Productos</p>
+                            {matchedProducts.map(p => (
+                              <button
+                                key={p.id}
+                                onClick={() => { navigate('/admin/inventory'); setSearchQuery(''); setIsSearchOpen(false); }}
+                                className="flex items-center gap-3 w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors text-left"
+                              >
+                                <img src={p.image} alt="" className="w-8 h-8 object-contain rounded-lg bg-surface-container-low p-0.5" />
+                                <div>
+                                  <p className="text-sm font-bold line-clamp-1">{p.name}</p>
+                                  <p className="text-[11px] text-on-surface-variant">${formatCurrency(p.price)}</p>
                                 </div>
-                              </div>
-                              <span className="text-sm font-bold text-primary">${formatCurrency(o.total)}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="p-6 text-center">
-                      <p className="text-sm text-on-surface-variant">No se encontraron resultados para "{q}"</p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {matchedOrders.length > 0 && (
+                          <div className="border-t border-outline-variant/10">
+                            <p className="px-4 pt-4 pb-2 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Pedidos</p>
+                            {matchedOrders.map(o => (
+                              <button
+                                key={o.id}
+                                onClick={() => { navigate('/admin/orders'); setSearchQuery(''); setIsSearchOpen(false); }}
+                                className="flex items-center justify-between w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="material-symbols-outlined text-on-surface-variant text-[20px]" aria-hidden="true" translate="no">receipt_long</span>
+                                  <div className="text-left">
+                                    <p className="text-sm font-bold">#{o.id}</p>
+                                    <p className="text-[11px] text-on-surface-variant">{o.customer}</p>
+                                  </div>
+                                </div>
+                                <span className="text-sm font-bold text-primary">${formatCurrency(o.total)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="p-6 text-center">
+                        <p className="text-sm text-on-surface-variant">No se encontraron resultados para "{q}"</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Notifications */}
             <button className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-outline-variant/10 shadow-sm relative">

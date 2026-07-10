@@ -15,6 +15,7 @@ export interface Product {
   // DB-sourced fields (from product.types.Product via Supabase)
   stock?: number;
   branchId?: string | null;
+  saleType?: 'unit' | 'weight';
   createdAt?: string;
   updatedAt?: string;
 }

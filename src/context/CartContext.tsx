@@ -125,7 +125,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return warnings;
   }, [rawItems, getStock]);
 
-  const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
+  const totalItems = items.reduce((sum, item) => sum + (item.saleType === 'weight' ? 1 : item.quantity), 0);
   const originalPriceSum = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const subtotalAfterItemDiscounts = items.reduce((sum, item) => sum + (item.price * item.quantity) - (item.lineDiscount || 0), 0);
 

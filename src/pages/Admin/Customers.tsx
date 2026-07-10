@@ -31,6 +31,20 @@ export const Customers: React.FC = () => {
     accountLimitNotes: ''
   });
 
+  // Sync inputs with selected customer when modal opens
+  useEffect(() => {
+    if (selectedCustomer) {
+      const c = customers.find(x => x.phone === selectedCustomer.phone) || selectedCustomer;
+      setEditPhone(c.phone || '');
+      setEditDni(c.dni || '');
+      setEditBirthday(c.birthday || '');
+    } else {
+      setEditPhone('');
+      setEditDni('');
+      setEditBirthday('');
+    }
+  }, [selectedCustomer?.phone, customers]);
+
   useEffect(() => {
     if (selectedCustomer) {
       const c = customers.find(x => x.phone === selectedCustomer.phone) || selectedCustomer;
@@ -414,15 +428,13 @@ export const Customers: React.FC = () => {
                         <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Celular</label>
                         <input
                           type="text"
-                          value={editPhone || currentCustomer.phone || ''}
-                          onFocus={() => setEditPhone(currentCustomer.phone)}
+                          value={editPhone}
                           onChange={(e) => setEditPhone(e.target.value)}
                           onBlur={() => {
                             if (editPhone && editPhone !== currentCustomer.phone) {
                               updateCustomerProfile(currentCustomer.phone, { phone: editPhone });
                               setSelectedCustomer(prev => prev ? { ...prev, phone: editPhone } : null);
                             }
-                            setEditPhone('');
                           }}
                           placeholder="Sin teléfono"
                           className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
@@ -436,14 +448,12 @@ export const Customers: React.FC = () => {
                         <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">DNI</label>
                         <input
                           type="text"
-                          value={editDni || currentCustomer.dni || ''}
-                          onFocus={() => setEditDni(currentCustomer.dni)}
+                          value={editDni}
                           onChange={(e) => setEditDni(e.target.value)}
                           onBlur={() => {
                             if (editDni !== currentCustomer.dni) {
                               updateCustomerProfile(currentCustomer.phone, { dni: editDni });
                             }
-                            setEditDni('');
                           }}
                           placeholder="Sin DNI"
                           className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
@@ -456,14 +466,12 @@ export const Customers: React.FC = () => {
                         <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Fecha de Nacimiento</label>
                         <input
                           type="date"
-                          value={editBirthday || currentCustomer.birthday || ''}
-                          onFocus={() => setEditBirthday(currentCustomer.birthday || '')}
+                          value={editBirthday}
                           onChange={(e) => setEditBirthday(e.target.value)}
                           onBlur={() => {
                             if (editBirthday !== currentCustomer.birthday) {
                               updateCustomerProfile(currentCustomer.phone, { birthday: editBirthday });
                             }
-                            setEditBirthday('');
                           }}
                           className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
                         />

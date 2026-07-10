@@ -137,14 +137,62 @@ export const insertCashMovement = async (mov: CashMovement): Promise<void> => {
 
 // ─── CASH CLOSES ────────────────────────────────────────────────────────
 export const fetchCashCloses = async (): Promise<CashClose[]> => {
-  const { data, error } = await supabase.from('cash_closes').select('*').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('cash_closes').select('*').eq('branch_id', BRANCH_ID).order('closed_at', { ascending: false });
   if (error) { console.error('Error fetching cash closes:', error); return []; }
-  return data || [];
+  
+  return (data || []).map((dbClose: any) => ({
+    id: dbClose.id,
+    date: dbClose.date,
+    period: dbClose.period,
+    totalSales: dbClose.total_sales ?? dbClose.totalSales,
+    totalOrders: dbClose.total_orders ?? dbClose.totalOrders,
+    cashPayments: dbClose.cash_payments ?? dbClose.cashPayments,
+    cardPayments: dbClose.card_payments ?? dbClose.cardPayments,
+    transferPayments: dbClose.transfer_payments ?? dbClose.transferPayments,
+    cuentaCorrientePayments: dbClose.cuenta_corriente_payments ?? dbClose.cuentaCorrientePayments ?? 0,
+    closedAt: dbClose.closed_at ?? dbClose.closedAt ?? dbClose.created_at,
+    withdrawals: dbClose.withdrawals || [],
+    totalWithdrawals: dbClose.total_withdrawals ?? dbClose.totalWithdrawals,
+    movementIds: (dbClose.movement_ids ?? dbClose.movementIds) || [],
+    initialAmount: dbClose.initial_amount ?? dbClose.initialAmount,
+    openingControlExpected: dbClose.opening_control_expected ?? dbClose.openingControlExpected,
+    openingControlCounted: dbClose.opening_control_counted ?? dbClose.openingControlCounted,
+    openingControlDifference: dbClose.opening_control_difference ?? dbClose.openingControlDifference,
+    openingControlNotes: dbClose.opening_control_notes ?? dbClose.openingControlNotes,
+    openingControlCheckedBy: dbClose.opening_control_checked_by ?? dbClose.openingControlCheckedBy,
+    openingControlCheckedAt: dbClose.opening_control_checked_at ?? dbClose.openingControlCheckedAt
+  }));
 };
 
 export const insertCashClose = async (close: CashClose): Promise<void> => {
-  const { error } = await supabase.from('cash_closes').insert({ ...close, branch_id: BRANCH_ID });
-  if (error) console.error('Error inserting cash close:', error);
+  const dbClose = {
+    id: close.id,
+    branch_id: BRANCH_ID,
+    date: close.date,
+    period: close.period,
+    total_sales: close.totalSales,
+    total_orders: close.totalOrders,
+    cash_payments: close.cashPayments,
+    card_payments: close.cardPayments,
+    transfer_payments: close.transferPayments,
+    cuenta_corriente_payments: close.cuentaCorrientePayments ?? 0,
+    closed_at: close.closedAt,
+    withdrawals: close.withdrawals,
+    total_withdrawals: close.totalWithdrawals,
+    movement_ids: close.movementIds,
+    initial_amount: close.initialAmount,
+    opening_control_expected: close.openingControlExpected,
+    opening_control_counted: close.openingControlCounted,
+    opening_control_difference: close.openingControlDifference,
+    opening_control_notes: close.openingControlNotes,
+    opening_control_checked_by: close.openingControlCheckedBy,
+    opening_control_checked_at: close.openingControlCheckedAt
+  };
+  const { error } = await supabase.from('cash_closes').insert(dbClose);
+  if (error) {
+    console.error('Error inserting cash close:', error);
+    alert(`Error guardando cierre de caja: ${error.message}. Por favor contactá a soporte o revisá la base de datos.`);
+  }
 };
 
 // ─── OFFERS ─────────────────────────────────────────────────────────────
@@ -182,10 +230,10 @@ export const fetchCustomerProfiles = async (): Promise<Record<string, CustomerPr
 };
 
 export const upsertCustomerProfile = async (profile: CustomerProfile): Promise<void> => {
-  const dbProfile = { ...profile, branch_id: BRANCH_ID, dni: profile.dni || profile.phone }; // Ensure DNI is present as it's the PK
+  const dbProfile = { ...profile, branch_id: BRANCH_ID, dni: profile.dni || profile.phone }; // Ensure DNI is present
   const { error } = await supabase.from('customer_profiles').upsert(
     dbProfile,
-    { onConflict: 'dni' }
+    { onConflict: 'phone, branch_id' }
   );
   if (error) console.error('Error upserting customer profile:', error);
 };

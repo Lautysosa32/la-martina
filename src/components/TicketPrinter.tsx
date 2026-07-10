@@ -9,6 +9,7 @@ export interface TicketItem {
   lineDiscount?: number;
   discountedQuantity?: number;
   offerLabel?: string | null;
+  saleType?: 'unit' | 'weight';
 }
 
 export interface TicketData {
@@ -123,14 +124,15 @@ export const TicketPrinter: React.FC<TicketPrinterProps> = ({ ticket, onClose })
 
             <div className="items">
               {ticket.items.map((item, i) => {
-                const lineTotal = (item.price * item.quantity) - (item.lineDiscount || 0);
                 const hasDiscount = item.offerLabel && item.lineDiscount && item.lineDiscount > 0;
                 return (
                   <div key={i} className="item">
                     <div className="item-name">{item.name}</div>
                     <div className="item-detail">
-                      <span>{item.quantity} x ${fmt(item.price)}</span>
-                      <span>${fmt(lineTotal)}</span>
+                      <span>
+                        {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg x $${fmt(item.price)}/kg` : `${item.quantity} x $${fmt(item.price)}`}
+                      </span>
+                      <span>${fmt(item.price * item.quantity)}</span>
                     </div>
                     {hasDiscount && (
                       <div className="offer-line">▸ {item.offerLabel} {item.discountedQuantity && item.discountedQuantity < item.quantity ? `(${item.discountedQuantity} unid.) ` : ''}(-${fmt(item.lineDiscount || 0)})</div>

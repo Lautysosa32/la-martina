@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { whatsappMessageService, WhatsAppMessage } from '../../services/whatsapp-message.service';
 import { useAdmin } from '../../context/AdminContext';
 
@@ -10,6 +11,11 @@ export const WhatsAppMessages: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [typeFilter, setTypeFilter] = useState<string>('All');
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setPortalTarget(document.getElementById('admin-header-portal'));
+  }, []);
 
   const fetchMessages = async () => {
     setLoading(true);
@@ -44,6 +50,17 @@ export const WhatsAppMessages: React.FC = () => {
       setMessages(prev => prev.map(m => m.id === id ? { ...m, status: 'pending', attempts: 0, error_message: null } : m));
     } else {
       alert('No se pudo programar el reintento del mensaje.');
+    }
+  };
+
+  const handleClear = async () => {
+    if (window.confirm('¿Estás seguro de que deseas borrar todos los mensajes de la cola? Esta acción no se puede deshacer.')) {
+      const ok = await whatsappMessageService.clearMessages();
+      if (ok) {
+        setMessages([]);
+      } else {
+        alert('No se pudieron borrar los mensajes.');
+      }
     }
   };
 
@@ -103,19 +120,25 @@ export const WhatsAppMessages: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700 max-w-[1400px]">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-black tracking-tight text-on-background">Cola de Mensajes WhatsApp</h2>
-          <p className="text-sm text-on-surface-variant font-medium mt-1">Monitorea y administra la cola de envíos para el worker de WhatsApp Web.</p>
-        </div>
-        <button
-          onClick={fetchMessages}
-          className="flex items-center justify-center gap-2 bg-surface-container-low hover:bg-surface-container-highest border border-outline-variant/10 text-on-surface font-bold px-5 py-2.5 rounded-full transition-all text-xs shadow-sm"
-        >
-          <span className="material-symbols-outlined text-[16px] animate-spin-hover">sync</span>
-          Actualizar Cola
-        </button>
-      </div>
+      {portalTarget && createPortal(
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchMessages}
+            className="flex items-center justify-center gap-2 bg-surface-container-low hover:bg-surface-container-highest border border-outline-variant/10 text-on-surface font-bold px-4 py-2 rounded-xl transition-all text-sm shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[18px] animate-spin-hover">sync</span>
+            <span className="hidden sm:inline">Actualizar Cola</span>
+          </button>
+          <button
+            onClick={handleClear}
+            className="flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 border border-red-100 text-error font-bold px-4 py-2 rounded-xl transition-all text-sm shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[18px]">delete</span>
+            <span className="hidden sm:inline">Limpiar Tabla</span>
+          </button>
+        </div>,
+        portalTarget
+      )}
 
       {error && (
         <div className="bg-red-50 text-error p-4 rounded-2xl border border-red-100 flex items-center gap-3">

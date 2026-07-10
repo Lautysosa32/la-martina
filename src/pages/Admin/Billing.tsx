@@ -345,8 +345,27 @@ export const Billing: React.FC = () => {
   }, [invoices]);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700 max-w-[1400px]">
-      {/* Header Portal for Buttons */}
+    <div className="relative h-full min-h-[80vh]">
+      {/* Overlay Próximamente */}
+      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/60 backdrop-blur-[4px] rounded-[2rem]">
+        <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl border border-outline-variant/20 text-center max-w-md animate-in zoom-in-95 duration-500">
+          <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <span className="material-symbols-outlined text-5xl text-primary">construction</span>
+          </div>
+          <h2 className="text-2xl font-black text-on-background mb-3">Próximamente</h2>
+          <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
+            El módulo avanzado de facturación electrónica y gestión de comprobantes fiscales estará disponible muy pronto.
+          </p>
+          <div className="inline-flex items-center gap-2 bg-surface-container-low px-4 py-2 rounded-xl border border-outline-variant/10">
+            <span className="material-symbols-outlined text-[16px] text-on-surface-variant">info</span>
+            <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Módulo en Desarrollo</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Contenido original bloqueado */}
+      <div className="space-y-8 animate-in fade-in duration-700 max-w-[1400px] opacity-40 pointer-events-none select-none blur-[1px]">
+        {/* Header Portal for Buttons */}
       {headerPortal && createPortal(
         <div className="flex gap-3 items-center">
           {activeTab === 'compras' && (
@@ -1440,6 +1459,7 @@ export const Billing: React.FC = () => {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 };

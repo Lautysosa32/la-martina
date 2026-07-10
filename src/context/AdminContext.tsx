@@ -15,6 +15,9 @@ import {
   fetchSetting, saveSetting,
   fetchCategories, insertCategory, updateCategoryInDb, deleteCategoryFromDb
 } from '../services/admin.service';
+import { fetchExpenses, insertExpense, updateExpenseInDb, cancelExpenseInDb } from '../services/expense.service';
+import type { Expense } from '../types/expense.types';
+export type { Expense };
 
 
 // ─── Interfaces ────────────────────────────────────────────
@@ -34,7 +37,7 @@ export interface AdminOrder {
   status: 'Nuevo' | 'Preparando' | 'En Camino' | 'Entregado' | 'Cancelado';
   total: number;
   paidAmount?: number; // Amount already paid for this order (useful for partial payments)
-  items: { id: string; name: string; image: string; price: number; quantity: number; originalPrice?: number; offerId?: string; lineDiscount?: number; discountedQuantity?: number }[];
+  items: { id: string; name: string; image: string; price: number; quantity: number; originalPrice?: number; offerId?: string; lineDiscount?: number; discountedQuantity?: number; saleType?: 'unit' | 'weight' }[];
   source?: 'pos' | 'whatsapp' | 'web';
   discount?: number;
   discountLabel?: string;
@@ -192,6 +195,11 @@ export interface StoreStatus {
   allowBrowsingWhilePaused: boolean;
 }
 
+export interface AutoCashCloseConfig {
+  enabled: boolean;
+  time: string; // HH:mm format, e.g. "22:00"
+}
+
 export interface OfferRedemption {
   id: string;
   offer_id: string;
@@ -213,6 +221,7 @@ export interface CashClose {
   cashPayments: number;
   cardPayments: number;
   transferPayments: number;
+  cuentaCorrientePayments?: number;
   closedAt: string;
   // Extended fields
   withdrawals: CashWithdrawal[];
@@ -313,9 +322,13 @@ export interface AdminContextType {
   storeStatus: StoreStatus;
   updateStoreStatus: (updates: Partial<StoreStatus>) => void;
 
+  // Auto Cash Close
+  autoCashCloseConfig: AutoCashCloseConfig;
+  updateAutoCashCloseConfig: (config: AutoCashCloseConfig) => void;
+
   // Cash Close & Movements
   cashCloses: CashClose[];
-  performCashClose: (period: 'diario' | 'semanal' | 'mensual', withdrawals?: CashWithdrawal[]) => CashClose;
+  performCashClose: (withdrawals?: CashWithdrawal[]) => CashClose | null;
   updateCashCloseOpeningControl: (closeId: string, data: { counted: number; notes: string; checkedBy: string }) => void;
   cashMovements: CashMovement[];
   addCashMovement: (movement: Omit<CashMovement, 'id' | 'timestamp'>) => void;
@@ -347,6 +360,13 @@ export interface AdminContextType {
   getRevenueByCategory: (range?: { from: number, to: number }) => { category: string; revenue: number; percent: number }[];
   getRevenueByDay: (daysOrRange: number | { from: number, to: number }) => { day: string; revenue: number }[];
   getOrderTimestamp: (o: AdminOrder) => number;
+
+  // Egresos
+  expenses: Expense[];
+  addExpense: (expense: Omit<Expense, 'id' | 'created_at' | 'updated_at' | 'payment_status' | 'cancellation_date' | 'cancellation_method' | 'last_activity_at'>) => void;
+  updateExpense: (id: string, updates: Partial<Expense>) => void;
+  cancelExpense: (id: string) => void;
+  payExpense: (id: string, method: 'cash' | 'card' | 'transfer') => void;
 
   // Privacy Mode
   privacyMode: boolean;
@@ -458,32 +478,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [storeFetch]);
 
   useEffect(() => {
-    if (!storeLoading) {
-      if (storeProducts.length <= 1) {
-        console.log('🌱 Base de datos de productos vacía o de prueba, sembrando catálogo original...');
-        const toAdd = catalogProducts.map(p => ({
-          name: p.name,
-          brand: p.brand || '',
-          categoryId: p.categoryId,
-          price: p.price,
-          originalPrice: p.originalPrice || null,
-          image: p.image || '',
-          format: p.format || '',
-          isNew: p.isNew || false,
-          discount: p.discount || null,
-          badge: p.badge || '',
-          minStock: p.minStock || 15,
-          barcode: p.barcode || '',
-          stock: p.stock || 0,
-          branchId: 'main'
-        }));
-        useProductStore.getState().bulkAddProducts(toAdd as any)
-          .then(() => {
-            console.log('✅ Productos sembrados exitosamente');
-            storeFetch();
-          })
-          .catch(console.error);
-      } else {
+    if (!storeLoading && storeProducts.length > 0) {
         setAdminProducts(storeProducts as any);
         // Sincronizar stockMap con el stock de la base de datos para asegurar consistencia
         setStockMap(prev => {
@@ -496,7 +491,6 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           return next;
         });
       }
-    }
   }, [storeProducts, storeLoading, storeFetch]);
 
   const [adminCategories, setAdminCategories] = useState<Category[]>([]);
@@ -527,46 +521,64 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
-  // Customers are now derived from orders for total consistency
+  // Customers are derived strictly from registered profiles (customerProfiles)
   const customers = useMemo(() => {
     const customerMap: Record<string, AdminCustomer> = {};
 
-    // Process orders from oldest to newest to ensure lastOrder/address is the most recent
+    // 1. Initialize map only with registered customer profiles
+    Object.values(customerProfiles).forEach((profileRaw) => {
+      const profile = profileRaw as any;
+      const firstName = profile.nombre || profile.name;
+      const lastName = profile.apellido || profile.last_name;
+      
+      if (firstName === 'Invitado') return; // Hide guest profiles from Admin panel
+
+      const fullName = firstName && lastName
+        ? `${firstName} ${lastName}`
+        : (firstName || 'Sin Nombre');
+
+      customerMap[profile.phone] = {
+        dni: profile.dni || '',
+        name: fullName,
+        phone: profile.phone,
+        address: profile.direccion || profile.address || '',
+        totalOrders: 0,
+        totalSpent: 0,
+        lastOrder: '-',
+        hasCurrentAccount: profile.hasCurrentAccount || false,
+        currentDebt: 0,
+        creditLimit: profile.creditLimit || 50000,
+        birthday: profile.birthday || '',
+        spent30: 0,
+        tier: 'Regular',
+        oldestDebtDays: 0,
+        useCustomAccountLimits: profile.useCustomAccountLimits || false,
+        customDebtLimit: profile.customDebtLimit,
+        customDebtDays: profile.customDebtDays,
+        accountLimitNotes: profile.accountLimitNotes || '',
+      };
+    });
+
+    // 2. Accumulate order statistics only for these registered customers
     const sortedOrders = [...orders].sort((a, b) => {
       const tsA = a.timestamp || 0;
       const tsB = b.timestamp || 0;
       return tsA - tsB;
     });
 
-      const limit30Days = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const limit30Days = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
     sortedOrders.forEach(o => {
       if (o.status === 'Cancelado') return;
 
-      if (!customerMap[o.phone]) {
-        customerMap[o.phone] = {
-          dni: o.dni || '',
-          name: o.customer,
-          phone: o.phone,
-          address: o.address,
-          totalOrders: 0,
-          totalSpent: 0,
-          lastOrder: o.date,
-          hasCurrentAccount: false,
-          currentDebt: 0,
-          creditLimit: 50000,
-          spent30: 0,
-          tier: 'Regular',
-          oldestDebtDays: 0,
-        };
-      }
-
       const c = customerMap[o.phone];
+      if (!c) return; // Ignore orders from guest/unregistered clients
+
       c.totalOrders += 1;
       c.totalSpent += o.total;
       c.lastOrder = o.date;
-      c.address = o.address; // Keep the most recent address
-      c.name = o.customer;   // Keep the most recent name
+      if (o.address && o.address !== 'Compra en local') c.address = o.address; // Keep the latest address, avoiding in-store default
+      if (!c.dni && o.dni) c.dni = o.dni; // Keep order DNI if profile lacks one
 
       if ((o.timestamp || 0) >= limit30Days) {
         c.spent30 += o.total;
@@ -586,48 +598,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
 
-    // Inject profile data and ensure ALL profiles exist as customers (even without orders)
-    Object.values(customerProfiles).forEach((profileRaw) => {
-      const profile = profileRaw as CustomerProfile;
-      if (!customerMap[profile.phone]) {
-        const manualName = profile.nombre && profile.apellido
-          ? `${profile.nombre} ${profile.apellido}`
-          : (profile.nombre || 'Cliente Nuevo');
-        customerMap[profile.phone] = {
-          dni: profile.dni || '',
-          name: manualName,
-          phone: profile.phone,
-          address: profile.direccion || '',
-          totalOrders: 0,
-          totalSpent: 0,
-          lastOrder: '-',
-          hasCurrentAccount: profile.hasCurrentAccount || false,
-          currentDebt: 0,
-          creditLimit: profile.creditLimit || 50000,
-          birthday: profile.birthday,
-          spent30: 0,
-          tier: 'Regular',
-          oldestDebtDays: 0,
-          useCustomAccountLimits: profile.useCustomAccountLimits,
-          customDebtLimit: profile.customDebtLimit,
-          customDebtDays: profile.customDebtDays,
-          accountLimitNotes: profile.accountLimitNotes,
-        };
-      } else {
-        const c = customerMap[profile.phone];
-        c.hasCurrentAccount = profile.hasCurrentAccount || false;
-        c.creditLimit = profile.creditLimit || 50000;
-        c.birthday = profile.birthday;
-        c.useCustomAccountLimits = profile.useCustomAccountLimits;
-        c.customDebtLimit = profile.customDebtLimit;
-        c.customDebtDays = profile.customDebtDays;
-        c.accountLimitNotes = profile.accountLimitNotes;
-        if (profile.dni) c.dni = profile.dni;
-        if (profile.nombre) c.name = `${profile.nombre}${profile.apellido ? ' ' + profile.apellido : ''}`;
-        if (profile.direccion) c.address = profile.direccion;
-      }
-    });
-
+    // 3. Assign tier levels
     Object.values(customerMap).forEach(c => {
       if (c.spent30 >= 200000) c.tier = 'Gold';
       else if (c.spent30 >= 100000) c.tier = 'Silver';
@@ -711,8 +682,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const settleCurrentAccount = (phone: string, method: string, amount?: number) => {
+    let movementToRecord: any = null;
+    let whatsappData: any = null;
+    let ordersToUpdate: {id: string, updates: any}[] = [];
+
     setOrders(prev => {
-      // 1. Filter out any existing negative "PAGO-" orders to clean up the bug
       const filteredPrev = prev.filter(o => !o.id.startsWith('PAGO-'));
 
       const unpaidOrders = filteredPrev
@@ -723,7 +697,6 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const totalDebt = unpaidOrders.reduce((s, o) => s + (o.total - (o.paidAmount || 0)), 0);
       const paymentAmount = amount !== undefined ? amount : totalDebt;
-
       let remainingToSettle = paymentAmount;
 
       const updatedOrders = filteredPrev.map(o => {
@@ -735,13 +708,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (remainingToSettle >= orderDebt) {
             remainingToSettle -= orderDebt;
             const updated = { ...o, paymentStatus: 'Pagado' as const, paidAmount: o.total };
-            updateOrderInDb(o.id, { paymentStatus: 'Pagado' as const, paidAmount: o.total }).catch(console.error);
+            ordersToUpdate.push({ id: o.id, updates: { paymentStatus: 'Pagado', paidAmount: o.total } });
             return updated;
           } else {
             const newPaid = (o.paidAmount || 0) + remainingToSettle;
             remainingToSettle = 0;
             const updated = { ...o, paidAmount: newPaid };
-            updateOrderInDb(o.id, { paidAmount: newPaid }).catch(console.error);
+            ordersToUpdate.push({ id: o.id, updates: { paidAmount: newPaid } });
             return updated;
           }
         }
@@ -751,26 +724,36 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const methodMap: Record<string, string> = { 'cash': 'Efectivo', 'card': 'Tarjeta', 'transfer': 'Transferencia' };
       const translatedMethod = methodMap[method] || method;
 
-      // 2. Record the payment in Cash Movements for today's physical box
-      addCashMovement({
+      // Guard values to execute side effects outside
+      movementToRecord = {
         type: 'Ingreso',
         description: `Pago Cta. Corriente (${translatedMethod}) - ${unpaidOrders[0].customer}`,
-        cashier: 'Admin',
+        cashier: useAuthStore.getState().employeeProfile?.name || 'Admin',
         amount: paymentAmount
-      });
+      };
 
-      // Fase 3: Integración con Cuenta Corriente cuando se registra un pago
       const customerName = unpaidOrders[0].customer;
       const remainingDebt = Math.max(0, totalDebt - paymentAmount);
-      whatsappMessageService.createCurrentAccountPaymentMessage(
-        phone,
-        customerName,
-        paymentAmount,
-        remainingDebt
-      );
+      whatsappData = { phone, customerName, paymentAmount, remainingDebt };
 
       return updatedOrders;
     });
+
+    // Execute side effects outside of setOrders
+    if (ordersToUpdate.length > 0) {
+      ordersToUpdate.forEach(u => updateOrderInDb(u.id, u.updates).catch(console.error));
+    }
+    if (movementToRecord) {
+      addCashMovement(movementToRecord);
+    }
+    if (whatsappData) {
+      whatsappMessageService.createCurrentAccountPaymentMessage(
+        whatsappData.phone,
+        whatsappData.customerName,
+        whatsappData.paymentAmount,
+        whatsappData.remainingDebt
+      );
+    }
   };
 
   // ─── Manual Customer CRUD ─────────────────────────────────
@@ -822,7 +805,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     // 1. Fetch initial data from Supabase
     const loadAllData = async () => {
-      const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags] = await Promise.all([
+    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags, _expenses, _autoCashClose] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
         fetchCashCloses(),
@@ -835,7 +818,9 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('billing_customers', [] as BillingCustomer[]),
         fetchSetting('last_pos_close_timestamp', 0),
         fetchCategories(),
-        fetchSetting<string[]>('admin_tags', initialTags)
+        fetchSetting<string[]>('admin_tags', initialTags),
+        fetchExpenses(),
+        fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' })
       ]);
 
       setOrders(_orders);
@@ -850,6 +835,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setBillingCustomers(_billing);
       setLastPOSCloseTimestamp(_lastCloseTs);
       setAdminTags(_tags);
+      setExpenses(_expenses);
+      setAutoCashCloseConfig(_autoCashClose);
 
       // Seed categories if empty
       let finalCategories = _categories;
@@ -923,6 +910,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('billing_customers', [] as BillingCustomer[]).then(setBillingCustomers);
         fetchSetting('last_pos_close_timestamp', 0).then(setLastPOSCloseTimestamp);
         fetchSetting<string[]>('admin_tags', initialTags).then(setAdminTags);
+        fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }).then(setAutoCashCloseConfig);
       })
       .subscribe();
 
@@ -940,6 +928,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
       .subscribe();
 
+    const expensesSub = supabase.channel('expenses_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
+        fetchExpenses().then(setExpenses);
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(statusSub);
       supabase.removeChannel(redemptionsSub);
@@ -950,6 +944,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       supabase.removeChannel(settingsSub);
       supabase.removeChannel(productsSub);
       supabase.removeChannel(categoriesSub);
+      supabase.removeChannel(expensesSub);
     };
   }, []);
 
@@ -981,6 +976,49 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [privacyMode, setPrivacyMode] = useState<boolean>(false);
 
+  // ─── Expenses ─────────────────────────────────────────────
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  const addExpense = (expenseData: Omit<Expense, 'id' | 'created_at' | 'updated_at' | 'payment_status' | 'cancellation_date' | 'cancellation_method' | 'last_activity_at'>) => {
+    const now = new Date().toISOString();
+    const isCC = expenseData.payment_method === 'cuenta_corriente';
+    const newExpense: Expense = {
+      ...expenseData,
+      id: `EXP-${Date.now()}`,
+      created_at: now,
+      updated_at: now,
+      last_activity_at: now,
+      payment_status: isCC ? 'pending' : 'paid',
+      cancellation_date: null,
+      cancellation_method: null,
+    };
+    setExpenses(prev => [newExpense, ...prev]);
+    insertExpense(newExpense).catch(console.error);
+  };
+
+  const updateExpense = (id: string, updates: Partial<Expense>) => {
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...updates, updated_at: new Date().toISOString() } : e));
+    updateExpenseInDb(id, updates).catch(console.error);
+  };
+
+  const cancelExpense = (id: string) => {
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, status: 'cancelled', updated_at: new Date().toISOString() } : e));
+    cancelExpenseInDb(id).catch(console.error);
+  };
+
+  const payExpense = (id: string, method: 'cash' | 'card' | 'transfer') => {
+    const now = new Date().toISOString();
+    const updates = {
+      payment_status: 'paid' as const,
+      cancellation_date: now,
+      cancellation_method: method,
+      last_activity_at: now,
+      updated_at: now
+    };
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+    updateExpenseInDb(id, updates).catch(console.error);
+  };
+
   // ─── Ticket Config ────────────────────────────────────────
   const defaultTicketConfig: TicketConfig = {
     blankLinesTop: 0,
@@ -1006,15 +1044,53 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cashRegister, setCashRegister] = useState<CashRegister>({ isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' });
   const isCashRegisterOpen = cashRegister.isOpen;
   const openCashRegister = (amount: number, user: string = 'Admin') => {
+    if (cashRegister.isOpen) {
+      console.warn('openCashRegister: Ya existe una caja abierta. No se puede abrir una nueva.');
+      return;
+    }
     const reg: CashRegister = { isOpen: true, initialAmount: amount, openedBy: user, openedAt: new Date().toISOString() };
     setCashRegister(reg);
     saveSetting('cash_register', reg).catch(console.error);
   };
   const closeCashRegister = () => {
+    if (!cashRegister.isOpen) {
+      console.warn('closeCashRegister: La caja ya está cerrada.');
+      return;
+    }
     const reg: CashRegister = { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' };
     setCashRegister(reg);
     saveSetting('cash_register', reg).catch(console.error);
   };
+
+  // ─── Auto Cash Close Config ──────────────────────────────
+  const defaultAutoCashCloseConfig: AutoCashCloseConfig = { enabled: false, time: '22:00' };
+  const [autoCashCloseConfig, setAutoCashCloseConfig] = useState<AutoCashCloseConfig>(defaultAutoCashCloseConfig);
+  const updateAutoCashCloseConfig = (config: AutoCashCloseConfig) => {
+    setAutoCashCloseConfig(config);
+    saveSetting('auto_cash_close_config', config).catch(console.error);
+  };
+
+  // ─── Auto Cash Close Timer ────────────────────────────────
+  // Track last auto-close execution minute to avoid double-firing
+  const lastAutoCloseMinuteRef = React.useRef<string>('');
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      if (!autoCashCloseConfig.enabled) return;
+      if (!cashRegister.isOpen) return;
+
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const minuteKey = `${now.toDateString()}-${currentTime}`;
+
+      if (currentTime === autoCashCloseConfig.time && lastAutoCloseMinuteRef.current !== minuteKey) {
+        lastAutoCloseMinuteRef.current = minuteKey;
+        console.log(`⏰ Cierre automático de caja activado a las ${currentTime}`);
+        performCashClose([]);
+      }
+    }, 60000); // check every minute
+
+    return () => clearInterval(intervalId);
+  }, [autoCashCloseConfig, cashRegister.isOpen]);
 
   // ─── Invoices ─────────────────────────────────────────────
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -1642,12 +1718,16 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Date(str).getTime();
   };
 
-  const performCashClose = (period: 'diario' | 'semanal' | 'mensual', withdrawals: CashWithdrawal[] = []): CashClose => {
+  const performCashClose = (withdrawals: CashWithdrawal[] = []): CashClose | null => {
+    // Guard: do not close if register is already closed
+    if (!cashRegister.isOpen) {
+      console.warn('performCashClose: La caja ya se encuentra cerrada. No se generará un cierre duplicado.');
+      return null;
+    }
+
     const now = new Date();
     const fromDate = new Date();
-    if (period === 'diario') { fromDate.setHours(0, 0, 0, 0); }
-    else if (period === 'semanal') { fromDate.setDate(now.getDate() - 7); fromDate.setHours(0, 0, 0, 0); }
-    else { fromDate.setDate(1); fromDate.setHours(0, 0, 0, 0); }
+    fromDate.setHours(0, 0, 0, 0);
 
     const from = fromDate.getTime();
     const to = now.getTime();
@@ -1662,11 +1742,21 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return ts >= lastPOSCloseTimestamp && ts <= to && o.status !== 'Cancelado';
     });
 
+    const totalSales = periodOrders.reduce((s, o) => s + o.total, 0);
     const totalWithdrawals = withdrawals.reduce((s, w) => s + w.amount, 0);
+    const totalMovements = periodMovements.length;
+
+    // Guard: If box closed in 0 (no sales, no movements, no withdrawals), do not save it to list/db.
+    if (totalSales === 0 && totalMovements === 0 && totalWithdrawals === 0) {
+      console.log('performCashClose: Caja cerrada en 0 (sin ventas, movimientos ni retiros). No se agrega al historial.');
+      closeCashRegister();
+      return null;
+    }
 
     const cashPayments = periodOrders.filter(o => o.paymentMethod === 'cash').reduce((s, o) => s + o.total, 0);
     const cardPayments = periodOrders.filter(o => o.paymentMethod === 'card').reduce((s, o) => s + o.total, 0);
     const transferPayments = periodOrders.filter(o => o.paymentMethod === 'transfer').reduce((s, o) => s + o.total, 0);
+    const cuentaCorrientePayments = periodOrders.filter(o => o.paymentMethod === 'cuenta_corriente').reduce((s, o) => s + o.total, 0);
 
     // Calcular efectivo esperado al cierre (se guarda para el arqueo de apertura del día siguiente)
     // Filtramos para que manualCashIncomes no incluya "Venta Local", ya que eso ya está en cashPayments
@@ -1685,12 +1775,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const close: CashClose = {
       id: 'CC_' + Date.now(),
       date: now.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-      period,
-      totalSales: periodOrders.reduce((s, o) => s + o.total, 0),
+      period: 'diario',
+      totalSales,
       totalOrders: periodOrders.length,
       cashPayments,
       cardPayments,
       transferPayments,
+      cuentaCorrientePayments,
       closedAt: now.toISOString(),
       withdrawals,
       totalWithdrawals,
@@ -1749,6 +1840,21 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cashier: w.user,
       amount: w.amount
     });
+
+    // Auto-record as an expense under Retiro del Dueño
+    addExpense({
+      branch_id: 'main',
+      type: 'retiro',
+      supplier_name: undefined,
+      amount: w.amount,
+      payment_method: 'cash',
+      description: w.reason,
+      observations: 'Registrado automáticamente desde retiro de caja',
+      created_by: w.user,
+      expense_date: new Date().toISOString().split('T')[0],
+      status: 'active'
+    });
+
     return withdrawal;
   };
 
@@ -1947,6 +2053,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       activeOrdersCount, lowStockCount, totalCustomers,
       currentAccountConfig, updateCurrentAccountConfig,
       storeStatus, updateStoreStatus,
+      autoCashCloseConfig, updateAutoCashCloseConfig,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
       cashCloses, performCashClose, updateCashCloseOpeningControl,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,
@@ -1955,6 +2062,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       invoices, addInvoice, updateInvoice,
       billingCustomers, addBillingCustomer, updateBillingCustomer, deleteBillingCustomer,
       getTopSellingProducts, getRevenueByCategory, getRevenueByDay,
+      expenses, addExpense, updateExpense, cancelExpense, payExpense,
       privacyMode, togglePrivacyMode: () => setPrivacyMode(p => !p),
       formatCurrency: (val: number, isCurrency = true, forceShow = false) => {
         if (val === undefined || val === null) return '0';

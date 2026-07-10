@@ -66,7 +66,7 @@ export const Inventory: React.FC = () => {
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
 
   // Form States
-  const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '' });
+  const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight' });
   const [bulkPercent, setBulkPercent] = useState('');
   const [editItem, setEditItem] = useState<{ id: string, value: string } | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -209,11 +209,12 @@ export const Inventory: React.FC = () => {
           originalPrice: '',
           stock: '0',
           minStock: '15',
-          barcode: code
+          barcode: code,
+          saleType: 'unit'
         });
       } else {
         console.log("No se encontraron datos externos.");
-        setProductForm(prev => ({ ...prev, id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: code }));
+        setProductForm(prev => ({ ...prev, id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: code, saleType: 'unit' }));
       }
       setShowProductModal({ show: true, mode: 'new' });
     }
@@ -307,7 +308,8 @@ export const Inventory: React.FC = () => {
         badge: product.badge || '', originalPrice: product.originalPrice?.toString() || '',
         stock: (product.stock ?? 0).toString(),
         minStock: (product.minStock ?? 15).toString(),
-        barcode: product.barcode || ''
+        barcode: product.barcode || '',
+        saleType: product.saleType || 'unit'
       });
     } else {
       setProductForm({
@@ -322,7 +324,8 @@ export const Inventory: React.FC = () => {
         originalPrice: product?.originalPrice?.toString() || '',
         stock: (product?.stock ?? 0).toString(),
         minStock: (product?.minStock ?? 15).toString(),
-        barcode: prefilledBarcode || product?.barcode || ''
+        barcode: prefilledBarcode || product?.barcode || '',
+        saleType: product?.saleType || 'unit'
       });
     }
     setBarcodeError(null);
@@ -347,7 +350,8 @@ export const Inventory: React.FC = () => {
       badge: productForm.badge, originalPrice: productForm.originalPrice ? parseInt(productForm.originalPrice) : undefined,
       minStock: productForm.minStock !== '' ? parseInt(productForm.minStock) : 15,
       barcode: productForm.barcode || undefined,
-      stock: stockVal
+      stock: stockVal,
+      saleType: productForm.saleType
     };
     
     if (showProductModal.mode === 'edit') {
@@ -542,6 +546,28 @@ export const Inventory: React.FC = () => {
             <span className="material-symbols-outlined text-[18px]">download</span>
             Exportar
           </button>
+          <button 
+            onClick={() => setShowManageModal({ show: true, type: 'category' })} 
+            className="w-10 h-10 bg-white text-on-surface-variant rounded-full flex items-center justify-center border border-outline-variant/20 hover:bg-surface-container-low transition-all shadow-sm shrink-0"
+            title="Configurar Categorías"
+          >
+            <span className="material-symbols-outlined text-[20px]">settings</span>
+          </button>
+          <button 
+            onClick={() => setShowManageModal({ show: true, type: 'tag' })} 
+            className="w-10 h-10 bg-white text-on-surface-variant rounded-full flex items-center justify-center border border-outline-variant/20 hover:bg-surface-container-low transition-all shadow-sm shrink-0"
+            title="Configurar Etiquetas"
+          >
+            <span className="material-symbols-outlined text-[16px]">label</span>
+          </button>
+          <PermissionGuard permission="products.create">
+            <button 
+              onClick={() => openProductModal('new')} 
+              className="bg-primary text-white font-bold px-6 py-2.5 rounded-full hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 text-sm whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span> Nuevo
+            </button>
+          </PermissionGuard>
         </div>,
         portalTarget
       )}
@@ -615,17 +641,13 @@ export const Inventory: React.FC = () => {
         </div>
 
         <div className="flex gap-2 w-full lg:w-auto h-15">
-          <button onClick={() => setShowManageModal({ show: true, type: 'category' })} className="h-full w-12 bg-white text-on-surface-variant rounded-2xl flex items-center justify-center border border-outline-variant/20 hover:bg-surface-container-low transition-all shadow-sm shrink-0">
-            <span className="material-symbols-outlined text-[22px]">settings</span>
+          <button
+            onClick={() => { clearError(); setCameraScannerOpen(true); }}
+            className="h-full flex-1 lg:flex-none bg-[#9c1c1c] hover:bg-[#801414] text-white font-bold px-8 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 text-sm whitespace-nowrap cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[20px]">photo_camera</span>
+            Escanear
           </button>
-          <button onClick={() => setShowManageModal({ show: true, type: 'tag' })} className="h-full flex items-center gap-2 px-3 rounded-2xl bg-white text-on-surface-variant font-bold text-xs border border-outline-variant/20 hover:bg-surface-container-low shadow-sm whitespace-nowrap">
-            <span className="material-symbols-outlined text-[15px]">label</span>
-          </button>
-          <PermissionGuard permission="products.create">
-            <button onClick={() => openProductModal('new')} className="h-full flex-1 lg:flex-none bg-primary text-white font-bold px-8 rounded-2xl hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 text-sm whitespace-nowrap">
-              <span className="material-symbols-outlined text-[20px]">add</span> Nuevo
-            </button>
-          </PermissionGuard>
         </div>
       </div>
 
@@ -682,21 +704,6 @@ export const Inventory: React.FC = () => {
                 ¡Escaneado!
               </span>
             )}
-            
-            {/* Botón de Escáner por Cámara */}
-            <button
-              onClick={() => { clearError(); setCameraScannerOpen(true); }}
-              className="bg-primary hover:bg-primary-hover text-white font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 active:scale-95 transition-all text-xs shadow-md shadow-primary/25 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[16px]">photo_camera</span>
-              Escanear
-            </button>
-
-            {/* Badge de Lector Físico / Teclado */}
-            <span className="hidden md:flex text-[9px] font-bold text-on-surface-variant uppercase tracking-widest bg-surface-container-low px-4 py-2.5 rounded-xl items-center gap-2">
-              <span className="material-symbols-outlined text-[12px]">barcode_scanner</span>
-              Scanner USB
-            </span>
           </div>
         </div>
         <div className="w-full overflow-hidden hidden md:block">
@@ -908,13 +915,17 @@ export const Inventory: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-4">
                   <div>
-                    <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Precio *</label>
-                    <input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 outline-none font-bold text-primary" />
+                    <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Tipo de venta</label>
+                    <select value={productForm.saleType} onChange={e => setProductForm({ ...productForm, saleType: e.target.value as 'unit' | 'weight' })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 font-bold">
+                      <option value="unit">Por unidad</option>
+                      <option value="weight">Por kilogramo (peso)</option>
+                    </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Formato</label>
-                    <input type="text" value={productForm.format} onChange={e => setProductForm({ ...productForm, format: e.target.value })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 outline-none" />
+                    <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">{productForm.saleType === 'weight' ? 'Precio por kg *' : 'Precio *'}</label>
+                    <input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 outline-none font-bold text-primary" />
                   </div>
+                  
                 </div>
                 <div className="space-y-4">
                   <div>

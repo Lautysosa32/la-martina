@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAdmin, AdminOrder } from '../../context/AdminContext';
-import { AdminPeriodSelector, PERIOD_DAYS } from '../../components/AdminPeriodSelector';
+import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
 
@@ -15,7 +15,7 @@ export const AdminOrders: React.FC = () => {
   const { hasPermission, employeeProfile } = useAuthStore();
   const canViewRevenue = employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || hasPermission('orders.view_revenue');
 
-  const [period, setPeriod] = useState('Últimos 7 días');
+  const [period, setPeriod] = useState('Últimos 30 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
 
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
@@ -23,10 +23,10 @@ export const AdminOrders: React.FC = () => {
     setPortalTarget(document.getElementById('admin-header-portal'));
   }, []);
 
-  // Enforce 7 days period for common employees
+  // Enforce Últimos 30 días period for common employees
   React.useEffect(() => {
-    if (employeeProfile?.role === 'employee' && period !== 'Últimos 7 días') {
-      setPeriod('Últimos 7 días');
+    if (employeeProfile?.role === 'employee' && period !== 'Últimos 30 días') {
+      setPeriod('Últimos 30 días');
     }
   }, [employeeProfile, period]);
 
@@ -34,24 +34,13 @@ export const AdminOrders: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   const analyticsParams = useMemo(() => {
-    if (period === 'Personalizado' && customRange.from && customRange.to) {
-      return { from: new Date(customRange.from).getTime(), to: new Date(customRange.to).getTime() + 86400000 };
-    }
-    return PERIOD_DAYS[period] || 7;
+    return getPeriodRange(period, customRange);
   }, [period, customRange]);
 
   const filteredByPeriod = useMemo(() => {
-    let from: number;
-    let to: number = Date.now();
-    if (typeof analyticsParams === 'number') {
-      from = to - analyticsParams * 24 * 60 * 60 * 1000;
-    } else {
-      from = analyticsParams.from;
-      to = analyticsParams.to;
-    }
     return orders.filter(o => {
       const ts = getOrderTimestamp(o);
-      return ts >= from && ts <= to && o.source !== 'pos';
+      return ts >= analyticsParams.from && ts <= analyticsParams.to && o.source !== 'pos';
     });
   }, [orders, analyticsParams]);
 
@@ -227,7 +216,9 @@ export const AdminOrders: React.FC = () => {
                         <td className="px-6 py-5">
                           <div className="flex items-center gap-2.5">
                             <div className={`w-2 h-2 rounded-full shadow-[0_0_8px] ${order.paymentStatus === 'Pagado' ? 'bg-green-500 shadow-green-200' : 'bg-orange-400 shadow-orange-200'}`}></div>
-                            <span className="font-bold text-xs text-on-surface-variant">{order.paymentStatus}</span>
+                            <span className="font-bold text-xs text-on-surface-variant">
+                              {order.paymentMethod === 'cash' ? 'Efectivo' : order.paymentMethod === 'card' ? 'Tarjeta' : order.paymentMethod === 'cuenta_corriente' ? 'Cta. Corriente' : 'Transferencia'}
+                            </span>
                           </div>
                         </td>
                         <td className="px-6 py-5">
