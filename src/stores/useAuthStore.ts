@@ -266,18 +266,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     });
 
     if (error && error.message.toLowerCase().includes('already registered')) {
-      console.warn("⚠️ Usuario ya registrado en Auth. Intentando Iniciar Sesión...");
-      const loginRes = await supabase.auth.signInWithPassword({
-        email: syntheticEmail,
-        password
-      });
-      if (loginRes.error) {
-        console.error("❌ Error al iniciar sesión tras conflicto de registro:", loginRes.error.message);
-        set({ loading: false });
-        return { data: null, error: loginRes.error };
-      }
-      data = loginRes.data;
-      error = null;
+      console.warn("⚠️ Usuario ya registrado en Auth.");
+      set({ loading: false });
+      return { 
+        data: null, 
+        error: new Error('Este número de celular ya tiene una cuenta registrada. Por favor, selecciona "Iniciar Sesión".') 
+      };
     } else if (error) {
       console.error("❌ Error al registrar en Supabase Auth:", error.message, error.status);
       set({ loading: false });

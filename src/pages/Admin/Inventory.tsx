@@ -435,14 +435,12 @@ export const Inventory: React.FC = () => {
         description: getVal(['descripcion', 'description', 'detalle']) || ''
       };
 
-      // Validar campos obligatorios
-      if (item.name === '' || item.price === '' || item.category === '') {
-        incomplete.push({ ...item, row: index + 2, reason: 'Campos obligatorios faltantes (Nombre, Precio o Categoría)' });
-        return;
-      }
+      // Asignar valores por defecto a campos vacíos
+      if (item.name === '') item.name = 'Sin nombre';
+      if (item.category === '') item.category = adminCategories[0]?.title || 'General';
 
       // Validar tipos de datos
-      const priceNum = parseFloat(item.price.toString().replace(',', '.'));
+      const priceNum = item.price !== '' ? parseFloat(item.price.toString().replace(',', '.')) : 0;
       const stockNum = parseInt(item.stock.toString()) || 0;
       if (isNaN(priceNum) || priceNum < 0) {
         errors.push({ ...item, row: index + 2, reason: 'Precio inválido' });
