@@ -48,10 +48,29 @@ const toFrontendProduct = (product: SupabaseProduct): Product => {
 
 export const productsService = {
   async getProducts(): Promise<Product[]> {
-    const response = await api.get<SupabaseProduct[]>('/products?select=*&order=created_at.desc', {
-      headers: { 'Range-Unit': 'items', 'Range': '0-99999' }
-    });
-    return response.data.map(toFrontendProduct);
+    // Supabase PostgREST limita a 1000 filas por request.
+    // Paginamos para traer TODOS los productos.
+    const PAGE_SIZE = 1000;
+    let allProducts: SupabaseProduct[] = [];
+    let offset = 0;
+    let keepFetching = true;
+
+    while (keepFetching) {
+      const response = await api.get<SupabaseProduct[]>(
+        `/products?select=*&order=created_at.desc&limit=${PAGE_SIZE}&offset=${offset}`
+      );
+      const batch = response.data;
+      allProducts = [...allProducts, ...batch];
+      
+      if (batch.length < PAGE_SIZE) {
+        keepFetching = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
+    }
+
+    console.log(`📦 Total productos cargados desde Supabase: ${allProducts.length}`);
+    return allProducts.map(toFrontendProduct);
   },
 
   async createProduct(product: CreateProductInput): Promise<Product> {
