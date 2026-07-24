@@ -479,7 +479,9 @@ export const POS: React.FC = () => {
       const availableStock = getStock(productId);
       const existingItem = cart.find(item => item.productCode === productCode);
       const existingQty = existingItem ? existingItem.quantity : 0;
-      if (existingQty + searchQty > availableStock) {
+      // Si no hay stock, se permite agregar igual (sin descontar) pero con aviso visual
+      // El descuento de stock en addAdminOrder solo aplica si hay stock > 0
+      if (availableStock > 0 && existingQty + searchQty > availableStock) {
         alert(`Stock insuficiente. Solo quedan ${availableStock} unidades disponibles de este producto.`);
         return;
       }
@@ -514,7 +516,8 @@ export const POS: React.FC = () => {
     const item = cart[index];
     if (item.productId !== 'GENERIC' && item.productId !== 'PRODUCTO_COMUN' && !item.productId.startsWith('GENERICO-')) {
       const availableStock = getStock(item.productId);
-      if (newQty > availableStock) {
+      // Solo bloquear si hay stock registrado y se supera — si stock es 0, permitir igual
+      if (availableStock > 0 && newQty > availableStock) {
         alert(`Stock insuficiente. Solo quedan ${availableStock} unidades disponibles de este producto.`);
         return;
       }
@@ -825,6 +828,7 @@ export const POS: React.FC = () => {
       if (e.key === 'Enter' || e.key === 'Escape') {
         e.preventDefault();
         setShowSuccessModal(null);
+        setTimeout(() => inputRef.current?.focus(), 100);
       }
     };
     window.addEventListener('keydown', handleSuccessKeyDown);
@@ -1003,22 +1007,38 @@ export const POS: React.FC = () => {
                       </div>
                       {showSuggestions && filteredProducts.length > 0 && (
                         <div className="absolute top-full left-0 right-0 z-[300] mt-2 bg-white rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden">
-                          {filteredProducts.map((p, idx) => (
+                          {filteredProducts.map((p, idx) => {
+                              const stockVal = getStock(p.id);
+                              const isOutOfStock = stockVal === 0;
+                              return (
                             <button 
                               key={p.id} 
                               onClick={() => { handleAddItem(p); setFocusedSuggestionIndex(-1); }} 
-                              className={`w-full p-4 flex items-center gap-4 hover:bg-surface-container-low transition-colors text-left border-b border-outline-variant/5 ${idx === focusedSuggestionIndex ? 'bg-surface-container-low border-l-4 border-primary' : ''}`}
+                              className={`w-full p-4 flex items-center gap-4 transition-colors text-left border-b border-outline-variant/5 ${
+                                isOutOfStock
+                                  ? 'bg-red-50 hover:bg-red-100 border-l-4 border-red-400'
+                                  : idx === focusedSuggestionIndex
+                                    ? 'bg-surface-container-low border-l-4 border-primary'
+                                    : 'hover:bg-surface-container-low'
+                              }`}
                             >
-                              <div className="w-10 h-10 bg-surface-container-lowest rounded-lg overflow-hidden border border-outline-variant/10">
-                                <img src={p.image} alt="" className="w-full h-full object-contain" />
+                              <div className={`w-10 h-10 rounded-lg overflow-hidden border ${isOutOfStock ? 'bg-red-100 border-red-200' : 'bg-surface-container-lowest border-outline-variant/10'}`}>
+                                <img src={p.image} alt="" className={`w-full h-full object-contain ${isOutOfStock ? 'opacity-50' : ''}`} />
                               </div>
                               <div className="flex-1">
-                                <p className="font-bold text-sm">{p.name}</p>
-                                <p className="text-[10px] text-on-surface-variant font-medium">Cód: {p.barcode || p.id}</p>
+                                <p className={`font-bold text-sm ${isOutOfStock ? 'text-red-700' : ''}`}>{p.name}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-[10px] text-on-surface-variant font-medium">Cód: {p.barcode || p.id}</p>
+                                  {isOutOfStock && (
+                                    <span className="text-[9px] font-black text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Sin Stock</span>
+                                  )}
+                                </div>
                               </div>
-                              <p className="font-black text-primary">${formatCurrency(p.price, true, true)}</p>
+                              <p className={`font-black ${isOutOfStock ? 'text-red-500' : 'text-primary'}`}>${formatCurrency(p.price, true, true)}</p>
                             </button>
-                          ))}
+                              );
+                            })}
+
                         </div>
                       )}
                     </div>
@@ -1030,8 +1050,11 @@ export const POS: React.FC = () => {
                     <table className="w-full text-left table-fixed border-separate border-spacing-0">
                       <thead className="bg-[#fcfcfc] sticky top-0 z-20"><tr className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider"><th className="px-6 py-4 w-20 text-center border-b border-outline-variant/20">#</th><th className="px-6 py-4 border-b border-outline-variant/20">Descripción</th><th className="px-6 py-4 w-32 text-center border-b border-outline-variant/20">Cant.</th><th className="px-6 py-4 w-40 text-right border-b border-outline-variant/20">Precio Unit.</th><th className="px-6 py-4 w-40 text-right border-b border-outline-variant/20">Total</th></tr></thead>
                       <tbody className="divide-y divide-outline-variant/5">
-                        {cartWithDiscounts.map((item, idx) => (
-                          <tr key={item.id} onClick={() => setSelectedIndex(idx)} className="group transition-colors relative">
+                        {cartWithDiscounts.map((item, idx) => {
+                          const itemStock = item.productId !== 'GENERIC' && item.productId !== 'PRODUCTO_COMUN' && !item.productId.startsWith('GENERICO-') ? getStock(item.productId) : null;
+                          const isItemOutOfStock = itemStock !== null && itemStock === 0;
+                          return (
+                          <tr key={item.id} onClick={() => setSelectedIndex(idx)} className={`group transition-colors relative ${isItemOutOfStock ? 'bg-red-50' : ''}`}>
                             <td className="px-6 py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-[70px]"><button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 flex items-center justify-center bg-red-100 text-error opacity-0 group-hover:opacity-100 transition-all z-10"><span className="material-symbols-outlined text-[20px]">delete</span></button><div className="flex items-center justify-center h-full">{selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}</div></td>
                             <td className="px-6 py-5 font-black text-sm text-on-background uppercase truncate align-middle h-[70px]">
                               <div className="flex flex-col justify-center h-full">
@@ -1110,7 +1133,8 @@ export const POS: React.FC = () => {
                             </td>
                             <td className="px-6 py-5 text-right font-black text-[#9c1c1c] align-middle h-[70px]"><div className="flex items-center justify-end h-full">$ {formatCurrency(item.finalPrice * item.quantity, true, true)}</div></td>
                           </tr>
-                        ))}
+                          );
+                        })}
                         {cart.length === 0 && (<tr><td colSpan={5} className="px-6 py-16 text-center text-on-surface-variant">Escanea un producto para comenzar.</td></tr>)}
                       </tbody>
                     </table>
@@ -1222,11 +1246,7 @@ export const POS: React.FC = () => {
                 </div>
               </div>
 
-              <div className="absolute bottom-0 left-0 right-0 p-8 bg-[#f8f9fa] border-t border-outline-variant/10 z-10">
-                <button onClick={() => setShowManualModal(true)} className="w-full bg-[#9c1c1c] text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-[#7a1515] transition-all shadow-lg">
-                  <span className="material-symbols-outlined text-[18px]">outbox</span> Pago a Proveedor
-                </button>
-              </div>
+
             </div>
 
             {showPaymentModal && (
@@ -1319,7 +1339,7 @@ export const POS: React.FC = () => {
                       Notificar por WhatsApp
                     </button>
                     <button
-                      onClick={() => setShowSuccessModal(null)}
+                      onClick={() => { setShowSuccessModal(null); setTimeout(() => inputRef.current?.focus(), 100); }}
                       className="w-full py-3 font-black text-sm text-[#5d5454] hover:bg-black/5 rounded-[1.25rem] transition-colors mt-2"
                     >
                       Cerrar

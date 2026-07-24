@@ -407,14 +407,21 @@ export const Inventory: React.FC = () => {
     const seenBarcodes = new Set();
     const dbBarcodes = new Set(adminProducts.map(p => p.barcode).filter(Boolean));
 
+    // Debug: log column names from first row
+    if (rawData.length > 0) {
+      console.log('📋 Columnas detectadas en el archivo:', Object.keys(rawData[0]));
+    }
+
     rawData.forEach((row, index) => {
       // Normalizar las keys de la fila para búsqueda insensible a mayúsculas/acentos
       const normalizedRow: any = {};
       Object.keys(row).forEach(key => {
         const normalizedKey = key.toLowerCase()
           .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar acentos
+          .replace(/[^a-z0-9\s]/g, '') // quitar caracteres especiales
           .trim();
         normalizedRow[normalizedKey] = row[key];
+        console.log(`  Key original: "${key}" -> normalizada: "${normalizedKey}"`);
       });
 
       const getVal = (paths: string[]) => {
@@ -425,22 +432,22 @@ export const Inventory: React.FC = () => {
       };
 
       const item: any = {
-        barcode: getVal(['barcode', 'codigo de barras', 'codigo', 'ean', 'upc']).toString().replace(/\./g, '').trim(),
-        name: getVal(['productos', 'producto', 'nombre', 'name', 'articulo']).toString().trim(),
+        barcode: getVal(['barcode', 'codigo de barras', 'codigo', 'ean', 'upc', 'cod barra', 'cod barras']).toString().replace(/\./g, '').trim(),
+        name: getVal(['productos', 'producto', 'nombre', 'name', 'articulo', 'descripcion', 'description', 'detalle', 'item', 'product']).toString().trim(),
         brand: getVal(['marca', 'brand', 'laboratorio']).toString().trim(),
         category: getVal(['categoria', 'category', 'rubro', 'seccion']).toString().trim(),
-        price: getVal(['precio', 'price', 'costo', 'valor']),
+        price: getVal(['precio', 'price', 'costo', 'valor', 'precio unitario', 'precio unit']),
         stock: getVal(['stock', 'inventario', 'cantidad', 'existencia']) || 0,
         image: getVal(['image', 'foto', 'url', 'imagen']) || '',
-        description: getVal(['descripcion', 'description', 'detalle']) || ''
       };
+      console.log(`  Fila ${index + 2}: name="${item.name}" price="${item.price}" category="${item.category}"`);
 
       // Asignar valores por defecto a campos vacíos
       if (item.name === '') item.name = 'Sin nombre';
       if (item.category === '') item.category = adminCategories[0]?.title || 'General';
 
       // Validar tipos de datos
-      const priceNum = item.price !== '' ? parseFloat(item.price.toString().replace(',', '.')) : 0;
+      const priceNum = item.price !== '' ? parseFloat(item.price.toString().replace(/\$/g, '').replace(/\s/g, '').replace(',', '.')) : 0;
       const stockNum = parseInt(item.stock.toString()) || 0;
       if (isNaN(priceNum) || priceNum < 0) {
         errors.push({ ...item, row: index + 2, reason: 'Precio inválido' });
@@ -487,13 +494,14 @@ export const Inventory: React.FC = () => {
 
       return {
         name: item.name,
-        brand: item.brand,
+        brand: item.brand || '',
         categoryId: cat?.id || adminCategories[0]?.id || 'almacen',
         price: item.price,
-        image: item.image || 'https://images.unsplash.com/photo-1588964895597-cfccd6e2dbf9?q=80&w=200&auto=format&fit=crop',
+        image: item.image || '',
         format: '',
         barcode: item.barcode || undefined,
-        stock: item.stock
+        stock: item.stock,
+        branchId: 'main'
       };
     });
 

@@ -48,7 +48,9 @@ const toFrontendProduct = (product: SupabaseProduct): Product => {
 
 export const productsService = {
   async getProducts(): Promise<Product[]> {
-    const response = await api.get<SupabaseProduct[]>('/products?select=*');
+    const response = await api.get<SupabaseProduct[]>('/products?select=*&order=created_at.desc', {
+      headers: { 'Range-Unit': 'items', 'Range': '0-99999' }
+    });
     return response.data.map(toFrontendProduct);
   },
 

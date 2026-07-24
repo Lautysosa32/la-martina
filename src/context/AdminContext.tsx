@@ -1354,10 +1354,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const addAdminOrder = async (o: AdminOrder) => {
     setOrders(prev => [o, ...prev]);
-    // Don't deduct stock for generic/common products
+    // Don't deduct stock for generic/common products, nor for products already at 0
     o.items.forEach(i => {
       if (i.id !== 'PRODUCTO_COMUN' && !i.id.startsWith('GENERICO-')) {
-        updateStock(i.id, getStock(i.id) - i.quantity);
+        const currentStock = getStock(i.id);
+        if (currentStock > 0) {
+          updateStock(i.id, Math.max(0, currentStock - i.quantity));
+        }
       }
     });
 
