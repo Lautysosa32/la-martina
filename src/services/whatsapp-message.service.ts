@@ -45,6 +45,15 @@ export const cleanAndFormatPhone = (phone: string): string => {
   return cleaned;
 };
 
+/**
+ * Formatea un número a moneda argentina ($1.234,56)
+ */
+export const formatCurrency = (val?: number | null, hideDecimalsIfWhole = false, includeSymbol = false): string => {
+  if (val === undefined || val === null || isNaN(val)) return '$0,00';
+  const formatted = val.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `$${formatted}`;
+};
+
 export const whatsappMessageService = {
   /**
    * Crea e inserta un mensaje genérico en la cola de Supabase
@@ -84,7 +93,7 @@ export const whatsappMessageService = {
    * Encola un mensaje de cambio de estado de pedido (Fase 4), evitando duplicar
    * el mismo estado consecutivamente para el mismo pedido.
    */
-  async createOrderStatusMessage(order: { id: string; customer: string; phone: string; status: string }) {
+  async createOrderStatusMessage(order: { id: string; customer: string; phone: string; status: string; total?: number }) {
     if (!order.phone) return null;
 
     // Verificar si ya existe un mensaje idéntico (pedido + estado)
@@ -109,16 +118,20 @@ export const whatsappMessageService = {
     let emoji = '🛒';
 
     switch (order.status) {
-      case 'Preparación':
+      case 'Nuevo':
+        statusText = `por *${formatCurrency(order.total, true, true)}* se registró con éxito.`;
+        emoji = '👋';
+        break;
+      case 'Preparando':
         statusText = `está en preparación.`;
-        emoji = '👨‍🍳';
+        emoji = '📦';
         break;
       case 'En Camino':
-        statusText = `ya está en camino. 🚚`;
+        statusText = `ya está en camino.`;
         emoji = '🚚';
         break;
       case 'Entregado':
-        statusText = `fue entregado. ¡Gracias por comprar en La Martina!`;
+        statusText = `fue entregado. \n\n¡Gracias por comprar en La Martina!`;
         emoji = '✅';
         break;
       case 'Cancelado':
@@ -181,7 +194,7 @@ export const whatsappMessageService = {
     const formattedPayment = paymentAmount.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const formattedRemaining = remainingDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
 
-    const message = `Hola ${customerName} 👋\nRegistramos un pago en tu cuenta corriente.\n\nPago recibido: *$${formattedPayment}*\nDeuda restante: *$${formattedRemaining}*\n\nGracias.`;
+    const message = `Hola, ${customerName} 👋\nRegistramos un pago en tu cuenta corriente.\n\nPago recibido: *$${formattedPayment}*\nDeuda restante: *$${formattedRemaining}*\n\nGracias.`;
 
     return this.createWhatsAppMessage({
       phone: customerPhone,

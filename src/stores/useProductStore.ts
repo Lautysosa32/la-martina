@@ -51,9 +51,16 @@ export const useProductStore = create<ProductState>((set, get) => ({
   lowStockDashboardLoading: false,
 
   fetchProducts: async () => {
-    // Ya no descargamos todos los productos al inicio para optimizar la carga.
-    // Solo marcamos como cargado. La caja (POS) consultará a la DB al escanear.
-    set({ loading: false });
+    set({ loading: true, error: null });
+    try {
+      console.log('🔄 Fetching products from Supabase...');
+      const products = await productsService.getProducts();
+      set({ products, loading: false });
+      console.log('✅ Products fetched successfully:', products.length);
+    } catch (err: any) {
+      console.error('❌ Error fetching products:', err);
+      set({ error: getErrorMessage(err, 'Error al obtener productos'), loading: false });
+    }
   },
 
   fetchInventoryProducts: async (params) => {

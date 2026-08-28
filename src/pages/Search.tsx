@@ -14,9 +14,9 @@ export const Search: React.FC = () => {
   const { adminProducts, getStock } = useAdmin();
 
   const baseResults = adminProducts.filter(product => 
-    product.name.toLowerCase().includes(query.toLowerCase()) ||
-    product.brand.toLowerCase().includes(query.toLowerCase()) ||
-    product.categoryId.toLowerCase().includes(query.toLowerCase())
+    product.name?.toLowerCase().includes(query.toLowerCase()) ||
+    product.brand?.toLowerCase().includes(query.toLowerCase()) ||
+    product.categoryId?.toLowerCase().includes(query.toLowerCase())
   );
 
   const brands: string[] = Array.from(new Set(baseResults.map(p => p.brand || ''))).filter(b => b !== '') as string[];

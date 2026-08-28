@@ -8,6 +8,50 @@ import { MovementDetailModal } from '../../components/MovementDetailModal';
 import { WeightInputModal } from '../../components/WeightInputModal';
 import type { CashWithdrawal, CashMovement } from '../../context/AdminContext';
 import { shoppingSessionService } from '../../services/shopping-session.service';
+import { whatsappMessageService, cleanAndFormatPhone } from '../../services/whatsapp-message.service';
+
+export const generateTicketWhatsAppText = (ticket: TicketData, storeName = 'La Martina', footerMsg = '¡Gracias por su compra!'): string => {
+  const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  let text = `*${storeName} 🛒*\n`;
+  text += `*Ticket:* #${ticket.ticketNumber}`;
+  text += `  ${ticket.date}\n`;
+  if (ticket.customer && ticket.customer !== 'Cliente Local') {
+    text += `Cliente: ${ticket.customer}\n`;
+  }
+  text += `\n`;
+
+  ticket.items.forEach(item => {
+    text += `*${item.name}*\n`;
+    const qtyStr = item.saleType === 'weight'
+      ? `${parseFloat(item.quantity.toFixed(2))} kg`
+      : `${item.quantity}`;
+    const totalLine = fmt(item.price * item.quantity);
+    text += `${qtyStr} x $${fmt(item.price)}       *$${totalLine}*\n`;
+
+    if (item.offerLabel && item.lineDiscount && item.lineDiscount > 0) {
+      const discQtyStr = item.discountedQuantity && item.discountedQuantity < item.quantity
+        ? ` (${item.discountedQuantity} un.)`
+        : '';
+      text += `▸ ${item.offerLabel}${discQtyStr} (-$${fmt(item.lineDiscount)})\n`;
+    }
+    text += `\n`;
+  });
+
+  text += `Subtotal: *$${fmt(ticket.subtotal)}*\n`;
+
+  const itemDisc = ticket.items.reduce((acc, it) => acc + (it.lineDiscount || 0), 0);
+  const totalDisc = itemDisc + (ticket.globalDiscountAmount || 0);
+
+  if (totalDisc > 0) {
+    text += `Descuento: *-$${fmt(totalDisc)}*\n`;
+  }
+
+  text += `*TOTAL: $${fmt(ticket.total)}*\n`;
+
+
+  return text;
+};
 
 interface POSCartItem {
   id: string;
@@ -160,7 +204,7 @@ export const POS: React.FC = () => {
       updateTab({ shoppingSessionId: session.id });
 
       // Auto-associate customer if they are in registered customers
-      const matchedCustomer = customers.find(c => 
+      const matchedCustomer = customers.find(c =>
         (session.customerPhone && c.phone === session.customerPhone) ||
         (session.customerName && c.name.toLowerCase() === session.customerName.toLowerCase())
       );
@@ -180,7 +224,7 @@ export const POS: React.FC = () => {
       // Close modal and clean input
       setShowPrePurchaseModal(false);
       setPrePurchaseCodeInput('');
-      
+
       // Auto-open POS list modal so cashier sees the imported cart immediately
       setShowModal(true);
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -265,6 +309,14 @@ export const POS: React.FC = () => {
   const [showTicket, setShowTicket] = useState<TicketData | null>(null);
   const [lastSaleTicket, setLastSaleTicket] = useState<TicketData | null>(null);
 
+  // WhatsApp Ticket Modal state
+  const [showWhatsAppTicketModal, setShowWhatsAppTicketModal] = useState<{ ticket: TicketData; phone: string } | null>(null);
+  const [whatsappTicketPhone, setWhatsappTicketPhone] = useState('');
+  const [isSendingWhatsAppTicket, setIsSendingWhatsAppTicket] = useState(false);
+  const [whatsappTicketSuccess, setWhatsappTicketSuccess] = useState(false);
+  const [whatsappTicketError, setWhatsappTicketError] = useState('');
+  const whatsappPhoneInputRef = useRef<HTMLInputElement>(null);
+
   // Movement detail state
   const [selectedMovement, setSelectedMovement] = useState<CashMovement | null>(null);
 
@@ -290,12 +342,13 @@ export const POS: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     if (!searchCode.trim()) return [];
-    const search = searchCode.toLowerCase();
-    return adminProducts.filter(p =>
-      (p.barcode && p.barcode.includes(search)) ||
-      p.id.toLowerCase().includes(search) ||
-      p.name.toLowerCase().includes(search)
-    ).slice(0, 8);
+    const search = searchCode.trim().toLowerCase();
+    return adminProducts.filter(p => {
+      const barcodeStr = p.barcode ? String(p.barcode).toLowerCase() : '';
+      const idStr = p.id ? String(p.id).toLowerCase() : '';
+      const nameStr = p.name ? String(p.name).toLowerCase() : '';
+      return barcodeStr.includes(search) || idStr.includes(search) || nameStr.includes(search);
+    }).slice(0, 8);
   }, [searchCode, adminProducts]);
 
   // Stats
@@ -310,7 +363,7 @@ export const POS: React.FC = () => {
         const descLower = m.description.toLowerCase();
         const method = (descLower.includes('(card)') || descLower.includes('(tarjeta)')) ? 'card' :
           (descLower.includes('(transfer)') || descLower.includes('(transferencia)')) ? 'transfer' :
-          (descLower.includes('(cuenta_corriente)') || descLower.includes('(cta. corriente)')) ? 'cuenta_corriente' : 'cash';
+            (descLower.includes('(cuenta_corriente)') || descLower.includes('(cta. corriente)')) ? 'cuenta_corriente' : 'cash';
         if (isVenta || isPagoCC) {
           if (method === 'cash') cash += m.amount;
           else if (method === 'card') card += m.amount;
@@ -449,8 +502,14 @@ export const POS: React.FC = () => {
       image = productOrCode.image;
       saleType = productOrCode.saleType || 'unit';
     } else {
-      if (!productOrCode.trim()) return;
-      const exactMatch = adminProducts.find(p => (p.barcode && p.barcode === productOrCode) || p.id.toLowerCase() === productOrCode.toLowerCase());
+      const cleanCode = productOrCode.trim();
+      if (!cleanCode) return;
+      const cleanLower = cleanCode.toLowerCase();
+      const exactMatch = adminProducts.find(p => {
+        const barcodeStr = p.barcode ? String(p.barcode).trim().toLowerCase() : '';
+        const idStr = p.id ? String(p.id).trim().toLowerCase() : '';
+        return (barcodeStr && barcodeStr === cleanLower) || (idStr && idStr === cleanLower);
+      });
       if (exactMatch) {
         productId = exactMatch.id;
         productCode = exactMatch.barcode || exactMatch.id;
@@ -468,8 +527,8 @@ export const POS: React.FC = () => {
         saleType = firstSug.saleType || 'unit';
       } else {
         productId = 'GENERIC';
-        productCode = productOrCode.toUpperCase();
-        name = productOrCode.toUpperCase();
+        productCode = cleanCode.toUpperCase();
+        name = cleanCode.toUpperCase();
         price = 0;
         image = '';
       }
@@ -630,10 +689,10 @@ export const POS: React.FC = () => {
       if (currentAccountConfig.enabled && !override) {
         const effectiveAmountLimit = validatedCustomer.useCustomAccountLimits ? (validatedCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount) : currentAccountConfig.maxDebtAmount;
         const effectiveTimeLimit = validatedCustomer.useCustomAccountLimits ? (validatedCustomer.customDebtDays ?? currentAccountConfig.maxDebtDays) : currentAccountConfig.maxDebtDays;
-        
+
         const potentialDebt = validatedCustomer.currentDebt + cartTotal;
         const oldestDays = validatedCustomer.oldestDebtDays || 0;
-        
+
         const isOverAmount = currentAccountConfig.warnOnAmountLimit && potentialDebt > effectiveAmountLimit;
         const isOverTime = currentAccountConfig.warnOnTimeLimit && oldestDays > effectiveTimeLimit;
 
@@ -732,19 +791,6 @@ export const POS: React.FC = () => {
       phone: customerPhone
     });
 
-    // AUTO-SEND WHATSAPP if phone exists and is CC
-    if (customerPhone && selectedPaymentMethod === 'cuenta_corriente') {
-      setTimeout(() => {
-        handleSendWhatsApp({
-          orderId,
-          customer: customerName,
-          total,
-          paymentMethod: selectedPaymentMethod,
-          phone: customerPhone
-        });
-      }, 100);
-    }
-
     // Confirm shopping session if this cart was loaded from a pre-purchase
     if (activeTab.shoppingSessionId) {
       shoppingSessionService.confirmShoppingSession(activeTab.shoppingSessionId, 'Admin')
@@ -760,6 +806,55 @@ export const POS: React.FC = () => {
     setCcDni('');
     setCcError('');
     updateTab({ shoppingSessionId: null });
+  };
+
+  const handleSendWhatsAppTicket = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!showWhatsAppTicketModal?.ticket) return;
+
+    const phone = whatsappTicketPhone.trim();
+    if (!phone) {
+      setWhatsappTicketError('Por favor ingresá el número de celular del cliente.');
+      whatsappPhoneInputRef.current?.focus();
+      return;
+    }
+
+    setIsSendingWhatsAppTicket(true);
+    setWhatsappTicketError('');
+
+    try {
+      const ticket = showWhatsAppTicketModal.ticket;
+      const storeName = ticketConfig.headerText || 'La Martina';
+      const footerMsg = ticketConfig.footerMessage || '¡Gracias por su compra!';
+      const message = generateTicketWhatsAppText(ticket, storeName, footerMsg);
+
+      const res = await whatsappMessageService.createWhatsAppMessage({
+        phone: phone,
+        customer_name: ticket.customer || 'Cliente Mostrador',
+        type: 'pos_digital_ticket',
+        title: `Ticket #${ticket.ticketNumber}`,
+        message,
+        order_id: ticket.ticketNumber,
+        customer_phone: phone
+      });
+
+      if (res) {
+        setWhatsappTicketSuccess(true);
+        setTimeout(() => {
+          setShowWhatsAppTicketModal(null);
+          setShowSuccessModal(null);
+          setWhatsappTicketSuccess(false);
+          setTimeout(() => inputRef.current?.focus(), 100);
+        }, 1200);
+      } else {
+        setWhatsappTicketError('No se pudo encolar el mensaje. Verificá el formato del número.');
+      }
+    } catch (err: any) {
+      console.error('Error enviando ticket por WhatsApp:', err);
+      setWhatsappTicketError('Ocurrió un error al procesar el envío: ' + (err.message || ''));
+    } finally {
+      setIsSendingWhatsAppTicket(false);
+    }
   };
 
   const handleSendWhatsApp = (order: { orderId: string, customer: string, total: number, paymentMethod: string, phone: string }) => {
@@ -786,12 +881,13 @@ export const POS: React.FC = () => {
   // Keyboard events logic
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!showModal || showPaymentModal || showManualModal || showDiscountModal || showPriceModal || showCloseConfirm || showSuccessModal) return;
+      if (!showModal || showPaymentModal || showManualModal || showDiscountModal || showPriceModal || showCloseConfirm || showSuccessModal || showWhatsAppTicketModal) return;
+      if (e.key === 'F2') { e.preventDefault(); if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } return; }
+      if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); setSearchQty(1); setSearchQtyStr('1'); return; }
+      if (document.activeElement === inputRef.current) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex(prev => (cart.length === 0 ? null : prev === null ? 0 : Math.min(prev + 1, cart.length - 1))); }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(prev => (cart.length === 0 ? null : prev === null ? cart.length - 1 : Math.max(prev - 1, 0))); }
       if (e.key === 'Delete') { e.preventDefault(); if (selectedIndex !== null) handleRemoveItem(selectedIndex); else if (cart.length > 0) handleRemoveItem(0); }
-      if (e.key === 'F2') { e.preventDefault(); if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }
-      if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); setSearchQty(1); setSearchQtyStr('1'); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -858,7 +954,7 @@ export const POS: React.FC = () => {
                 setShowCloseConfirm(true);
               }
             }}
-            className={isCashRegisterOpen 
+            className={isCashRegisterOpen
               ? "bg-error text-white font-bold px-6 py-2 rounded-full hover:bg-error/90 transition-all flex items-center gap-2 shadow-lg shadow-error/20 text-xs"
               : "bg-gray-200 text-gray-400 font-bold px-6 py-2 rounded-full transition-all flex items-center gap-2 text-xs cursor-pointer"
             }
@@ -957,87 +1053,96 @@ export const POS: React.FC = () => {
                     <div className="flex-1 relative">
                       <label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Busca o escanea Producto</label>
                       <div className="relative">
-                        <input 
-                          ref={inputRef} 
-                          type="text" 
-                          value={searchCode} 
-                          onChange={e => { setSearchCode(e.target.value); setShowSuggestions(true); setFocusedSuggestionIndex(-1); }} 
-                          onFocus={() => setShowSuggestions(true)} 
+                        <input
+                          ref={inputRef}
+                          type="text"
+                          value={searchCode}
+                          onChange={e => { setSearchCode(e.target.value); setShowSuggestions(true); setFocusedSuggestionIndex(0); }}
+                          onFocus={() => { if (filteredProducts.length > 0) setShowSuggestions(true); }}
                           onKeyDown={(e) => {
                             if (e.key === 'ArrowDown') {
                               e.preventDefault();
-                              setFocusedSuggestionIndex(prev => Math.min(prev + 1, filteredProducts.length - 1));
+                              if (filteredProducts.length > 0) {
+                                setShowSuggestions(true);
+                                setFocusedSuggestionIndex(prev => (prev < 0 ? 0 : Math.min(prev + 1, filteredProducts.length - 1)));
+                              }
                             } else if (e.key === 'ArrowUp') {
                               e.preventDefault();
-                              setFocusedSuggestionIndex(prev => Math.max(prev - 1, -1));
+                              if (filteredProducts.length > 0) {
+                                setShowSuggestions(true);
+                                setFocusedSuggestionIndex(prev => (prev <= 0 ? 0 : prev - 1));
+                              }
                             } else if (e.key === 'ArrowRight') {
-                              if (showSuggestions && focusedSuggestionIndex >= 0) {
-                                e.preventDefault();
-                                setSearchQty(q => {
-                                  const n = parseFloat((q + 1).toFixed(2));
-                                  setSearchQtyStr(n.toString());
-                                  return n;
-                                });
-                              }
+                              e.preventDefault();
+                              setSearchQty(q => {
+                                const n = parseFloat((q + 1).toFixed(2));
+                                setSearchQtyStr(n.toString());
+                                return n;
+                              });
                             } else if (e.key === 'ArrowLeft') {
-                              if (showSuggestions && focusedSuggestionIndex >= 0) {
-                                e.preventDefault();
-                                setSearchQty(q => {
-                                  const n = Math.max(1, parseFloat((q - 1).toFixed(2)));
-                                  setSearchQtyStr(n.toString());
-                                  return n;
-                                });
-                              }
+                              e.preventDefault();
+                              setSearchQty(q => {
+                                const n = Math.max(1, parseFloat((q - 1).toFixed(2)));
+                                setSearchQtyStr(n.toString());
+                                return n;
+                              });
                             } else if (e.key === 'Enter') {
-                              if (showSuggestions && focusedSuggestionIndex >= 0 && focusedSuggestionIndex < filteredProducts.length) {
-                                e.preventDefault();
-                                handleAddItem(filteredProducts[focusedSuggestionIndex]);
+                              e.preventDefault();
+                              if (showSuggestions && filteredProducts.length > 0) {
+                                const selectedProduct = focusedSuggestionIndex >= 0 && focusedSuggestionIndex < filteredProducts.length
+                                  ? filteredProducts[focusedSuggestionIndex]
+                                  : filteredProducts[0];
+                                handleAddItem(selectedProduct);
                                 setFocusedSuggestionIndex(-1);
                                 setShowSuggestions(false);
+                              } else {
+                                handleAddItem(searchCode);
                               }
                             } else if (e.key === 'Escape') {
                               setShowSuggestions(false);
                               setFocusedSuggestionIndex(-1);
                             }
                           }}
-                          placeholder="Código o nombre..." 
-                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-4 px-5 focus:outline-none focus:border-[#9c1c1c] focus:ring-4 focus:ring-[#9c1c1c]/10 font-bold text-lg" 
+                          placeholder="Código o nombre..."
+                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-4 px-5 focus:outline-none focus:border-[#9c1c1c] focus:ring-4 focus:ring-[#9c1c1c]/10 font-bold text-lg"
                         />
                         <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
                       </div>
                       {showSuggestions && filteredProducts.length > 0 && (
                         <div className="absolute top-full left-0 right-0 z-[300] mt-2 bg-white rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden">
                           {filteredProducts.map((p, idx) => {
-                              const stockVal = getStock(p.id);
-                              const isOutOfStock = stockVal === 0;
-                              return (
-                            <button 
-                              key={p.id} 
-                              onClick={() => { handleAddItem(p); setFocusedSuggestionIndex(-1); }} 
-                              className={`w-full p-4 flex items-center gap-4 transition-colors text-left border-b border-outline-variant/5 ${
-                                isOutOfStock
-                                  ? 'bg-red-50 hover:bg-red-100 border-l-4 border-red-400'
-                                  : idx === focusedSuggestionIndex
-                                    ? 'bg-surface-container-low border-l-4 border-primary'
+                            const stockVal = getStock(p.id);
+                            const isOutOfStock = stockVal === 0;
+                            const isFocused = idx === focusedSuggestionIndex;
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => { handleAddItem(p); setFocusedSuggestionIndex(-1); }}
+                                onMouseEnter={() => setFocusedSuggestionIndex(idx)}
+                                className={`w-full p-4 flex items-center gap-4 transition-all text-left border-b border-outline-variant/5 ${isFocused
+                                  ? 'bg-primary/10 border-l-4 border-primary shadow-inner font-bold'
+                                  : isOutOfStock
+                                    ? 'bg-red-50/70 hover:bg-red-100 border-l-4 border-red-400'
                                     : 'hover:bg-surface-container-low'
-                              }`}
-                            >
-                              <div className={`w-10 h-10 rounded-lg overflow-hidden border ${isOutOfStock ? 'bg-red-100 border-red-200' : 'bg-surface-container-lowest border-outline-variant/10'}`}>
-                                <img src={p.image} alt="" className={`w-full h-full object-contain ${isOutOfStock ? 'opacity-50' : ''}`} />
-                              </div>
-                              <div className="flex-1">
-                                <p className={`font-bold text-sm ${isOutOfStock ? 'text-red-700' : ''}`}>{p.name}</p>
-                                <div className="flex items-center gap-2">
-                                  <p className="text-[10px] text-on-surface-variant font-medium">Cód: {p.barcode || p.id}</p>
-                                  {isOutOfStock && (
-                                    <span className="text-[9px] font-black text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Sin Stock</span>
-                                  )}
+                                  }`}
+                              >
+                                <div className={`w-10 h-10 rounded-lg overflow-hidden border ${isOutOfStock ? 'bg-red-100 border-red-200' : 'bg-surface-container-lowest border-outline-variant/10'}`}>
+                                  <img src={p.image} alt="" className={`w-full h-full object-contain ${isOutOfStock ? 'opacity-50' : ''}`} />
                                 </div>
-                              </div>
-                              <p className={`font-black ${isOutOfStock ? 'text-red-500' : 'text-primary'}`}>${formatCurrency(p.price, true, true)}</p>
-                            </button>
-                              );
-                            })}
+                                <div className="flex-1">
+                                  <p className={`font-bold text-sm ${isOutOfStock ? 'text-red-700' : ''}`}>{p.name}</p>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-[10px] text-on-surface-variant font-medium">Cód: {p.barcode || p.id}</p>
+                                    {isOutOfStock && (
+                                      <span className="text-[9px] font-black text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full uppercase tracking-wider">Sin Stock</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <p className={`font-black ${isOutOfStock ? 'text-red-500' : 'text-primary'}`}>${formatCurrency(p.price, true, true)}</p>
+                              </button>
+                            );
+                          })}
 
                         </div>
                       )}
@@ -1054,85 +1159,85 @@ export const POS: React.FC = () => {
                           const itemStock = item.productId !== 'GENERIC' && item.productId !== 'PRODUCTO_COMUN' && !item.productId.startsWith('GENERICO-') ? getStock(item.productId) : null;
                           const isItemOutOfStock = itemStock !== null && itemStock === 0;
                           return (
-                          <tr key={item.id} onClick={() => setSelectedIndex(idx)} className={`group transition-colors relative ${isItemOutOfStock ? 'bg-red-50' : ''}`}>
-                            <td className="px-6 py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-[70px]"><button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 flex items-center justify-center bg-red-100 text-error opacity-0 group-hover:opacity-100 transition-all z-10"><span className="material-symbols-outlined text-[20px]">delete</span></button><div className="flex items-center justify-center h-full">{selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}</div></td>
-                            <td className="px-6 py-5 font-black text-sm text-on-background uppercase truncate align-middle h-[70px]">
-                              <div className="flex flex-col justify-center h-full">
-                                <span>{item.name}</span>
-                                {item.offerLabel && (
-                                  <span className="text-[10px] text-error font-extrabold flex items-center gap-0.5 lowercase tracking-wider mt-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full">
-                                    <span className="material-symbols-outlined text-[12px]">local_offer</span>
-                                    {item.offerLabel}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-5 text-center font-bold text-sm align-middle h-[70px]">
-                              <div className="flex items-center justify-center h-full">
-                                <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute">
-                                  <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">-</button>
-                                  {item.saleType === 'weight' ? (
-                                    inlineWeightEdit?.idx === idx ? (
-                                      <input
-                                        autoFocus
-                                        type="text"
-                                        inputMode="decimal"
-                                        value={inlineWeightEdit.str}
-                                        className="w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary"
-                                        onChange={(e) => {
-                                          const raw = e.target.value.replace(',', '.');
-                                          if (/^\d*\.?\d{0,2}$/.test(raw)) setInlineWeightEdit({ idx, str: raw });
-                                        }}
-                                        onBlur={() => {
-                                          const n = parseFloat(inlineWeightEdit.str);
-                                          if (!isNaN(n) && n > 0) updateItemQty(idx, n);
-                                          setInlineWeightEdit(null);
-                                        }}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') {
-                                            e.preventDefault();
+                            <tr key={item.id} onClick={() => setSelectedIndex(idx)} className={`group transition-colors relative ${isItemOutOfStock ? 'bg-red-50' : ''}`}>
+                              <td className="px-6 py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-[70px]"><button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 flex items-center justify-center bg-red-100 text-error opacity-0 group-hover:opacity-100 transition-all z-10"><span className="material-symbols-outlined text-[20px]">delete</span></button><div className="flex items-center justify-center h-full">{selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}</div></td>
+                              <td className="px-6 py-5 font-black text-sm text-on-background uppercase truncate align-middle h-[70px]">
+                                <div className="flex flex-col justify-center h-full">
+                                  <span>{item.name}</span>
+                                  {item.offerLabel && (
+                                    <span className="text-[10px] text-error font-extrabold flex items-center gap-0.5 lowercase tracking-wider mt-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full">
+                                      <span className="material-symbols-outlined text-[12px]">local_offer</span>
+                                      {item.offerLabel}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-6 py-5 text-center font-bold text-sm align-middle h-[70px]">
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute">
+                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">-</button>
+                                    {item.saleType === 'weight' ? (
+                                      inlineWeightEdit?.idx === idx ? (
+                                        <input
+                                          autoFocus
+                                          type="text"
+                                          inputMode="decimal"
+                                          value={inlineWeightEdit.str}
+                                          className="w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary"
+                                          onChange={(e) => {
+                                            const raw = e.target.value.replace(',', '.');
+                                            if (/^\d*\.?\d{0,2}$/.test(raw)) setInlineWeightEdit({ idx, str: raw });
+                                          }}
+                                          onBlur={() => {
                                             const n = parseFloat(inlineWeightEdit.str);
                                             if (!isNaN(n) && n > 0) updateItemQty(idx, n);
                                             setInlineWeightEdit(null);
-                                          }
-                                          if (e.key === 'Escape') setInlineWeightEdit(null);
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
-                                      />
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              const n = parseFloat(inlineWeightEdit.str);
+                                              if (!isNaN(n) && n > 0) updateItemQty(idx, n);
+                                              setInlineWeightEdit(null);
+                                            }
+                                            if (e.key === 'Escape') setInlineWeightEdit(null);
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                        />
+                                      ) : (
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setInlineWeightEdit({ idx, str: parseFloat(item.quantity.toFixed(2)).toString() }); }}
+                                          className="w-12 text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate"
+                                        >{parseFloat(item.quantity.toFixed(2)).toString()}</button>
+                                      )
                                     ) : (
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); setInlineWeightEdit({ idx, str: parseFloat(item.quantity.toFixed(2)).toString() }); }}
-                                        className="w-12 text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate"
-                                      >{parseFloat(item.quantity.toFixed(2)).toString()}</button>
-                                    )
-                                  ) : (
-                                    <span className="w-8 text-center">{item.quantity}</span>
-                                  )}
-                                  <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">+</button>
-                                </div>
-                                <span className="group-hover:hidden">
-                                  {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg` : item.quantity}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px]">
-                              <div className="flex flex-col justify-center items-end h-full">
-                                {item.price === 0 ? (
-                                  <button onClick={() => { setShowPriceModal({ idx, name: item.name }); setPriceInput(''); }} className="text-primary hover:underline bg-primary/10 px-2 py-1 rounded text-xs">Ingresar Precio</button>
-                                ) : (
-                                  <>
-                                    {item.finalPrice < item.price && (
-                                      <span className="text-xs text-on-surface-variant/50 line-through">${formatCurrency(item.price)}</span>
+                                      <span className="w-8 text-center">{item.quantity}</span>
                                     )}
-                                    <span className={item.finalPrice < item.price ? 'text-primary font-black' : ''}>
-                                      ${formatCurrency(item.finalPrice, true, true)}
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-5 text-right font-black text-[#9c1c1c] align-middle h-[70px]"><div className="flex items-center justify-end h-full">$ {formatCurrency(item.finalPrice * item.quantity, true, true)}</div></td>
-                          </tr>
+                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">+</button>
+                                  </div>
+                                  <span className="group-hover:hidden">
+                                    {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg` : item.quantity}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px]">
+                                <div className="flex flex-col justify-center items-end h-full">
+                                  {item.price === 0 ? (
+                                    <button onClick={() => { setShowPriceModal({ idx, name: item.name }); setPriceInput(''); }} className="text-primary hover:underline bg-primary/10 px-2 py-1 rounded text-xs">Ingresar Precio</button>
+                                  ) : (
+                                    <>
+                                      {item.finalPrice < item.price && (
+                                        <span className="text-xs text-on-surface-variant/50 line-through">${formatCurrency(item.price)}</span>
+                                      )}
+                                      <span className={item.finalPrice < item.price ? 'text-primary font-black' : ''}>
+                                        ${formatCurrency(item.finalPrice, true, true)}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-6 py-5 text-right font-black text-[#9c1c1c] align-middle h-[70px]"><div className="flex items-center justify-end h-full">$ {formatCurrency(item.finalPrice * item.quantity, true, true)}</div></td>
+                            </tr>
                           );
                         })}
                         {cart.length === 0 && (<tr><td colSpan={5} className="px-6 py-16 text-center text-on-surface-variant">Escanea un producto para comenzar.</td></tr>)}
@@ -1332,7 +1437,19 @@ export const POS: React.FC = () => {
                       </button>
                     )}
                     <button
-                      onClick={() => handleSendWhatsApp(showSuccessModal)}
+                      onClick={() => {
+                        const initialPhone = showSuccessModal.phone || (validatedCustomer?.phone || '');
+                        setWhatsappTicketPhone(initialPhone);
+                        setWhatsappTicketError('');
+                        setWhatsappTicketSuccess(false);
+                        if (lastSaleTicket) {
+                          setShowWhatsAppTicketModal({
+                            ticket: lastSaleTicket,
+                            phone: initialPhone
+                          });
+                          setTimeout(() => whatsappPhoneInputRef.current?.focus(), 150);
+                        }
+                      }}
                       className="w-full bg-[#20ba56] text-white font-black py-4.5 rounded-[1.25rem] shadow-lg shadow-green-500/10 hover:bg-[#1caa4e] transition-all flex items-center justify-center gap-2.5 text-sm"
                     >
                       <span className="material-symbols-outlined text-[20px]">chat</span>
@@ -1511,9 +1628,8 @@ export const POS: React.FC = () => {
                     </div>
                     {/* Diferencia en tiempo real */}
                     {arqueoContado !== '' && (
-                      <div className={`rounded-2xl p-4 flex justify-between items-center ${
-                        arqueoDiff === 0 ? 'bg-green-50' : arqueoDiff > 0 ? 'bg-blue-50' : 'bg-red-50'
-                      }`}>
+                      <div className={`rounded-2xl p-4 flex justify-between items-center ${arqueoDiff === 0 ? 'bg-green-50' : arqueoDiff > 0 ? 'bg-blue-50' : 'bg-red-50'
+                        }`}>
                         <span className="font-black text-sm uppercase tracking-wide">Diferencia:</span>
                         <div className="text-right">
                           <p className={`font-black text-xl ${diffColor}`}>
@@ -1699,10 +1815,10 @@ export const POS: React.FC = () => {
                 <p className="text-xs font-bold opacity-80">{showLimitWarning.customerName}</p>
               </div>
             </div>
-            
+
             <div className="p-8 space-y-4">
               <p className="text-sm font-bold text-on-background mb-2">Este cliente superó uno o más límites de cuenta corriente. Podés cancelar la operación o continuar bajo tu responsabilidad.</p>
-              
+
               <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-4 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-on-surface-variant">Deuda actual:</span>
@@ -1776,7 +1892,7 @@ export const POS: React.FC = () => {
                 <p className="text-xs text-on-surface-variant">Importá los productos escaneados por el cliente</p>
               </div>
             </div>
-            
+
             <form onSubmit={handleLoadPrePurchase} className="p-8 space-y-6">
               {prePurchaseError && (
                 <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl flex items-center gap-2">
@@ -1828,6 +1944,214 @@ export const POS: React.FC = () => {
                     <>
                       <span className="material-symbols-outlined text-[20px]">download</span>
                       <span>Importar Carrito</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ────────────────────────────────────────────────────────
+          MODAL: ENVIAR TICKET DIGITAL POR WHATSAPP (POS)
+          ──────────────────────────────────────────────────────── */}
+      {showWhatsAppTicketModal && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-md"
+            onClick={() => {
+              if (!isSendingWhatsAppTicket) setShowWhatsAppTicketModal(null);
+            }}
+          />
+          <div className="bg-white rounded-[2.5rem] shadow-2xl relative z-10 w-full max-w-lg animate-in zoom-in-95 duration-300 overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Header */}
+            <div className="p-6 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center shadow-sm">
+                  <span className="material-symbols-outlined text-[24px]">chat</span>
+                </div>
+                <div>
+                  <h3 className="text-xl font-black">Enviar Ticket por WhatsApp</h3>
+                  <p className="text-xs text-on-surface-variant">Ticket #{showWhatsAppTicketModal.ticket.ticketNumber}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWhatsAppTicketModal(null)}
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 transition-colors"
+                disabled={isSendingWhatsAppTicket}
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Modal Body (Scrollable) */}
+            <form onSubmit={handleSendWhatsAppTicket} className="p-6 overflow-y-auto space-y-5 no-scrollbar flex-1">
+              {/* Phone Input Field */}
+              <div>
+                <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-2 block">
+                  Número de WhatsApp del Cliente *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant/50 material-symbols-outlined text-[20px]">
+                    call
+                  </span>
+                  <input
+                    ref={whatsappPhoneInputRef}
+                    type="tel"
+                    required
+                    placeholder="Ej: 2634877314 o 5492634877314"
+                    value={whatsappTicketPhone}
+                    onChange={e => {
+                      setWhatsappTicketPhone(e.target.value);
+                      if (whatsappTicketError) setWhatsappTicketError('');
+                    }}
+                    className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-2xl py-4 pl-12 pr-4 font-bold text-lg outline-none focus:border-green-600 focus:ring-4 focus:ring-green-600/10 transition-all font-mono"
+                    autoFocus
+                    disabled={isSendingWhatsAppTicket || whatsappTicketSuccess}
+                  />
+                </div>
+                <p className="text-[10px] text-on-surface-variant mt-1.5 ml-1">
+                  Ingresá el número con código de área (sin el 0 ni el 15 si es de Argentina).
+                </p>
+              </div>
+
+              {/* Error Message */}
+              {whatsappTicketError && (
+                <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-2xl flex items-center gap-2.5 animate-in fade-in">
+                  <span className="material-symbols-outlined text-[18px]">error</span>
+                  <span>{whatsappTicketError}</span>
+                </div>
+              )}
+
+              {/* Success Message */}
+              {whatsappTicketSuccess && (
+                <div className="p-4 bg-green-50 border border-green-200 text-green-800 text-xs font-bold rounded-2xl flex items-center gap-3 animate-in fade-in">
+                  <span className="material-symbols-outlined text-green-600 text-[24px]">check_circle</span>
+                  <div>
+                    <p className="font-black text-sm">¡Ticket encolado con éxito!</p>
+                    <p className="font-medium text-green-700">Se enviará automáticamente por WhatsApp en segundo plano.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Ticket Preview Box */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest block">
+                    Vista previa del Ticket
+                  </label>
+                  <span className="text-[10px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200">
+                    Formato WhatsApp
+                  </span>
+                </div>
+
+                <div className="bg-[#fcfbf9] border-2 border-outline-variant/15 rounded-2xl p-5 font-mono text-xs shadow-inner space-y-3 leading-relaxed select-text">
+                  {/* Header Preview */}
+                  <div className="text-center pb-3 border-b border-dashed border-outline-variant/30">
+                    <p className="font-black text-sm text-[#2d2828] uppercase tracking-wide">
+                      {ticketConfig.headerText || 'La Martina'}
+                    </p>
+                    <p className="font-bold text-[#5d5454] text-[11px]">
+                      Ticket: #{showWhatsAppTicketModal.ticket.ticketNumber}
+                    </p>
+                    <p className="text-[#8c8282] text-[10px]">
+                      {showWhatsAppTicketModal.ticket.date}
+                    </p>
+                    {showWhatsAppTicketModal.ticket.customer && (
+                      <p className="text-[10px] text-primary font-bold mt-0.5">
+                        Cliente: {showWhatsAppTicketModal.ticket.customer}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Items List */}
+                  <div className="space-y-2.5 py-1">
+                    {showWhatsAppTicketModal.ticket.items.map((item, i) => {
+                      const hasDiscount = item.offerLabel && item.lineDiscount && item.lineDiscount > 0;
+                      const qtyStr = item.saleType === 'weight'
+                        ? `${parseFloat(item.quantity.toFixed(2))} kg`
+                        : `${item.quantity}`;
+                      const totalLine = (item.price * item.quantity).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                      const unitPrice = item.price.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                      return (
+                        <div key={i} className="space-y-0.5 border-b border-black/5 pb-2 last:border-0 last:pb-0">
+                          <div className="font-bold text-[#2d2828] text-[11px]">{item.name}</div>
+                          <div className="flex justify-between text-[10px] text-[#5d5454]">
+                            <span>{qtyStr} x ${unitPrice}</span>
+                            <span className="font-bold text-[#2d2828]">${totalLine}</span>
+                          </div>
+                          {hasDiscount && (
+                            <div className="text-[9px] font-bold text-green-700 bg-green-50 px-1.5 py-0.5 rounded inline-block">
+                              ▸ {item.offerLabel} {item.discountedQuantity && item.discountedQuantity < item.quantity ? `(${item.discountedQuantity} un.) ` : ''}(-${(item.lineDiscount || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })})
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Totals Preview */}
+                  <div className="pt-2 border-t border-dashed border-outline-variant/30 space-y-1 text-[11px]">
+                    <div className="flex justify-between text-[#5d5454]">
+                      <span>Subtotal</span>
+                      <span>${showWhatsAppTicketModal.ticket.subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    {(() => {
+                      const itemDisc = showWhatsAppTicketModal.ticket.items.reduce((acc, it) => acc + (it.lineDiscount || 0), 0);
+                      const totalDisc = itemDisc + (showWhatsAppTicketModal.ticket.globalDiscountAmount || 0);
+                      if (totalDisc > 0) {
+                        return (
+                          <div className="flex justify-between text-green-700 font-bold">
+                            <span>Descuento</span>
+                            <span>-${totalDisc.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                    <div className="flex justify-between text-sm font-black text-[#b71c1c] pt-1.5 border-t border-outline-variant/20">
+                      <span>TOTAL</span>
+                      <span>${showWhatsAppTicketModal.ticket.total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-[#5d5454] pt-1">
+                      <span>Forma de pago:</span>
+                      <span className="font-bold uppercase">{getPaymentMethodDisplay(showWhatsAppTicketModal.ticket.paymentMethod)}</span>
+                    </div>
+                  </div>
+
+                  {/* Footer Message Preview */}
+                  <div className="text-center text-[10px] text-[#8c8282] pt-2 border-t border-dashed border-outline-variant/30 italic">
+                    {ticketConfig.footerMessage || '¡Gracias por su compra!'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-3 border-t border-outline-variant/10 flex gap-3 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowWhatsAppTicketModal(null)}
+                  className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors text-sm"
+                  disabled={isSendingWhatsAppTicket || whatsappTicketSuccess}
+                >
+                  Volver
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingWhatsAppTicket || whatsappTicketSuccess || !whatsappTicketPhone.trim()}
+                  className="flex-[2] bg-[#20ba56] text-white font-black py-4 rounded-2xl shadow-lg shadow-green-600/20 hover:bg-[#1caa4e] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSendingWhatsAppTicket ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined text-[20px]">send</span>
+                      <span>Enviar por WhatsApp</span>
                     </>
                   )}
                 </button>

@@ -1391,6 +1391,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     });
 
+    // Encolar mensaje de WhatsApp de confirmación/estado inicial del pedido si tiene teléfono
+    if (o.phone) {
+      whatsappMessageService.createOrderStatusMessage({
+        id: o.id,
+        customer: o.customer,
+        phone: o.phone,
+        status: o.status || 'Nuevo',
+        total: o.total
+      });
+    }
+
     // Fase 3: Integración con Cuenta Corriente cuando se agrega una compra
     if (o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado') {
       const activeCustomer = customers.find(c => c.phone === o.phone);
@@ -1464,7 +1475,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         id: targetOrder.id,
         customer: targetOrder.customer,
         phone: targetOrder.phone,
-        status: s
+        status: s,
+        total: targetOrder.total
       });
     }
   };

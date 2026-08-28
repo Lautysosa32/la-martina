@@ -831,13 +831,11 @@ export const AdminOrders: React.FC = () => {
               <button
                 onClick={() => {
                   updateOrderStatus(cancelModalData.id, 'Cancelado');
-                  const msg = `*Hola ${cancelModalData.customer}!* 👋 Te hablamos de *La Martina*.\n\nTu pedido *#${cancelModalData.id}* por *$${formatCurrency(cancelModalData.total, true, true)}* ha sido cancelado. ¡Lo lamentamos! 🏪`;
-                  window.open(`https://wa.me/${cancelModalData.phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
                   setCancelModalData(null);
                 }}
                 className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-500/20 transition-transform active:scale-[0.98]"
               >
-                Sí, Cancelar y Notificar
+                Sí, Cancelar Pedido
               </button>
               <button
                 onClick={() => setCancelModalData(null)}

@@ -29,16 +29,20 @@ const client = new Client({
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--log-level=3'
     ]
   }
 });
 
 console.log('⏳ Cargando navegador Chromium de fondo (esto puede tardar 20-30 segundos la primera vez)...');
 
+client.on('loading_screen', (percent, message) => {
+  console.log(`⏳ Cargando sesión de WhatsApp... ${percent}% (${message})`);
+});
+
 // 3. Generar y mostrar el código QR en la consola
 client.on('qr', (qr) => {
-  console.clear();
   console.log('📱 ESCANEA ESTE CÓDIGO QR CON TU WHATSAPP COMERCIAL:');
   qrcode.generate(qr, { small: true });
 });
