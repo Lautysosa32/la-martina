@@ -70,14 +70,14 @@ export const Category: React.FC = () => {
         </select>
       </div>
       
-      <main className="px-margin-mobile py-8 md:max-w-container-max mx-auto">
+      <main className="px-margin-mobile md:px-margin-desktop py-8 max-w-container-max mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-[25px] font-bold text-on-background">Todos los Productos</h2>
           <span className="text-sm text-on-surface-variant font-medium">{filteredProducts.length} productos</span>
         </div>
 
         {filteredProducts.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-gutter">
+          <div className="product-grid">
             {filteredProducts.map((product) => (
               <ProductCard key={product.id} product={product} />
             ))}

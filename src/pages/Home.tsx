@@ -2,10 +2,10 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAdmin } from '../context/AdminContext';
 import { ProductCarousel } from '../components/ProductCarousel';
-
+import { ProductCard } from '../components/ProductCard';
 
 export const Home: React.FC = () => {
-  const { adminProducts: products, applyOffersToCartItem } = useAdmin();
+  const { adminProducts: products, applyOffersToCartItem, getTopSellingProducts } = useAdmin();
 
   const productsWithOffers = React.useMemo(() => {
     return products.map(p => {
@@ -19,9 +19,63 @@ export const Home: React.FC = () => {
     }).filter(Boolean) as any[];
   }, [products, applyOffersToCartItem]);
 
+  // Detectamos el ancho de pantalla para saber cuántos productos requerimos para rellenar exactamente 15 filas:
+  // Celular (<768px): 2 cols * 15 filas = 30 productos
+  // Tablet (768px - 1023px): 3 cols * 15 filas = 45 productos
+  // Computadora (>=1024px): 4 cols * 15 filas = 60 productos
+  // Pantallas XL (>=1600px): 5 cols * 15 filas = 75 productos
+  const [targetCount, setTargetCount] = React.useState(60);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      if (width >= 1600) {
+        setTargetCount(75);  // 5 columnas * 15 filas
+      } else if (width >= 1024) {
+        setTargetCount(60);  // 4 columnas * 15 filas
+      } else if (width >= 768) {
+        setTargetCount(45);  // 3 columnas * 15 filas
+      } else {
+        setTargetCount(30);  // 2 columnas * 15 filas
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Vinculado totalmente con el backend/analíticas.
+  // Obtiene los más vendidos y autocompleta el resto aleatoriamente de los demás productos del catálogo.
+  const featuredProducts = React.useMemo(() => {
+    const top = getTopSellingProducts(30).map(item => item.product);
+    
+    // Si ya cubrimos o superamos el target count, devolvemos los más vendidos recortados
+    if (top.length >= targetCount) {
+      return top.slice(0, targetCount);
+    }
+
+    // Set de IDs existentes para evitar duplicados
+    const existingIds = new Set(top.map(p => p.id));
+    const remainingCount = targetCount - top.length;
+
+    // Filtrar los productos del catálogo que no estén ya en la lista de más vendidos
+    const availablePool = products.filter(p => !existingIds.has(p.id));
+
+    // Si no hay suficientes productos en el pool, simplemente tomamos lo que hay
+    if (availablePool.length <= remainingCount) {
+      return [...top, ...availablePool];
+    }
+
+    // Seleccionar aleatoriamente
+    const shuffled = [...availablePool].sort(() => 0.5 - Math.random());
+    const randomPick = shuffled.slice(0, remainingCount);
+
+    return [...top, ...randomPick];
+  }, [products, getTopSellingProducts, targetCount]);
+
+
   return (
     <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-4 flex flex-col gap-1">
-
 
       <section className="mb-3">
         <Link to="/calculadora-compras" className="flex items-center space-x-3 bg-surface-container-lowest p-3 rounded-xl shadow-sm border border-outline-variant/20 cursor-pointer hover:bg-surface-bright transition-colors">
@@ -41,7 +95,7 @@ export const Home: React.FC = () => {
 
       {/* Hero Banner */}
       <section>
-        <div className="relative w-full h-[400px] md:h-[400px] rounded-xl overflow-hidden shadow-sm flex items-center bg-surface-variant">
+        <div className="relative w-full h-[200px] sm:h-[300px] md:h-[400px] rounded-xl overflow-hidden shadow-sm flex items-center bg-surface-variant">
           <img
             src="https://lh3.googleusercontent.com/aida-public/AB6AXuCGKrpE0YcIwZeIu5GDXL8WnwZf5Qs0PHtEBMC-wP_3sLjV4h_1gwWX2QPaU-MaSSEPyO5Bqv8SNuB0nPGyuynOcK098TUtm49AY4vl4Zw8XUbi3rCHYRYan-jSwlDLvnFVFOPZeUa0Xhvou3SP343pAgxEblnSGXjrmsH8oF1EugpLbaGBKvjtSRDCAKAlL7rVzHlM-5AmBstRztUsNXzMV0Nyw9SAHxpZQzxXWrcSJ7wSCIG3ez5sJmGxw8i1XjhXFmmkJxamIW0z"
             alt=""
@@ -50,29 +104,29 @@ export const Home: React.FC = () => {
           />
           <div className="absolute inset-0 bg-gradient-to-r from-on-background/80 via-on-background/50 to-transparent z-10" />
 
-          <div className="relative z-20 px-6 md:px-12 max-w-xl text-surface-container-lowest">
-            <span className="inline-block bg-secondary-container text-on-secondary-container font-label-sm px-3 py-1 rounded-full mb-4 font-bold tracking-wide uppercase">
+          <div className="relative z-20 px-4 sm:px-6 md:px-12 max-w-xl text-surface-container-lowest">
+            <span className="inline-block bg-secondary-container text-on-secondary-container font-label-sm px-2 py-0.5 sm:px-3 sm:py-1 rounded-full mb-2 sm:mb-4 font-bold tracking-wide uppercase text-[10px] sm:text-xs">
               New Arrivals
             </span>
-            <h1 className="font-display-xl text-display-xl mb-4 text-white">Curated Freshness</h1>
-            <p className="font-body-lg text-body-lg mb-8 opacity-90 text-white">
+            <h1 className="font-display-xl text-[22px] sm:text-[32px] md:text-[48px] font-bold leading-tight mb-2 sm:mb-4 text-white">Curated Freshness</h1>
+            <p className="font-body-md text-[12px] sm:text-[14px] md:text-[18px] mb-4 sm:mb-8 opacity-90 text-white leading-snug hidden sm:block">
               Experience the finest selection of organic produce and artisanal goods, handpicked for your culinary journey.
             </p>
-            <button className="bg-primary text-white font-label-sm px-8 py-3 rounded-full hover:bg-primary/90 transition-colors flex items-center space-x-2">
+            <button className="bg-primary text-white font-label-sm px-5 py-2 sm:px-8 sm:py-3 rounded-full hover:bg-primary/90 transition-colors flex items-center space-x-2 text-xs sm:text-sm">
               <span>Shop Now</span>
-              <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">arrow_forward</span>
+              <span className="material-symbols-outlined text-[16px] sm:text-[20px]" aria-hidden="true" translate="no">arrow_forward</span>
             </button>
           </div>
         </div>
       </section>
 
       {/* Explorar Categorías */}
-      <section className="mt-10">
-        <div className="mb-5 flex justify-between items-end">
-          <h2 className="font-headline-lg text-headline-lg text-[25px] text-on-background font-bold">Nuestras Categorías</h2>
+      <section className="mt-8 sm:mt-10">
+        <div className="mb-4 sm:mb-5 flex justify-between items-end">
+          <h2 className="font-headline-lg text-headline-lg text-[22px] sm:text-[25px] text-on-background font-bold">Nuestras Categorías</h2>
         </div>
 
-        <div className="grid grid-cols-3 gap-y-5 gap-x-4 md:grid-cols-6 md:gap-x-6 pb-4">
+        <div className="grid grid-cols-3 gap-y-4 gap-x-3 md:grid-cols-6 md:gap-x-6 pb-4">
           {[
             { id: 'almacen', name: 'Almacén', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCWUOCTkqhlUgYy_xu3NGmfb56WQRL8UV1o_-f25G8H6URHltBsZyVnPpWuBMzOHfJMdTv_2NUJDwwoBxs1lAVabTMcsatMbf8Y3TEqQosk7JwccSFl8jfmm9-0sKHw8V-t5_UTarjHoWtt34wTQ52ZVx92DlDsJ64tUgl4xB0Hz_t6u7SnzfuAGbi2wdvz65yVnvcmDBRUKIuWjHzZ-juL24kQUp3RLILMWNBHhqXH2zxggaQ-D67zsJv3VCExRLtXRzx2NX_gk6b3' },
             { id: 'bebidas', name: 'Bebidas', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCOducrLPS-H_2ZB1GIL_jmKXYKzr2IPHQ08Rps1TLqWQSvs7htEPb8_E_DJ0InRWr-jMqvTjgLYsKzaSHGVqhldbiUAifPTLT5msNjluywcgDr6QRxsdT3wmunD7AG7zHRZqqjuLmmY8me4uL5dnAIoFocKnEYNHSL3ZDEX3F899nL2cZVszAjiYTtfVfdtAxzEMHlKvCyx71_nc3vaC3sjaj8W2g3dfFrwtNJRXsQh03NFzTmzUnkcazrjXyjfJFR9UCKuTDt52so' },
@@ -82,18 +136,14 @@ export const Home: React.FC = () => {
             { id: 'perfumeria', name: 'Perfumería', img: 'https://images.unsplash.com/photo-1541643600914-78b084683601?auto=format&fit=crop&q=80&w=400' }
           ].map(cat => (
             <Link key={cat.id} to={`/category/${cat.id}`} className="flex flex-col items-center group">
-              <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-32 md:h-32 rounded-full bg-[#f5f0ee] mb-3 overflow-hidden shadow-sm flex items-center justify-center p-1.5 relative">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 md:w-28 md:h-28 rounded-full bg-[#f5f0ee] mb-2 sm:mb-3 overflow-hidden shadow-sm flex items-center justify-center p-1.5 relative">
                 <img src={cat.img} alt="" aria-hidden="true" className="w-full h-full object-cover rounded-full group-hover:scale-105 transition-transform duration-300" />
               </div>
-              <span className="font-body-md text-on-surface font-medium text-center text-sm sm:text-base">{cat.name}</span>
+              <span className="font-body-md text-on-surface font-medium text-center text-[11px] sm:text-sm md:text-base leading-tight">{cat.name}</span>
             </Link>
           ))}
         </div>
       </section>
-      <ProductCarousel
-        title="Productos Destacados"
-        products={products.slice(0, 12)}
-      />
 
       {productsWithOffers.length > 0 ? (
         <ProductCarousel
@@ -110,6 +160,18 @@ export const Home: React.FC = () => {
           </div>
         </section>
       )}
+
+      {/* Productos Destacados en Grid de Productos Fijo (Sin carrusel deslizable) */}
+      <section className="mt-10 mb-8">
+        <h2 className="font-headline-lg text-headline-lg text-[25px] text-on-background font-bold mb-6">
+          Productos Destacados
+        </h2>
+        <div className="product-grid">
+          {featuredProducts.map(product => (
+            <ProductCard key={product.id} product={product} />
+          ))}
+        </div>
+      </section>
 
     </div>
   );

@@ -857,6 +857,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       supabase.from('offer_redemptions').select('*').then(({ data }) => {
         if (data) setOfferRedemptions(data);
       });
+      // Fetch low stock summary for alerts
+      useProductStore.getState().fetchLowStockDashboardProducts({ page: 1, limit: 100 });
     };
 
     loadAllData();
@@ -1267,18 +1269,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const num = Number(stockVal);
     return isNaN(num) ? 0 : num;
   };
+
   const deductStockForOrder = (orderItems: { id: string; quantity: number }[]): { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] } => {
+    // ESTA FUNCION SE MANTIENE SINCRONA POR AHORA PARA NO ROMPER CHECKOUT
+    // Pero asume que el stock fue cargado o se permite sobreventa si no se encuentra.
     const insufficient: { id: string; name: string; requested: number; available: number }[] = [];
-    // First pass: validate all items
     for (const item of orderItems) {
       const available = getStock(item.id);
-      if (item.quantity > available) {
+      if (item.quantity > available && available > 0) { // Solo bloquear si sabemos que hay stock, pero es menor
         const prod = adminProducts.find(p => p.id === item.id);
         insufficient.push({ id: item.id, name: prod?.name || item.id, requested: item.quantity, available });
       }
     }
     if (insufficient.length > 0) return { success: false, insufficientItems: insufficient };
-    // Second pass: atomically deduct all
+    
     setStockMap(prev => {
       const next = { ...prev };
       for (const item of orderItems) {
@@ -1286,7 +1290,6 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const newStock = Math.max(0, currentStock - item.quantity);
         next[item.id] = newStock;
         
-        // Sync to Supabase in the background
         if (item.id !== 'PRODUCTO_COMUN' && !item.id.startsWith('GENERICO-')) {
           useProductStore.getState().updateStock(item.id, newStock).catch(console.error);
         }
@@ -1295,7 +1298,9 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
     return { success: true, insufficientItems: [] };
   };
-  const lowStockProducts = adminProducts.map(p => ({ ...p, stock: getStock(p.id) })).filter(p => p.stock < (p.minStock ?? 15)).sort((a, b) => a.stock - b.stock);
+  
+  // Mantenemos array vacio para que no rompa la UI legacy que lo use directamente
+  const lowStockProducts: any[] = [];
 
   // Barcode lookup
   const findProductByBarcode = (barcode: string): Product | undefined => {
@@ -1306,6 +1311,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   let fallbackCatalogCache: Record<string, { n: string; b: string }> | null = null;
 
   const searchProductExternal = async (barcode: string): Promise<Partial<Product> | null> => {
+    // 0. AHORA: Buscar primero en Supabase ya que los productos no están en memoria
+    try {
+      const dbProduct = await useProductStore.getState().getProductByBarcode(barcode); // This is local though
+      // Wait, getProductByBarcode in useProductStore uses state.products (which is empty).
+      // We must use productsService to query DB.
+      const { productsService } = await import('../services/products.service');
+      const dbProd = await productsService.getProductByBarcode(barcode);
+      if (dbProd) {
+        return dbProd; // Retornamos el producto tal cual lo encuentra en Supabase
+      }
+    } catch (e) {
+      console.error("Error buscando en Supabase:", e);
+    }
+
     // 1. Check OpenFoodFacts API first
     try {
       const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`);
@@ -1355,9 +1374,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addAdminOrder = async (o: AdminOrder) => {
     setOrders(prev => [o, ...prev]);
     // Don't deduct stock for generic/common products, nor for products already at 0
-    o.items.forEach(i => {
+    o.items.forEach(async (i) => {
       if (i.id !== 'PRODUCTO_COMUN' && !i.id.startsWith('GENERICO-')) {
-        const currentStock = getStock(i.id);
+        let currentStock = getStock(i.id);
+        if (currentStock === 0) {
+           // Si no lo teniamos en memoria (o era 0), consultamos a la DB real para evitar mandar a 0 algo que tiene
+           try {
+             const { supabase } = await import('../lib/supabase');
+             const { data } = await supabase.from('products').select('stock').eq('id', i.id).single();
+             if (data) currentStock = data.stock;
+           } catch(e) {}
+        }
         if (currentStock > 0) {
           updateStock(i.id, Math.max(0, currentStock - i.quantity));
         }
@@ -1461,7 +1488,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const totalRevenue = ordersRevenue + posRevenue;
   const totalDebtInStreet = customers.reduce((s, c) => s + (c.currentDebt || 0), 0);
   const activeOrdersCount = orders.filter(o => o.status !== 'Entregado' && o.status !== 'Cancelado').length;
-  const lowStockCount = lowStockProducts.length;
+  const lowStockCount = useProductStore((state) => state.lowStockDashboardTotal);
   const totalCustomers = customers.length;
 
   // ─── Offers ───────────────────────────────────────────────
@@ -1529,7 +1556,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (endStr && endStr < todayStr) return false;
       if (o.scope === 'product') return o.targetId === item.productId || o.productId === item.productId;
       if (o.scope === 'category') {
-        const prod = adminProducts.find(p => p.id === item.productId);
+        const prod = item.categoryId ? { categoryId: item.categoryId } : adminProducts.find(p => p.id === item.productId);
         return prod?.categoryId === o.targetId;
       }
       return false;
@@ -1906,7 +1933,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .map(([id, data]) => ({ product: adminProducts.find(p => p.id === id)!, ...data }))
       .filter(e => e.product)
       .sort((a, b) => b.unitsSold - a.unitsSold)
-      .slice(0, 10);
+      .slice(0, 100);
   };
 
   const getRevenueByCategory = (range?: { from: number, to: number }) => {

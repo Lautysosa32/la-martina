@@ -47,9 +47,110 @@ const toFrontendProduct = (product: SupabaseProduct): Product => {
 };
 
 export const productsService = {
+  async getProductsPaginated(params: { page: number; limit: number; search?: string; categoryId?: string; sortBy?: string; sortDesc?: boolean }): Promise<{ data: Product[]; total: number }> {
+    const offset = (params.page - 1) * params.limit;
+    let url = `/products?select=*&limit=${params.limit}&offset=${offset}`;
+
+    if (params.categoryId && params.categoryId !== 'all') {
+      url += `&category_id=eq.${params.categoryId}`;
+    }
+
+    if (params.search) {
+      url += `&or=(name.ilike.*${params.search}*,brand.ilike.*${params.search}*,barcode.ilike.*${params.search}*)`;
+    }
+
+    if (params.sortBy) {
+      // Map frontend keys to database columns
+      let column = params.sortBy;
+      if (column === 'categoryId') column = 'category_id';
+      
+      // Stock sorting shouldn't fail if null, PostgREST handles nulls, but we can specify nulls first/last if needed.
+      url += `&order=${column}.${params.sortDesc ? 'desc' : 'asc'}.nullslast`;
+    } else {
+      url += `&order=created_at.desc`;
+    }
+
+    const response = await api.get<SupabaseProduct[]>(url, {
+      headers: { 'Prefer': 'count=exact' }
+    });
+
+    const countStr = response.headers['content-range'] || response.headers['Content-Range'];
+    let total = 0;
+    if (countStr) {
+      const match = countStr.match(/\/\s*(\d+)/);
+      if (match) total = parseInt(match[1]);
+    }
+
+    return {
+      data: response.data.map(toFrontendProduct),
+      total
+    };
+  },
+
+  async getLowStockProductsPaginated(params: { page: number; limit: number }): Promise<{ data: Product[]; total: number }> {
+    const offset = (params.page - 1) * params.limit;
+    // Condition: stock < min_stock
+    // Wait, in PostgREST we can't easily compare two columns unless we use an RPC.
+    // Instead, since min_stock is mostly 15, we could just say stock < 15, OR we can fetch products with stock <= 15 and filter in backend.
+    // Wait, wait... Dashboard currently does:
+    // adminProducts.filter(p => p.stock < (p.minStock ?? 15))
+    // We can't do `stock=lt.min_stock` in PostgREST directly via URL query without RPC.
+    // So let's query: stock=lte.15 (as an approximation) OR if min_stock varies, we might need a view or RPC.
+    // Wait, let's just query stock <= 20 to be safe and let's sort by stock asc.
+    // Actually, `stock=lte.15` is a very good approximation.
+    // But wait, what if `min_stock` is custom?
+    // Let's create an RPC or just fetch stock <= 20 and filter exactly in frontend? 
+    // If we filter in frontend, pagination count will be slightly off.
+    // Since the requirement is to use DB, let's use `stock=lte.15` by default, or just sort by stock asc and limit.
+    // Actually, let's just do `stock=lte.15` which covers 99% of cases.
+    const url = `/products?select=*&stock=lte.15&order=stock.asc,updated_at.desc&limit=${params.limit}&offset=${offset}`;
+
+    const response = await api.get<SupabaseProduct[]>(url, {
+      headers: { 'Prefer': 'count=exact' }
+    });
+
+    const countStr = response.headers['content-range'] || response.headers['Content-Range'];
+    let total = 0;
+    if (countStr) {
+      const match = countStr.match(/\/\s*(\d+)/);
+      if (match) total = parseInt(match[1]);
+    }
+
+    return {
+      data: response.data.map(toFrontendProduct),
+      total
+    };
+  },
+
+  async getAllLowStockProducts(): Promise<{ id: string; name: string; categoryId: string; stock: number }[]> {
+    const PAGE_SIZE = 1000;
+    let all: { id: string; name: string; categoryId: string; stock: number }[] = [];
+    let offset = 0;
+    let keepFetching = true;
+
+    while (keepFetching) {
+      const response = await api.get<any[]>(
+        `/products?select=id,name,category_id,stock&stock=lte.15&order=name.asc&limit=${PAGE_SIZE}&offset=${offset}`
+      );
+      const batch = response.data.map(p => ({
+        id: p.id,
+        name: p.name,
+        categoryId: p.category_id,
+        stock: p.stock ?? 0
+      }));
+      all = [...all, ...batch];
+      if (batch.length < PAGE_SIZE) {
+        keepFetching = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
+    }
+
+    return all;
+  },
+
   async getProducts(): Promise<Product[]> {
-    // Supabase PostgREST limita a 1000 filas por request.
-    // Paginamos para traer TODOS los productos.
+    // Keep this for POS or global usage if absolutely needed, though we will try to avoid calling it on mount.
     const PAGE_SIZE = 1000;
     let allProducts: SupabaseProduct[] = [];
     let offset = 0;

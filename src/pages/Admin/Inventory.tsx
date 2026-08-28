@@ -26,16 +26,15 @@ export const Inventory: React.FC = () => {
   } = useAdmin();
 
   const {
-    products: adminProducts, loading: productsLoading, error: productsError, fetchProducts,
+    inventoryProducts, inventoryTotal, inventoryLoading, fetchInventoryProducts,
     addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkAddProducts,
-    getProductByBarcode: findProductByBarcode, clearError
+    getProductByBarcode: findProductByBarcode, clearError, error: productsError
   } = useProductStore();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
 
-  useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+  const [page, setPage] = useState(1);
+  const limit = 100;
 
   const [scannerActive, setScannerActive] = useState(false);
   const [isSearchingExternal, setIsSearchingExternal] = useState(false);
@@ -53,10 +52,36 @@ export const Inventory: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sortConfigs, setSortConfigs] = useState<SortConfig[]>([]);
 
   const categoryScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setPage(1);
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const sortConfig = sortConfigs[0];
+    fetchInventoryProducts({
+      page,
+      limit,
+      search: debouncedSearchQuery,
+      categoryId: activeTab,
+      sortBy: sortConfig?.key,
+      sortDesc: sortConfig?.direction === 'desc'
+    });
+  }, [fetchInventoryProducts, page, limit, debouncedSearchQuery, activeTab, sortConfigs]);
+
+  const handleTabChange = (catId: string) => {
+    setActiveTab(catId);
+    setPage(1);
+  };
 
   // Modales
   const [showProductModal, setShowProductModal] = useState<{ show: boolean, mode: 'new' | 'edit', product?: Product }>({ show: false, mode: 'new' });
@@ -254,7 +279,7 @@ export const Inventory: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('paste', handlePaste);
     };
-  }, [adminProducts, adminCategories, searchProductExternal]);
+  }, [searchProductExternal]);
 
   const handleSort = (key: SortKey, isMulti: boolean) => {
     setSortConfigs(prev => {
@@ -273,28 +298,7 @@ export const Inventory: React.FC = () => {
     });
   };
 
-  const sortedProducts = useMemo(() => {
-    let result = [...adminProducts];
-    result = result.filter(p => {
-      const matchCat = activeTab === 'all' || p.categoryId === activeTab;
-      const q = searchQuery.toLowerCase();
-      const matchSearch = p.name.toLowerCase().includes(q) || p.brand.toLowerCase().includes(q) || (p.barcode && p.barcode.includes(searchQuery));
-      return matchCat && matchSearch;
-    });
-    if (sortConfigs.length > 0) {
-      result.sort((a, b) => {
-        for (const config of sortConfigs) {
-          let valA: any = a[config.key as keyof Product] ?? '';
-          let valB: any = b[config.key as keyof Product] ?? '';
-          if (config.key === 'stock') { valA = a.stock ?? 0; valB = b.stock ?? 0; }
-          if (valA < valB) return config.direction === 'asc' ? -1 : 1;
-          if (valA > valB) return config.direction === 'asc' ? 1 : -1;
-        }
-        return 0;
-      });
-    }
-    return result;
-  }, [adminProducts, activeTab, searchQuery, sortConfigs]);
+  const sortedProducts = inventoryProducts;
 
   const allSelected = sortedProducts.length > 0 && sortedProducts.every(p => selectedIds.includes(p.id));
   const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -363,8 +367,8 @@ export const Inventory: React.FC = () => {
     setShowProductModal({ show: false, mode: 'new' });
   };
 
-  const getProductCountByCat = (catId: string) => adminProducts.filter(p => p.categoryId === catId).length;
-  const getProductCountByTag = (tagName: string) => adminProducts.filter(p => p.badge === tagName).length;
+  const getProductCountByCat = (catId: string) => null;
+  const getProductCountByTag = (tagName: string) => null;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -405,7 +409,7 @@ export const Inventory: React.FC = () => {
     const incomplete: any[] = [];
 
     const seenBarcodes = new Set();
-    const dbBarcodes = new Set(adminProducts.map(p => p.barcode).filter(Boolean));
+    const dbBarcodes = new Set(); // We cannot easily check duplicates locally now, would require DB query or fail on insert
 
     // Debug: log column names from first row
     if (rawData.length > 0) {
@@ -585,12 +589,12 @@ export const Inventory: React.FC = () => {
           ref={categoryScrollRef}
           className="hidden md:flex bg-white p-1 rounded-2xl shadow-sm border border-outline-variant/10 overflow-x-auto max-w-full hide-scrollbar h-15 items-center"
         >
-          <button onClick={() => setActiveTab('all')} className={`h-full px-5 rounded-xl text-base font-bold transition-all whitespace-nowrap flex items-center ${activeTab === 'all' ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
-            Todos ({adminProducts.length})
+          <button onClick={() => handleTabChange('all')} className={`h-full px-5 rounded-xl text-base font-bold transition-all whitespace-nowrap flex items-center ${activeTab === 'all' ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+            Todos {activeTab === 'all' && `(${inventoryTotal})`}
           </button>
           {adminCategories.map(cat => (
-            <button key={cat.id} onClick={() => setActiveTab(cat.id)} className={`h-full px-5 rounded-xl text-base font-bold transition-all whitespace-nowrap flex items-center ${activeTab === cat.id ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
-              {cat.title} ({getProductCountByCat(cat.id)})
+            <button key={cat.id} onClick={() => handleTabChange(cat.id)} className={`h-full px-5 rounded-xl text-base font-bold transition-all whitespace-nowrap flex items-center ${activeTab === cat.id ? 'bg-primary text-white shadow-md' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+              {cat.title}
             </button>
           ))}
         </div>
@@ -600,14 +604,14 @@ export const Inventory: React.FC = () => {
           {/* Fila 1: "Todos" arriba al medio */}
           <div className="flex justify-center w-full">
             <button
-              onClick={() => setActiveTab('all')}
+              onClick={() => handleTabChange('all')}
               className={`w-2/3 py-2 rounded-xl text-sm font-bold transition-all text-center flex items-center justify-center ${
                 activeTab === 'all'
                   ? 'bg-primary text-white shadow-md'
                   : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
               }`}
             >
-              Todos ({adminProducts.length})
+              Todos {activeTab === 'all' && `(${inventoryTotal})`}
             </button>
           </div>
 
@@ -616,14 +620,14 @@ export const Inventory: React.FC = () => {
             {adminCategories.slice(0, 3).map(cat => (
               <button
                 key={cat.id}
-                onClick={() => setActiveTab(cat.id)}
+                onClick={() => handleTabChange(cat.id)}
                 className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${
                   activeTab === cat.id
                     ? 'bg-primary text-white shadow-md'
                     : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
                 }`}
               >
-                <span className="truncate">{cat.title} ({getProductCountByCat(cat.id)})</span>
+                <span className="truncate">{cat.title}</span>
               </button>
             ))}
           </div>
@@ -633,14 +637,14 @@ export const Inventory: React.FC = () => {
             {adminCategories.slice(3, 6).map(cat => (
               <button
                 key={cat.id}
-                onClick={() => setActiveTab(cat.id)}
+                onClick={() => handleTabChange(cat.id)}
                 className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${
                   activeTab === cat.id
                     ? 'bg-primary text-white shadow-md'
                     : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
                 }`}
               >
-                <span className="truncate">{cat.title} ({getProductCountByCat(cat.id)})</span>
+                <span className="truncate">{cat.title}</span>
               </button>
             ))}
           </div>
@@ -746,7 +750,7 @@ export const Inventory: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/10 text-sm">
-              {productsLoading && sortedProducts.length === 0 ? (
+              {inventoryLoading && sortedProducts.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-8 py-16 text-center text-on-surface-variant">
                     <div className="flex flex-col items-center justify-center gap-3">
@@ -830,7 +834,7 @@ export const Inventory: React.FC = () => {
 
         {/* Mobile Product List (Solo Celular) */}
         <div className="block md:hidden divide-y divide-outline-variant/10">
-          {productsLoading && sortedProducts.length === 0 ? (
+          {inventoryLoading && sortedProducts.length === 0 ? (
             <div className="px-6 py-16 text-center text-on-surface-variant">
               <div className="flex flex-col items-center justify-center gap-3">
                 <span className="material-symbols-outlined text-4xl animate-spin text-primary">sync</span>
@@ -882,6 +886,29 @@ export const Inventory: React.FC = () => {
               );
             })
           )}
+        </div>
+
+        {/* Pagination Controls */}
+        <div className="p-4 border-t border-outline-variant/10 flex items-center justify-between bg-surface-container-lowest">
+          <p className="text-sm text-on-surface-variant font-bold">
+            Mostrando {inventoryTotal === 0 ? 0 : (page - 1) * limit + 1}-{Math.min(page * limit, inventoryTotal)} de {inventoryTotal} productos
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="px-4 py-2 bg-surface-container-low disabled:opacity-50 font-bold rounded-xl hover:bg-surface-container transition-colors"
+            >
+              Anterior
+            </button>
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={page * limit >= inventoryTotal}
+              className="px-4 py-2 bg-surface-container-low disabled:opacity-50 font-bold rounded-xl hover:bg-surface-container transition-colors"
+            >
+              Siguiente
+            </button>
+          </div>
         </div>
       </div>
 

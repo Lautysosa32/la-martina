@@ -4,11 +4,13 @@ import { useAdmin } from '../../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useProductStore } from '../../stores/useProductStore';
+import { productsService } from '../../services/products.service';
 
 export const Dashboard: React.FC = () => {
   const { 
-    totalRevenue, ordersRevenue, posRevenue, totalDebtInStreet, activeOrdersCount, lowStockCount, totalCustomers, 
-    orders, lowStockProducts, updateStock, adminCategories, getOrderTimestamp,
+    totalRevenue, ordersRevenue, posRevenue, totalDebtInStreet, activeOrdersCount, totalCustomers, 
+    orders, adminCategories, getOrderTimestamp,
     privacyMode, formatCurrency
   } = useAdmin();
   const navigate = useNavigate();
@@ -23,6 +25,21 @@ export const Dashboard: React.FC = () => {
 
   const [period, setPeriod] = useState('Últimos 30 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
+
+  const {
+    lowStockDashboardProducts: lowStockProducts,
+    lowStockDashboardTotal: lowStockCount,
+    lowStockDashboardLoading,
+    fetchLowStockDashboardProducts,
+    updateStock,
+  } = useProductStore();
+
+  const [page, setPage] = useState(1);
+  const limit = 100;
+
+  useEffect(() => {
+    fetchLowStockDashboardProducts({ page, limit });
+  }, [fetchLowStockDashboardProducts, page, limit]);
 
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -129,58 +146,87 @@ export const Dashboard: React.FC = () => {
     return orders.filter(o => o.source !== 'pos').slice(0, 5);
   }, [orders]);
 
-  const handleGenerateStockReport = () => {
-    const filteredProducts = lowStockProducts.filter(p => selectedForReport.has(p.id));
-    
-    if (filteredProducts.length === 0) {
-      setDashboardError("Seleccioná al menos un producto para la lista.");
-      setTimeout(() => setDashboardError(null), 3000);
-      return;
-    }
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-    const sortedProducts = [...filteredProducts].sort((a, b) => {
-      const catA = adminCategories.find(c => c.id === a.categoryId)?.title || '';
-      const catB = adminCategories.find(c => c.id === b.categoryId)?.title || '';
-      return catA.localeCompare(catB);
-    });
+  const handleGenerateStockReport = async () => {
+    let productsToReport: { name: string; categoryId: string; stock: number }[] = [];
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    setIsGeneratingReport(true);
+    try {
+      // If all items on current page are selected (or default state), fetch complete list from DB
+      if (selectedForReport.size === lowStockProducts.length) {
+        productsToReport = await productsService.getAllLowStockProducts();
+      } else {
+        // Only report the selected items from the page
+        productsToReport = lowStockProducts
+          .filter(p => selectedForReport.has(p.id))
+          .map(p => ({
+            name: p.name,
+            categoryId: p.categoryId,
+            stock: p.stock
+          }));
+      }
 
-    const rows = sortedProducts.map(p => `
-      <tr style="border-bottom: 1px solid #eee;">
-        <td style="padding: 12px; font-weight: bold;">${p.name}</td>
-        <td style="padding: 12px;">${adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId}</td>
-        <td style="padding: 12px; font-weight: bold; color: #ff5252;">${p.stock}</td>
-      </tr>
-    `).join('');
+      if (productsToReport.length === 0) {
+        setDashboardError("Seleccioná al menos un producto para la lista.");
+        setTimeout(() => setDashboardError(null), 3000);
+        setIsGeneratingReport(false);
+        return;
+      }
 
-    printWindow.document.write(`
-      <html><head><title>Reporte de Stock</title>
-      <style>body { font-family: system-ui; padding: 40px; color: #1a1a1a; } table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; } th { background: #f8f9fa; padding: 12px; font-weight: bold; border-bottom: 2px solid #ddd; } @media print { .no-print { display: none; } body { padding: 0; } }</style>
-      </head><body>
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
-            <div>
-              <h1 style="margin: 0 0 8px 0; color: #e62e05;">Reporte de Stock Crítico</h1>
-              <p style="margin: 0; color: #666; font-weight: bold;">La Martina - Generado el ${new Date().toLocaleDateString('es-AR')}</p>
+      const sortedProducts = [...productsToReport].sort((a, b) => {
+        const catA = adminCategories.find(c => c.id === a.categoryId)?.title || '';
+        const catB = adminCategories.find(c => c.id === b.categoryId)?.title || '';
+        return catA.localeCompare(catB);
+      });
+
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        setIsGeneratingReport(false);
+        return;
+      }
+
+      const rows = sortedProducts.map(p => `
+        <tr style="border-bottom: 1px solid #eee;">
+          <td style="padding: 12px; font-weight: bold;">${p.name}</td>
+          <td style="padding: 12px;">${adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId}</td>
+          <td style="padding: 12px; font-weight: bold; color: #ff5252;">${p.stock}</td>
+        </tr>
+      `).join('');
+
+      printWindow.document.write(`
+        <html><head><title>Reporte de Stock</title>
+        <style>body { font-family: system-ui; padding: 40px; color: #1a1a1a; } table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; } th { background: #f8f9fa; padding: 12px; font-weight: bold; border-bottom: 2px solid #ddd; } @media print { .no-print { display: none; } body { padding: 0; } }</style>
+        </head><body>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
+              <div>
+                <h1 style="margin: 0 0 8px 0; color: #e62e05;">Reporte de Stock Crítico (${sortedProducts.length} productos)</h1>
+                <p style="margin: 0; color: #666; font-weight: bold;">La Martina - Generado el ${new Date().toLocaleDateString('es-AR')}</p>
+              </div>
+              <button onclick="window.print()" class="no-print" style="background: #e62e05; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer;">Imprimir / Guardar PDF</button>
             </div>
-            <button onclick="window.print()" class="no-print" style="background: #e62e05; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer;">Imprimir / Guardar PDF</button>
-          </div>
 
-          <table>
-            <thead>
-              <tr>
-                <th>Producto</th>
-                <th>Categoría</th>
-                <th>Stock Actual</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Categoría</th>
+                  <th>Stock Actual</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    } catch (err) {
+      console.error("Error generating stock report:", err);
+      setDashboardError("Error al generar el reporte de stock.");
+      setTimeout(() => setDashboardError(null), 3000);
+    } finally {
+      setIsGeneratingReport(false);
+    }
   };
 
   return (
@@ -371,14 +417,48 @@ export const Dashboard: React.FC = () => {
             )}
           </div>
 
+          {/* Pagination Controls */}
+          {lowStockProducts.length > 0 && (
+            <div className="p-4 border-t border-outline-variant/5 flex items-center justify-between bg-surface-container-lowest">
+              <p className="text-xs text-on-surface-variant font-bold">
+                Mostrando {(page - 1) * limit + 1}-{Math.min(page * limit, lowStockCount)} de {lowStockCount}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="px-3 py-1.5 bg-surface-container-low disabled:opacity-50 text-xs font-bold rounded-xl hover:bg-surface-container transition-colors"
+                >
+                  Anterior
+                </button>
+                <button
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={page * limit >= lowStockCount}
+                  className="px-3 py-1.5 bg-surface-container-low disabled:opacity-50 text-xs font-bold rounded-xl hover:bg-surface-container transition-colors"
+                >
+                  Siguiente
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="p-6 pt-0 mt-auto border-t border-outline-variant/5">
             <button 
               onClick={handleGenerateStockReport}
               className="w-full mt-6 bg-primary text-white font-bold py-4 rounded-2xl hover:bg-primary/90 transition-all shadow-md shadow-primary/20 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
-              disabled={lowStockProducts.length === 0}
+              disabled={lowStockProducts.length === 0 || isGeneratingReport}
             >
-              <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
-              Generar Lista de Compra
+              {isGeneratingReport ? (
+                <>
+                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  Generando Lista Completa...
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
+                  Generar Lista de Compra
+                </>
+              )}
             </button>
           </div>
         </div>

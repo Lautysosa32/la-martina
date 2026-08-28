@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { useAdmin } from '../../context/AdminContext';
 import { products } from '../../data/mockData';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { AdminNotificationCenter } from '../../components/AdminNotificationCenter';
 
 import { PermissionKey } from '../../types/permissions.types';
 
@@ -399,14 +400,7 @@ export const AdminLayout: React.FC = () => {
             )}
 
             {/* Notifications */}
-            <button className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-outline-variant/10 shadow-sm relative">
-              <span className="material-symbols-outlined" aria-hidden="true" translate="no">notifications</span>
-              {newOrdersCount > 0 && (
-                <span className="absolute top-2 right-2 w-5 h-5 bg-error rounded-full text-white text-[10px] font-bold flex items-center justify-center">
-                  {newOrdersCount}
-                </span>
-              )}
-            </button>
+            <AdminNotificationCenter />
 
             {/* Profile */}
             <div className="flex items-center gap-3 ml-4 bg-white p-1.5 pr-4 rounded-2xl border border-outline-variant/10 shadow-sm">

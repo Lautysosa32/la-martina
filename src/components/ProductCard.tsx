@@ -97,16 +97,16 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
         <div className="flex flex-col min-w-0 shrink">
           <div className={`font-price-display font-bold truncate transition-all duration-250 ${
             (quantity > 0 || showQuantity) 
-              ? 'text-[13px] xs:text-[14px] sm:text-[15px]' 
-              : 'text-[16px] xs:text-[17px] sm:text-[18px]'
+              ? 'text-[13px] sm:text-[14px]' 
+              : 'text-[15px] sm:text-[17px]'
           }`}>
             ${(product.price ?? 0).toLocaleString('es-AR')}
           </div>
           {product.originalPrice && (
             <div className={`text-on-surface-variant line-through truncate transition-all duration-250 ${
               (quantity > 0 || showQuantity)
-                ? 'text-[9px] sm:text-[10px]'
-                : 'text-[11px] sm:text-[12px]'
+                ? 'text-[9px]'
+                : 'text-[10px] sm:text-[11px]'
             }`}>
               ${product.originalPrice.toLocaleString('es-AR')}
             </div>

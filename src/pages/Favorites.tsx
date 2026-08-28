@@ -39,7 +39,7 @@ export const Favorites: React.FC = () => {
       </div>
 
       {favorites.length > 0 ? (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-gutter">
+        <div className="product-grid">
           {favorites.map((product) => (
             <ProductCard key={product.id} product={product} />
           ))}

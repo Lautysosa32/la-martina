@@ -8,6 +8,18 @@ interface ProductState {
   error: string | null;
   
   fetchProducts: () => Promise<void>;
+  
+  // Paginated states
+  inventoryProducts: Product[];
+  inventoryTotal: number;
+  inventoryLoading: boolean;
+  fetchInventoryProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; sortBy?: string; sortDesc?: boolean }) => Promise<void>;
+
+  lowStockDashboardProducts: Product[];
+  lowStockDashboardTotal: number;
+  lowStockDashboardLoading: boolean;
+  fetchLowStockDashboardProducts: (params: { page: number; limit: number }) => Promise<void>;
+
   addProduct: (product: CreateProductInput) => Promise<Product | null>;
   updateProduct: (id: string, updates: UpdateProductInput) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
@@ -30,16 +42,39 @@ export const useProductStore = create<ProductState>((set, get) => ({
   loading: false,
   error: null,
 
+  inventoryProducts: [],
+  inventoryTotal: 0,
+  inventoryLoading: false,
+
+  lowStockDashboardProducts: [],
+  lowStockDashboardTotal: 0,
+  lowStockDashboardLoading: false,
+
   fetchProducts: async () => {
-    set({ loading: true, error: null });
+    // Ya no descargamos todos los productos al inicio para optimizar la carga.
+    // Solo marcamos como cargado. La caja (POS) consultará a la DB al escanear.
+    set({ loading: false });
+  },
+
+  fetchInventoryProducts: async (params) => {
+    set({ inventoryLoading: true, error: null });
     try {
-      console.log('🔄 Fetching products from Supabase...');
-      const products = await productsService.getProducts();
-      set({ products, loading: false });
-      console.log('✅ Products fetched successfully');
+      const { data, total } = await productsService.getProductsPaginated(params);
+      set({ inventoryProducts: data, inventoryTotal: total, inventoryLoading: false });
     } catch (err: any) {
-      console.error('❌ Error fetching products:', err);
-      set({ error: getErrorMessage(err, 'Error al obtener productos'), loading: false });
+      console.error('❌ Error fetching inventory products:', err);
+      set({ error: getErrorMessage(err, 'Error al obtener productos del inventario'), inventoryLoading: false });
+    }
+  },
+
+  fetchLowStockDashboardProducts: async (params) => {
+    set({ lowStockDashboardLoading: true, error: null });
+    try {
+      const { data, total } = await productsService.getLowStockProductsPaginated(params);
+      set({ lowStockDashboardProducts: data, lowStockDashboardTotal: total, lowStockDashboardLoading: false });
+    } catch (err: any) {
+      console.error('❌ Error fetching low stock products:', err);
+      set({ error: getErrorMessage(err, 'Error al obtener alertas de stock'), lowStockDashboardLoading: false });
     }
   },
 
@@ -64,32 +99,78 @@ export const useProductStore = create<ProductState>((set, get) => ({
   updateProduct: async (id, updates) => {
     // Optimistic update
     const previousProducts = get().products;
-    set(state => ({
-      products: state.products.map(p => p.id === id ? { ...p, ...updates } : p),
-      error: null
-    }));
+    const previousInventory = get().inventoryProducts;
+    const previousLowStock = get().lowStockDashboardProducts;
+    const previousLowStockTotal = get().lowStockDashboardTotal;
+
+    set(state => {
+      let newLowStock = state.lowStockDashboardProducts;
+      let newLowStockTotal = state.lowStockDashboardTotal;
+
+      if (updates.stock !== undefined) {
+        const item = state.lowStockDashboardProducts.find(p => p.id === id);
+        const minStock = updates.minStock ?? item?.minStock ?? 15;
+        const isLow = updates.stock <= minStock;
+        if (item) {
+          if (!isLow) {
+            newLowStock = state.lowStockDashboardProducts.filter(p => p.id !== id);
+            newLowStockTotal = Math.max(0, state.lowStockDashboardTotal - 1);
+          } else {
+            newLowStock = state.lowStockDashboardProducts.map(p => p.id === id ? { ...p, ...updates } : p);
+          }
+        }
+      } else {
+        newLowStock = state.lowStockDashboardProducts.map(p => p.id === id ? { ...p, ...updates } : p);
+      }
+
+      return {
+        products: state.products.map(p => p.id === id ? { ...p, ...updates } : p),
+        inventoryProducts: state.inventoryProducts.map(p => p.id === id ? { ...p, ...updates } : p),
+        lowStockDashboardProducts: newLowStock,
+        lowStockDashboardTotal: newLowStockTotal,
+        error: null
+      };
+    });
 
     try {
       console.log(`🔄 Updating product ${id}...`);
       const updatedProduct = await productsService.updateProduct(id, updates);
-      // Actualizamos con el dato real de la DB para asegurarnos de que la fecha de updatedAt u otros triggers se sincronicen
       set(state => ({
-        products: state.products.map(p => p.id === id ? updatedProduct : p)
+        products: state.products.map(p => p.id === id ? updatedProduct : p),
+        inventoryProducts: state.inventoryProducts.map(p => p.id === id ? updatedProduct : p),
+        lowStockDashboardProducts: state.lowStockDashboardProducts.map(p => p.id === id ? updatedProduct : p)
       }));
       console.log('✅ Product updated successfully');
       return true;
     } catch (err: any) {
       console.error(`❌ Error updating product ${id}:`, err);
       // Rollback
-      set({ products: previousProducts, error: getErrorMessage(err, 'Error al actualizar producto') });
+      set({ 
+        products: previousProducts, 
+        inventoryProducts: previousInventory,
+        lowStockDashboardProducts: previousLowStock,
+        lowStockDashboardTotal: previousLowStockTotal,
+        error: getErrorMessage(err, 'Error al actualizar producto') 
+      });
       return false;
     }
   },
 
   deleteProduct: async (id) => {
     const previousProducts = get().products;
+    const previousInventory = get().inventoryProducts;
+    const previousInventoryTotal = get().inventoryTotal;
+    const previousLowStock = get().lowStockDashboardProducts;
+    const previousLowStockTotal = get().lowStockDashboardTotal;
+
+    const wasInLowStock = previousLowStock.some(p => p.id === id);
+
     set(state => ({
       products: state.products.filter(p => p.id !== id),
+      inventoryProducts: state.inventoryProducts.filter(p => p.id !== id),
+      inventoryTotal: Math.max(0, state.inventoryTotal - 1),
+      lowStockDashboardProducts: state.lowStockDashboardProducts.filter(p => p.id !== id),
+      lowStockDashboardTotal: wasInLowStock ? Math.max(0, state.lowStockDashboardTotal - 1) : state.lowStockDashboardTotal,
       error: null
     }));
 
@@ -101,24 +182,64 @@ export const useProductStore = create<ProductState>((set, get) => ({
     } catch (err: any) {
       console.error(`❌ Error deleting product ${id}:`, err);
       // Rollback
-      set({ products: previousProducts, error: getErrorMessage(err, 'Error al eliminar producto') });
+      set({ 
+        products: previousProducts, 
+        inventoryProducts: previousInventory,
+        inventoryTotal: previousInventoryTotal,
+        lowStockDashboardProducts: previousLowStock,
+        lowStockDashboardTotal: previousLowStockTotal,
+        error: getErrorMessage(err, 'Error al eliminar producto') 
+      });
       return false;
     }
   },
 
   updateStock: async (id, stock) => {
     const previousProducts = get().products;
-    set(state => ({
-      products: state.products.map(p => p.id === id ? { ...p, stock } : p),
-      error: null
-    }));
+    const previousInventory = get().inventoryProducts;
+    const previousLowStock = get().lowStockDashboardProducts;
+    const previousLowStockTotal = get().lowStockDashboardTotal;
+
+    // Optimistic update
+    set(state => {
+      const item = state.lowStockDashboardProducts.find(p => p.id === id);
+      const minStock = item?.minStock ?? 15;
+      const isLow = stock <= minStock;
+
+      let newLowStock = state.lowStockDashboardProducts;
+      let newLowStockTotal = state.lowStockDashboardTotal;
+
+      if (item) {
+        if (!isLow) {
+          // If stock is replenished above threshold, remove immediately from list
+          newLowStock = state.lowStockDashboardProducts.filter(p => p.id !== id);
+          newLowStockTotal = Math.max(0, state.lowStockDashboardTotal - 1);
+        } else {
+          newLowStock = state.lowStockDashboardProducts.map(p => p.id === id ? { ...p, stock } : p);
+        }
+      }
+
+      return {
+        products: state.products.map(p => p.id === id ? { ...p, stock } : p),
+        inventoryProducts: state.inventoryProducts.map(p => p.id === id ? { ...p, stock } : p),
+        lowStockDashboardProducts: newLowStock,
+        lowStockDashboardTotal: newLowStockTotal,
+        error: null
+      };
+    });
 
     try {
       await productsService.updateStock(id, stock);
       return true;
     } catch (err: any) {
       console.error(`❌ Error updating stock for product ${id}:`, err);
-      set({ products: previousProducts, error: getErrorMessage(err, 'Error al actualizar stock') });
+      set({ 
+        products: previousProducts,
+        inventoryProducts: previousInventory,
+        lowStockDashboardProducts: previousLowStock,
+        lowStockDashboardTotal: previousLowStockTotal,
+        error: getErrorMessage(err, 'Error al actualizar stock') 
+      });
       return false;
     }
   },

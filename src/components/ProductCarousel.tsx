@@ -7,17 +7,71 @@ interface ProductCarouselProps {
   products: Product[];
 }
 
+/**
+ * Devuelve cuántos productos mostrar por slide según el ancho de pantalla:
+ *   < 768px  → 4  (2×2)
+ *   768–1023px → 6  (3×2)
+ *   ≥ 1024px  → 8  (4×2)
+ */
+function useItemsPerPage(): number {
+  const getItems = () => {
+    if (window.innerWidth >= 1024) return 8;
+    if (window.innerWidth >= 768) return 6;
+    return 4;
+  };
+
+  const [items, setItems] = useState<number>(getItems);
+
+  useEffect(() => {
+    const handler = () => setItems(getItems());
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  return items;
+}
+
+/**
+ * Devuelve cuántas columnas usar en el grid del slide según el ancho de pantalla.
+ */
+function useGridCols(): number {
+  const getCols = () => {
+    if (window.innerWidth >= 1024) return 4;
+    if (window.innerWidth >= 768) return 3;
+    return 2;
+  };
+
+  const [cols, setCols] = useState<number>(getCols);
+
+  useEffect(() => {
+    const handler = () => setCols(getCols());
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  return cols;
+}
+
 export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, products }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const itemsPerPage = 4;
+  const itemsPerPage = useItemsPerPage();
+  const gridCols = useGridCols();
 
-  // Chunk products into groups of 4 for the 2x2 grid slides
-  const productChunks = [];
+  // Chunk products into groups of itemsPerPage for the grid slides
+  const productChunks: Product[][] = [];
   for (let i = 0; i < products.length; i += itemsPerPage) {
     productChunks.push(products.slice(i, i + itemsPerPage));
   }
   const totalPages = productChunks.length;
+
+  // Reset to first page when itemsPerPage changes (breakpoint crossed)
+  useEffect(() => {
+    setActiveIndex(0);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ left: 0, behavior: 'instant' });
+    }
+  }, [itemsPerPage]);
 
   const handleScroll = () => {
     if (scrollRef.current) {
@@ -40,6 +94,11 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
     }
   };
 
+  // Inline style para el grid-template-columns del slide
+  const slideGridStyle: React.CSSProperties = {
+    gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+  };
+
   return (
     <section className="mt-10">
       <h2 className="font-headline-lg text-headline-lg text-[25px] text-on-background font-bold mb-4">
@@ -55,8 +114,8 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
           {productChunks.map((chunk, chunkIdx) => (
             <div
               key={chunkIdx}
-              className="snap-start shrink-0 w-full grid grid-cols-2 gap-x-4 gap-y-6 px-1"
-              style={{ gridTemplateRows: 'repeat(2, minmax(0, 1fr))' }}
+              className="snap-start shrink-0 w-full grid gap-x-3 gap-y-4 sm:gap-x-4 sm:gap-y-5 px-1"
+              style={slideGridStyle}
             >
               {chunk.map((product) => (
                 <div key={product.id} className="w-full">

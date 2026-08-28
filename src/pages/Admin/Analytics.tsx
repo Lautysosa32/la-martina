@@ -96,10 +96,10 @@ export const Analytics: React.FC = () => {
     filteredOrdersForPeriod.forEach(o => {
       o.items.forEach(item => {
         const prod = adminProducts.find(p => p.id === item.id);
-        const catId = prod?.categoryId || '';
-        if (Object.hasOwnProperty.call(revenueMap, catId)) {
-          revenueMap[catId] += item.price * item.quantity;
-        }
+        const rawCatId = prod?.categoryId || '';
+        // Normalizamos las categorías no encontradas o externas al grupo a 'almacen'
+        const catId = Object.hasOwnProperty.call(revenueMap, rawCatId) ? rawCatId : 'almacen';
+        revenueMap[catId] += item.price * item.quantity;
       });
     });
 
@@ -662,7 +662,7 @@ export const Analytics: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10 text-sm">
-                {topProducts.map((entry, idx) => (
+                {topProducts.slice(0, 10).map((entry, idx) => (
                   <tr key={entry.product.id} className="hover:bg-surface-container-lowest transition-colors">
                     <td className="px-8 py-4 font-bold text-on-surface-variant">{idx + 1}</td>
                     <td className="px-8 py-4">

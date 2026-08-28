@@ -29,7 +29,9 @@ export const Cart: React.FC = () => {
   }
 
   return (
-    <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-8 flex flex-col md:flex-row gap-8 items-start animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <>
+      {/* Layout principal */}
+      <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-8 pb-28 md:pb-8 flex flex-col md:flex-row gap-8 items-start animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex-1 w-full">
         <div className="mb-8">
           <h1 className="text-[25px] font-bold text-on-background mb-2">Mi Carrito</h1>
@@ -162,7 +164,8 @@ export const Cart: React.FC = () => {
         </div>
       </div>
 
-      <div className="w-full md:w-[380px] bg-white p-5 sm:p-6 rounded-xl shadow-md border border-outline-variant/10 h-fit sticky top-24">
+      {/* Panel resumen lateral — solo visible en desktop */}
+      <div className="hidden md:block w-full md:w-[380px] bg-white p-5 sm:p-6 rounded-xl shadow-md border border-outline-variant/10 h-fit sticky top-24">
         <h2 className="text-[22px] sm:text-[25px] font-bold text-on-background mb-6">Resumen de Compra</h2>
 
         <div className="mb-6">
@@ -231,5 +234,34 @@ export const Cart: React.FC = () => {
         }}
       />
     </div>
+
+    {/* Sticky bottom bar — solo visible en mobile */}
+    <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-outline-variant/20 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] px-4 py-3 z-40">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant/60">
+            {totalItems} {totalItems === 1 ? 'artículo' : 'artículos'}
+          </span>
+          <span className="text-[22px] font-bold text-primary leading-tight">
+            $ {finalTotal.toLocaleString('es-AR')}
+          </span>
+        </div>
+        {hasStockIssues ? (
+          <div className="flex-1 bg-gray-300 text-gray-500 font-label-sm py-3 rounded-full flex justify-center items-center gap-2 cursor-not-allowed">
+            <span className="material-symbols-outlined text-[16px]" aria-hidden="true" translate="no">warning</span>
+            <span className="text-sm">Ajustá cantidades</span>
+          </div>
+        ) : (
+          <Link
+            to="/checkout"
+            className="flex-1 bg-primary text-white font-label-sm py-3 rounded-full flex justify-center items-center gap-2 hover:bg-primary/90 transition-colors shadow-lg"
+          >
+            <span className="text-sm font-bold">Finalizar Compra</span>
+            <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">arrow_forward</span>
+          </Link>
+        )}
+      </div>
+    </div>
+  </>
   );
 };
