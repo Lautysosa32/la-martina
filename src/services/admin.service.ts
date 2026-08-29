@@ -17,42 +17,126 @@ export const fetchOrders = async (): Promise<AdminOrder[]> => {
     return []; 
   }
   
-  return (data || []).map((dbOrder: any) => ({
-    id: dbOrder.id,
-    date: dbOrder.date,
-    timestamp: dbOrder.timestamp,
-    customer: dbOrder.customer,
-    phone: dbOrder.phone,
-    dni: dbOrder.dni,
-    address: dbOrder.address,
-    deliveryTime: dbOrder.delivery_time,
-    method: dbOrder.method,
-    source: dbOrder.method === 'Caja Fija' ? 'pos' : 'web',
-    paymentMethod: dbOrder.payment_method,
-    paymentStatus: dbOrder.payment_status,
-    status: dbOrder.status,
-    total: dbOrder.total,
-    paidAmount: Number(dbOrder.paid_amount ?? (dbOrder.payment_status === 'Pagado' ? dbOrder.total : 0)),
-    discount: dbOrder.discount,
-    discountLabel: dbOrder.discount_label,
-    delivery_lat: dbOrder.delivery_lat,
-    delivery_lng: dbOrder.delivery_lng,
-    delivery_address_label: dbOrder.delivery_address_label,
-    delivery_house_number: dbOrder.delivery_house_number,
-    delivery_reference: dbOrder.delivery_reference,
-    delivery_notes: dbOrder.delivery_notes,
-    delivery_method: dbOrder.delivery_method,
-    items: (dbOrder.order_items || []).map((item: any) => ({
-      id: item.product_id,
-      name: item.name,
-      price: item.price,
-      quantity: item.quantity,
-      image: item.image
-    }))
-  }));
+  return (data || []).map((dbOrder: any) => {
+    let delivery_lat = dbOrder.delivery_lat ?? null;
+    let delivery_lng = dbOrder.delivery_lng ?? null;
+    let delivery_address_label = dbOrder.delivery_address_label ?? null;
+    let delivery_house_number = dbOrder.delivery_house_number ?? null;
+    let delivery_reference = dbOrder.delivery_reference ?? null;
+    let delivery_notes = dbOrder.delivery_notes ?? null;
+    let rawAddress = dbOrder.address || '';
+
+    // Extraer coordenadas y metadatos si estaban embebidos en el string de dirección
+    if (rawAddress) {
+      const geoMatch = rawAddress.match(/\[GEO:([-\d.]+),([-\d.]+)\]/);
+      if (geoMatch) {
+        if (!delivery_lat) delivery_lat = parseFloat(geoMatch[1]);
+        if (!delivery_lng) delivery_lng = parseFloat(geoMatch[2]);
+      }
+      const alturaMatch = rawAddress.match(/\[ALTURA:([^\]]+)\]/);
+      if (alturaMatch) {
+        if (!delivery_house_number) delivery_house_number = alturaMatch[1].trim();
+      }
+      const refMatch = rawAddress.match(/\[REF:([^\]]+)\]/);
+      if (refMatch) {
+        if (!delivery_reference) delivery_reference = refMatch[1].trim();
+      }
+      const notasMatch = rawAddress.match(/\[NOTAS:([^\]]+)\]/);
+      if (notasMatch) {
+        if (!delivery_notes) delivery_notes = notasMatch[1].trim();
+      }
+
+      // Fallback para pedidos anteriores con formato "Calle Nº 123 (Ref)"
+      if (!delivery_house_number) {
+        const legacyNroMatch = rawAddress.match(/Nº\s*([^\(\[]+)/i);
+        if (legacyNroMatch) delivery_house_number = legacyNroMatch[1].trim();
+      }
+      if (!delivery_reference) {
+        const legacyRefMatch = rawAddress.match(/\(([^\)\[]+)\)/);
+        if (legacyRefMatch) delivery_reference = legacyRefMatch[1].trim();
+      }
+
+      // Limpiar rawAddress para obtener la dirección/calle pura
+      let cleanAddress = rawAddress
+        .replace(/\s*\[GEO:[-\d.]+,[-\d.]+\]/g, '')
+        .replace(/\s*\[ALTURA:[^\]]+\]/g, '')
+        .replace(/\s*\[REF:[^\]]+\]/g, '')
+        .replace(/\s*\[NOTAS:[^\]]+\]/g, '')
+        .replace(/\s*Nº\s*[^\(\[]+/i, '')
+        .replace(/\s*\([^\)\[]+\)/g, '')
+        .trim();
+
+      if (!delivery_address_label || delivery_address_label === rawAddress) {
+        delivery_address_label = cleanAddress || rawAddress;
+      }
+      rawAddress = cleanAddress || rawAddress;
+    }
+
+    return {
+      id: dbOrder.id,
+      date: dbOrder.date,
+      timestamp: dbOrder.timestamp,
+      customer: dbOrder.customer,
+      phone: dbOrder.phone,
+      dni: dbOrder.dni,
+      address: delivery_address_label || rawAddress,
+      deliveryTime: dbOrder.delivery_time,
+      method: dbOrder.method,
+      source: dbOrder.method === 'Caja Fija' ? 'pos' : 'web',
+      paymentMethod: dbOrder.payment_method,
+      paymentStatus: dbOrder.payment_status,
+      status: dbOrder.status,
+      total: dbOrder.total,
+      paidAmount: Number(dbOrder.paid_amount ?? (dbOrder.payment_status === 'Pagado' ? dbOrder.total : 0)),
+      discount: dbOrder.discount,
+      discountLabel: dbOrder.discount_label,
+      delivery_lat,
+      delivery_lng,
+      delivery_address_label: delivery_address_label || rawAddress,
+      delivery_house_number: delivery_house_number ? String(delivery_house_number).trim() : null,
+      delivery_reference: delivery_reference ? String(delivery_reference).trim() : null,
+      delivery_notes: delivery_notes ? String(delivery_notes).trim() : null,
+      delivery_method: dbOrder.delivery_method,
+      items: (dbOrder.order_items || []).map((item: any) => ({
+        id: item.product_id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        image: item.image
+      }))
+    };
+  });
 };
 
 export const insertOrder = async (order: AdminOrder): Promise<void> => {
+  // Construir dirección enriquecida con metadatos estructurados para preservar todo
+  let baseAddressLabel = order.delivery_address_label || order.address || '';
+  // Limpiar cualquier tag previo si existiera
+  baseAddressLabel = baseAddressLabel
+    .replace(/\s*\[GEO:[-\d.]+,[-\d.]+\]/g, '')
+    .replace(/\s*\[ALTURA:[^\]]+\]/g, '')
+    .replace(/\s*\[REF:[^\]]+\]/g, '')
+    .replace(/\s*\[NOTAS:[^\]]+\]/g, '')
+    .replace(/\s*Nº\s*[^\(\[]+/i, '')
+    .replace(/\s*\([^\)\[]+\)/g, '')
+    .trim();
+
+  const metaParts: string[] = [];
+  if (order.delivery_house_number && order.delivery_house_number.trim()) {
+    metaParts.push(`[ALTURA:${order.delivery_house_number.trim()}]`);
+  }
+  if (order.delivery_reference && order.delivery_reference.trim()) {
+    metaParts.push(`[REF:${order.delivery_reference.trim()}]`);
+  }
+  if (order.delivery_notes && order.delivery_notes.trim()) {
+    metaParts.push(`[NOTAS:${order.delivery_notes.trim()}]`);
+  }
+  if (order.delivery_lat && order.delivery_lng) {
+    metaParts.push(`[GEO:${order.delivery_lat},${order.delivery_lng}]`);
+  }
+
+  const fullAddress = [baseAddressLabel, ...metaParts].filter(Boolean).join(' ');
+
   const dbOrder: any = {
     id: order.id,
     branch_id: BRANCH_ID,
@@ -60,7 +144,7 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
     timestamp: order.timestamp || Date.now(),
     customer: order.customer,
     phone: order.phone,
-    address: order.address,
+    address: fullAddress,
     delivery_time: order.deliveryTime,
     method: order.method,
     payment_method: order.paymentMethod,
@@ -72,31 +156,42 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
     discount_label: order.discountLabel
   };
   if (order.dni) dbOrder.dni = order.dni;
+  if (order.delivery_lat !== undefined) dbOrder.delivery_lat = order.delivery_lat;
+  if (order.delivery_lng !== undefined) dbOrder.delivery_lng = order.delivery_lng;
+  if (order.delivery_address_label !== undefined) dbOrder.delivery_address_label = order.delivery_address_label;
+  if (order.delivery_house_number !== undefined) dbOrder.delivery_house_number = order.delivery_house_number;
+  if (order.delivery_reference !== undefined) dbOrder.delivery_reference = order.delivery_reference;
+  if (order.delivery_notes !== undefined) dbOrder.delivery_notes = order.delivery_notes;
+  if (order.delivery_method !== undefined) dbOrder.delivery_method = order.delivery_method;
 
   const { error } = await supabase.from('orders').insert(dbOrder);
   if (error) {
-    console.error('Error inserting order:', error);
-    // Si falla por una columna extra como dni o paid_amount, intentar inserción base segura
-    const baseDbOrder = {
+    console.warn('Inserción con columnas extendidas de delivery falló, reintentando con columnas estándar:', error.message);
+    
+    // Inserción segura garantizada con columnas estándar de Supabase
+    const standardDbOrder: any = {
       id: order.id,
       branch_id: BRANCH_ID,
       date: order.date,
       timestamp: order.timestamp || Date.now(),
       customer: order.customer,
       phone: order.phone,
-      address: order.address,
+      address: fullAddress,
       delivery_time: order.deliveryTime,
       method: order.method,
       payment_method: order.paymentMethod,
       payment_status: order.paymentStatus,
       status: order.status,
       total: order.total,
+      paid_amount: order.paidAmount ?? (order.paymentStatus === 'Pagado' ? order.total : 0),
       discount: order.discount,
       discount_label: order.discountLabel
     };
-    const { error: retryError } = await supabase.from('orders').insert(baseDbOrder);
+    if (order.dni) standardDbOrder.dni = order.dni;
+
+    const { error: retryError } = await supabase.from('orders').insert(standardDbOrder);
     if (retryError) {
-      console.error('Retry insert error:', retryError);
+      console.error('Error insertando orden estándar:', retryError);
       alert(`Error guardando orden: ${retryError.message}`);
       return;
     }
@@ -131,6 +226,13 @@ export const updateOrderInDb = async (id: string, updates: Partial<AdminOrder>):
   if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
   if (updates.dni !== undefined) dbUpdates.dni = updates.dni;
   if (updates.customer !== undefined) dbUpdates.customer = updates.customer;
+  if (updates.delivery_lat !== undefined) dbUpdates.delivery_lat = updates.delivery_lat;
+  if (updates.delivery_lng !== undefined) dbUpdates.delivery_lng = updates.delivery_lng;
+  if (updates.delivery_address_label !== undefined) dbUpdates.delivery_address_label = updates.delivery_address_label;
+  if (updates.delivery_house_number !== undefined) dbUpdates.delivery_house_number = updates.delivery_house_number;
+  if (updates.delivery_reference !== undefined) dbUpdates.delivery_reference = updates.delivery_reference;
+  if (updates.delivery_notes !== undefined) dbUpdates.delivery_notes = updates.delivery_notes;
+  if (updates.delivery_method !== undefined) dbUpdates.delivery_method = updates.delivery_method;
   
   if (Object.keys(dbUpdates).length === 0) return;
 

@@ -20,6 +20,7 @@ export const Settings: React.FC = () => {
   const [storeForm, setStoreForm] = useState({ ...storeStatus });
   const [autoCloseForm, setAutoCloseForm] = useState<AutoCashCloseConfig>({ enabled: false, time: '22:00' });
   const [generalForm, setGeneralForm] = useState({ ...generalConfig });
+  const [simulatedKm, setSimulatedKm] = useState<number>(3);
 
   const [newBlockedPhone, setNewBlockedPhone] = useState('');
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
@@ -124,7 +125,10 @@ export const Settings: React.FC = () => {
         deliveryRadiusKm: 5,
         storeLat: -33.459009,
         storeLng: -67.551826,
-        blockedPhones: []
+        blockedPhones: [],
+        shippingBaseCost: 1000,
+        shippingCostPerKm: 400,
+        freeShippingMinAmount: 0
       };
       setGeneralForm(defaultGeneralConfig);
       updateGeneralConfig(defaultGeneralConfig);
@@ -558,6 +562,129 @@ export const Settings: React.FC = () => {
 
                 {openPanels['cobertura'] && (
                   <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    
+                    {/* Tarifas de Envío Dinámico */}
+                    <div className="bg-surface-container-lowest p-4 md:p-5 rounded-2xl border border-outline-variant/20 space-y-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="material-symbols-outlined text-primary text-[20px]">payments</span>
+                        <h4 className="text-sm font-black text-on-surface">Cálculo de Envío por Distancia</h4>
+                      </div>
+                      <p className="text-xs text-on-surface-variant">
+                        El costo de envío se calcula automáticamente: <strong className="text-on-surface">Tarifa Base + (Distancia en Km × Costo por Km)</strong>.
+                      </p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                            Tarifa Base de Envío ($)
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-on-surface-variant text-sm">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="50"
+                              value={generalForm.shippingBaseCost ?? 1000}
+                              onChange={e => setGeneralForm(p => ({ ...p, shippingBaseCost: parseFloat(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-outline-variant/20 rounded-xl pl-8 pr-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                              placeholder="1000"
+                            />
+                          </div>
+                          <span className="text-[10px] text-on-surface-variant/80 mt-1 block">Costo fijo inicial de arranque</span>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                            Costo por Kilómetro Adicional ($ / km)
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-on-surface-variant text-sm">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="10"
+                              value={generalForm.shippingCostPerKm ?? 400}
+                              onChange={e => setGeneralForm(p => ({ ...p, shippingCostPerKm: parseFloat(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-outline-variant/20 rounded-xl pl-8 pr-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                              placeholder="400"
+                            />
+                          </div>
+                          <span className="text-[10px] text-on-surface-variant/80 mt-1 block">Se multiplica por los km hasta el cliente</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-outline-variant/10">
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                          Envío Gratis a partir de ($) <span className="normal-case font-normal text-on-surface-variant">(Opcional, 0 = desactivado)</span>
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-on-surface-variant text-sm">$</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="500"
+                            value={generalForm.freeShippingMinAmount ?? 0}
+                            onChange={e => setGeneralForm(p => ({ ...p, freeShippingMinAmount: parseFloat(e.target.value) || 0 }))}
+                            className="w-full bg-white border border-outline-variant/20 rounded-xl pl-8 pr-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                            placeholder="0 para desactivar (Ej: 35000)"
+                          />
+                        </div>
+                        <span className="text-[10px] text-on-surface-variant/80 mt-1 block">
+                          {generalForm.freeShippingMinAmount && generalForm.freeShippingMinAmount > 0
+                            ? `Los pedidos desde $${generalForm.freeShippingMinAmount.toLocaleString('es-AR')} tendrán envío 100% bonificado.`
+                            : 'Envío gratis desactivado (se cobra siempre por distancia).'}
+                        </span>
+                      </div>
+
+                      {/* Simulador Interactivo de Tarifas */}
+                      <div className="mt-4 p-4 bg-primary/5 rounded-xl border border-primary/15">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-xs font-black text-primary uppercase tracking-wider flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[16px]">calculate</span>
+                            Simulador de Tarifas en Vivo
+                          </span>
+                          <span className="text-xs font-bold text-on-surface font-mono bg-white px-2.5 py-0.5 rounded-lg border border-outline-variant/20 shadow-xs">
+                            Distancia: {simulatedKm.toFixed(1)} km
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="20"
+                          step="0.5"
+                          value={simulatedKm}
+                          onChange={e => setSimulatedKm(parseFloat(e.target.value) || 1)}
+                          className="w-full h-2 bg-primary/20 rounded-lg appearance-none cursor-pointer accent-primary"
+                        />
+                        <div className="flex justify-between text-[10px] text-on-surface-variant font-bold mt-1">
+                          <span>0.5 km</span>
+                          <span>10 km</span>
+                          <span>20 km</span>
+                        </div>
+
+                        {/* Resultado de la simulación */}
+                        <div className="mt-3 p-3 bg-white rounded-lg border border-outline-variant/20 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                          <div>
+                            <p className="text-[11px] text-on-surface-variant font-medium">
+                              Fórmula: ${generalForm.shippingBaseCost || 0} + ({simulatedKm.toFixed(1)} km × ${generalForm.shippingCostPerKm || 0})
+                            </p>
+                            {simulatedKm > (generalForm.deliveryRadiusKm || 5) && (
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded mt-1 inline-block">
+                                ⚠️ Supera el radio máximo de {generalForm.deliveryRadiusKm || 5} km (Se bloqueará para envío)
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-right self-end sm:self-auto">
+                            <span className="text-[10px] font-bold text-on-surface-variant uppercase block">Costo Final Envío</span>
+                            <span className="text-lg font-black text-primary">
+                              ${Math.round((generalForm.shippingBaseCost || 0) + simulatedKm * (generalForm.shippingCostPerKm || 0)).toLocaleString('es-AR')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Radio Máximo y Coordenadas del Local */}
                     <div>
                       <div className="flex justify-between items-center mb-2">
                         <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider">Radio Máximo de Cobertura</label>

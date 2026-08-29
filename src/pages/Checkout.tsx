@@ -7,18 +7,7 @@ import { MapSelector } from '../components/MapSelector';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
 import { upsertCustomerProfile } from '../services/admin.service';
 import { checkCustomerOverdueDebt } from '../utils/billing-cycle';
-
-const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371; // Radio terrestre en km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
+import { calculateDistanceKm, calculateShippingCost } from '../utils/shipping';
 
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
@@ -63,18 +52,14 @@ export const Checkout: React.FC = () => {
   const [deliveryReference, setDeliveryReference] = useState<string>(
     lastSavedLoc?.reference || ''
   );
-  const [deliveryNotes, setDeliveryNotes] = useState<string>(
-    lastSavedLoc?.notes || ''
-  );
 
-  const saveLastDeliveryLocation = (coords: any, label: string, houseNum: string, ref: string, notes: string) => {
+  const saveLastDeliveryLocation = (coords: any, label: string, houseNum: string, ref: string) => {
     try {
       localStorage.setItem('la_martina_last_delivery_location', JSON.stringify({
         coords,
         addressLabel: label,
         houseNumber: houseNum,
-        reference: ref,
-        notes
+        reference: ref
       }));
     } catch (e) {
       console.error(e);
@@ -211,8 +196,23 @@ export const Checkout: React.FC = () => {
   const hasCuentaCorriente = !!currentCustomer?.hasCurrentAccount;
   const isRegisteredCustomer = !!(currentCustomer && currentCustomer.name && currentCustomer.name !== 'Invitado' && currentCustomer.name !== 'Sin Nombre');
 
-  const isAsap = formData.deliveryTime.includes('Lo antes posible');
-  const shippingCost = isPickup ? 0 : (items.length > 0 ? (isAsap ? 2500 : 1500) : 0);
+  // ─── Distance & Coverage Zone Check ──────────────────────────
+  const storeLat = generalConfig.storeLat ?? -33.459009;
+  const storeLng = generalConfig.storeLng ?? -67.551826;
+  const maxRadiusKm = generalConfig.deliveryRadiusKm ?? 5;
+
+  const currentDistanceKm = useMemo(() => {
+    if (isPickup) return 0;
+    const lat = usingProfileAddress ? user?.address_lat : deliveryCoords?.lat;
+    const lng = usingProfileAddress ? user?.address_lng : deliveryCoords?.lng;
+    if (lat === null || lat === undefined || lng === null || lng === undefined) return null;
+    return calculateDistanceKm(storeLat, storeLng, lat, lng);
+  }, [isPickup, usingProfileAddress, user, deliveryCoords, storeLat, storeLng]);
+
+  const isOutsideCoverage = useMemo(() => {
+    if (isPickup || currentDistanceKm === null) return false;
+    return currentDistanceKm > maxRadiusKm;
+  }, [isPickup, currentDistanceKm, maxRadiusKm]);
 
   // Dynamic order offers recalculation based on the phone typed at checkout
   const subtotalAfterItemDiscounts = totalPrice + cartOrderOfferDiscount;
@@ -225,6 +225,20 @@ export const Checkout: React.FC = () => {
 
   const activeTotalPrice = subtotalAfterItemDiscounts - activeOrderOfferDiscount;
   const activeDiscountApplied = originalPriceSum - activeTotalPrice;
+
+  // Dynamic shipping calculation based on distance
+  const shippingCalculation = useMemo(() => {
+    return calculateShippingCost({
+      distanceKm: currentDistanceKm,
+      cartTotal: activeTotalPrice,
+      baseCost: generalConfig.shippingBaseCost ?? 1000,
+      costPerKm: generalConfig.shippingCostPerKm ?? 400,
+      freeShippingMinAmount: generalConfig.freeShippingMinAmount ?? 0,
+      isPickup
+    });
+  }, [currentDistanceKm, activeTotalPrice, generalConfig, isPickup]);
+
+  const shippingCost = shippingCalculation.cost;
   const finalTotal = activeTotalPrice + shippingCost;
 
   // Cuenta Corriente Validations (Temporal Overdue & Monetary Limit including Shipping)
@@ -319,24 +333,6 @@ export const Checkout: React.FC = () => {
     }));
   };
 
-  // ─── Distance & Coverage Zone Check ──────────────────────────
-  const storeLat = generalConfig.storeLat ?? -33.459009;
-  const storeLng = generalConfig.storeLng ?? -67.551826;
-  const maxRadiusKm = generalConfig.deliveryRadiusKm ?? 5;
-
-  const currentDistanceKm = useMemo(() => {
-    if (isPickup) return 0;
-    const lat = usingProfileAddress ? user?.address_lat : deliveryCoords?.lat;
-    const lng = usingProfileAddress ? user?.address_lng : deliveryCoords?.lng;
-    if (lat === null || lat === undefined || lng === null || lng === undefined) return null;
-    return calculateDistanceKm(storeLat, storeLng, lat, lng);
-  }, [isPickup, usingProfileAddress, user, deliveryCoords, storeLat, storeLng]);
-
-  const isOutsideCoverage = useMemo(() => {
-    if (isPickup || currentDistanceKm === null) return false;
-    return currentDistanceKm > maxRadiusKm;
-  }, [isPickup, currentDistanceKm, maxRadiusKm]);
-
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -348,7 +344,7 @@ export const Checkout: React.FC = () => {
     setUsingProfileAddress(false);
     setFormError(null);
     setIsMapModalOpen(false);
-    saveLastDeliveryLocation({ lat, lng }, address, deliveryHouseNumber, deliveryReference, deliveryNotes);
+    saveLastDeliveryLocation({ lat, lng }, address, deliveryHouseNumber, deliveryReference);
   };
 
   const handleSwitchToMapAddress = () => {
@@ -458,18 +454,30 @@ export const Checkout: React.FC = () => {
     const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
     const dateStr = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-    // Build address string — use saved profile address or newly selected map address
-    const backwardAddressString = isPickup
-      ? 'Retiro en sucursal'
-      : usingProfileAddress && savedProfileAddress
-        ? savedProfileAddress
-        : `${deliveryAddressLabel} ${deliveryHouseNumber ? 'Nº ' + deliveryHouseNumber : ''} (${deliveryReference})`;
-
     // Resolve final delivery coordinates
     const finalLat = usingProfileAddress ? (user?.address_lat ?? null) : (deliveryCoords?.lat ?? null);
     const finalLng = usingProfileAddress ? (user?.address_lng ?? null) : (deliveryCoords?.lng ?? null);
     const finalAddressLabel = usingProfileAddress ? savedProfileAddress : deliveryAddressLabel;
     const validatedDni = isCcValidated ? cleanDni(currentCustomer?.dni || ccDniInput) : (currentCustomer?.dni || undefined);
+
+    const orderNotes = formData.notes?.trim() || null;
+
+    // Build address string — use saved profile address or newly selected map address
+    const backwardAddressString = isPickup
+      ? 'Retiro en sucursal'
+      : usingProfileAddress && savedProfileAddress
+        ? [
+            savedProfileAddress,
+            orderNotes ? `[NOTAS:${orderNotes}]` : '',
+            (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
+          ].filter(Boolean).join(' ')
+        : [
+            deliveryAddressLabel,
+            deliveryHouseNumber?.trim() ? `[ALTURA:${deliveryHouseNumber.trim()}]` : '',
+            deliveryReference?.trim() ? `[REF:${deliveryReference.trim()}]` : '',
+            orderNotes ? `[NOTAS:${orderNotes}]` : '',
+            (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
+          ].filter(Boolean).join(' ');
 
     // Guardar en el historial del usuario
     const userOrder = {
@@ -484,14 +492,15 @@ export const Checkout: React.FC = () => {
       items: [...items],
       phone: formData.phone,
       dni: validatedDni,
+      notes: orderNotes,
       discount: activeOrderOfferDiscount,
       discountLabel: activeOrderOfferLabel || undefined,
       delivery_lat: finalLat,
       delivery_lng: finalLng,
       delivery_address_label: finalAddressLabel || null,
-      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber || null),
-      delivery_reference: usingProfileAddress ? null : (deliveryReference || null),
-      delivery_notes: deliveryNotes || null,
+      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber?.trim() || null),
+      delivery_reference: usingProfileAddress ? null : (deliveryReference?.trim() || null),
+      delivery_notes: orderNotes,
       delivery_method: isPickup ? ('retiro' as const) : ('envio' as const)
     };
     addOrder(userOrder as Order);
@@ -512,14 +521,15 @@ export const Checkout: React.FC = () => {
       status: 'Nuevo' as const,
       total: finalTotal,
       items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity })),
+      notes: orderNotes,
       discount: activeOrderOfferDiscount,
       discountLabel: activeOrderOfferLabel || undefined,
       delivery_lat: finalLat,
       delivery_lng: finalLng,
       delivery_address_label: finalAddressLabel || null,
-      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber || null),
-      delivery_reference: usingProfileAddress ? null : (deliveryReference || null),
-      delivery_notes: deliveryNotes || null,
+      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber?.trim() || null),
+      delivery_reference: usingProfileAddress ? null : (deliveryReference?.trim() || null),
+      delivery_notes: orderNotes,
       delivery_method: isPickup ? 'retiro' : 'envio'
     };
     addAdminOrder(adminOrder as any);
@@ -549,8 +559,7 @@ export const Checkout: React.FC = () => {
         { lat: finalLat, lng: finalLng },
         finalAddressLabel || '',
         deliveryHouseNumber,
-        deliveryReference,
-        deliveryNotes
+        deliveryReference
       );
     }
 
@@ -804,6 +813,12 @@ export const Checkout: React.FC = () => {
                               <div className="min-w-0">
                                 <p className="text-xs text-primary font-bold uppercase tracking-wider">Dirección del perfil</p>
                                 <p className="font-bold text-sm text-on-surface leading-tight mt-0.5 line-clamp-2">{savedProfileAddress}</p>
+                                {currentDistanceKm !== null && (
+                                  <p className="text-xs font-bold text-primary mt-1.5 flex items-center gap-1">
+                                    <span className="material-symbols-outlined text-[15px]">near_me</span>
+                                    A {currentDistanceKm.toFixed(1)} km del local • Envío: {shippingCalculation.isFreeShipping ? '¡Gratis (Promoción)!' : `$${shippingCost.toLocaleString('es-AR')}`}
+                                  </p>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -827,6 +842,12 @@ export const Checkout: React.FC = () => {
                                 <p className="text-xs text-green-600 font-bold uppercase tracking-wider">Dirección Seleccionada</p>
                                 <p className="font-bold text-sm text-on-surface truncate leading-tight mt-0.5">{deliveryAddressLabel}</p>
                                 <p className="text-[10px] text-on-surface-variant font-medium mt-0.5">Lat: {deliveryCoords.lat.toFixed(5)}, Lng: {deliveryCoords.lng.toFixed(5)}</p>
+                                {currentDistanceKm !== null && (
+                                  <p className="text-xs font-bold text-green-700 mt-1.5 flex items-center gap-1">
+                                    <span className="material-symbols-outlined text-[15px]">near_me</span>
+                                    A {currentDistanceKm.toFixed(1)} km del local • Envío: {shippingCalculation.isFreeShipping ? '¡Gratis (Promoción)!' : `$${shippingCost.toLocaleString('es-AR')}`}
+                                  </p>
+                                )}
                               </div>
                             </div>
                             <button
@@ -902,16 +923,6 @@ export const Checkout: React.FC = () => {
                             value={deliveryReference}
                             onChange={(e) => setDeliveryReference(e.target.value)}
                             className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" 
-                          />
-                        </div>
-                        <div className="sm:col-span-2 space-y-2">
-                          <label className="text-sm font-bold text-on-surface-variant">Aclaración adicional para delivery</label>
-                          <input 
-                            type="text" 
-                            placeholder="Ej: Timbre roto, llamar al celular al llegar" 
-                            value={deliveryNotes}
-                            onChange={(e) => setDeliveryNotes(e.target.value)}
-                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-medium" 
                           />
                         </div>
                       </div>
@@ -1000,8 +1011,15 @@ export const Checkout: React.FC = () => {
                 </div>
 
                 <div className="md:col-span-2 space-y-2">
-                  <label className="text-sm font-bold text-on-surface-variant">Notas adicionales para el pedido</label>
-                  <textarea name="notes" value={formData.notes} onChange={handleInputChange} rows={3} placeholder="Instrucciones sobre tus productos..." className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-medium text-sm resize-none"></textarea>
+                  <label className="text-sm font-bold text-on-surface-variant">Notas o aclaraciones para el pedido</label>
+                  <textarea 
+                    name="notes" 
+                    value={formData.notes} 
+                    onChange={handleInputChange} 
+                    rows={3} 
+                    placeholder="Ej: Timbre roto, llamar al celular al llegar, instrucciones sobre tus productos..." 
+                    className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-medium text-sm resize-none"
+                  ></textarea>
                 </div>
               </div>
             </section>
@@ -1235,9 +1253,28 @@ export const Checkout: React.FC = () => {
                     <span>-$ {activeDiscountApplied.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-on-surface-variant">
-                  <span>{isPickup ? 'Retiro' : 'Envío'}</span>
-                  <span>{isPickup ? <span className="text-green-600 font-bold">Gratis</span> : `$ ${shippingCost.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}</span>
+                <div className="flex justify-between items-start text-on-surface-variant">
+                  <div>
+                    <span>{isPickup ? 'Retiro en sucursal' : 'Envío a domicilio'}</span>
+                    {!isPickup && (
+                      <span className="text-[10px] text-on-surface-variant/70 block">
+                        {shippingCalculation.isFreeShipping
+                          ? '¡Envío bonificado por monto!'
+                          : currentDistanceKm !== null
+                            ? `(${currentDistanceKm.toFixed(1)} km)`
+                            : '(Tarifa base)'}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-right">
+                    {isPickup ? (
+                      <span className="text-green-600 font-bold">Gratis</span>
+                    ) : shippingCalculation.isFreeShipping ? (
+                      <span className="text-green-600 font-bold">¡Gratis!</span>
+                    ) : (
+                      <span className="font-semibold text-on-surface">$ {shippingCost.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                    )}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center pt-2 font-bold text-xl text-on-surface border-t border-dashed border-outline-variant/10">
                   <span>Total</span>

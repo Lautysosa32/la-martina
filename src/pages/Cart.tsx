@@ -1,14 +1,55 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useCart } from '../context/CartContext';
+import { useAdmin } from '../context/AdminContext';
+import { useAuth } from '../stores/useAuthStore';
 import { Link } from 'react-router-dom';
 import { WeightInputModal } from '../components/WeightInputModal';
+import { calculateDistanceKm, calculateShippingCost } from '../utils/shipping';
 
 export const Cart: React.FC = () => {
   const { items, updateQuantity, removeItem, totalPrice, totalItems, originalPriceSum, discountApplied, getStock, stockWarnings } = useCart();
+  const { generalConfig } = useAdmin();
+  const { user } = useAuth();
   const [activeWeightItem, setActiveWeightItem] = React.useState<any>(null);
+  
   const deliveryMethod = localStorage.getItem('la-martina-delivery-method') || 'envio';
   const isPickup = deliveryMethod === 'retiro';
-  const shippingCost = isPickup ? 0 : (totalItems > 0 ? 1500 : 0);
+
+  // Obtener coordenadas guardadas del cliente si existen
+  const savedCoords = useMemo(() => {
+    try {
+      const data = localStorage.getItem('la_martina_last_delivery_location');
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (parsed?.coords?.lat && parsed?.coords?.lng) return parsed.coords;
+      }
+    } catch {}
+    if (user?.address_lat && user?.address_lng) {
+      return { lat: user.address_lat, lng: user.address_lng };
+    }
+    return null;
+  }, [user]);
+
+  const storeLat = generalConfig.storeLat ?? -33.459009;
+  const storeLng = generalConfig.storeLng ?? -67.551826;
+
+  const distanceKm = useMemo(() => {
+    if (isPickup || !savedCoords) return null;
+    return calculateDistanceKm(storeLat, storeLng, savedCoords.lat, savedCoords.lng);
+  }, [isPickup, savedCoords, storeLat, storeLng]);
+
+  const shippingResult = useMemo(() => {
+    return calculateShippingCost({
+      distanceKm,
+      cartTotal: totalPrice,
+      baseCost: generalConfig.shippingBaseCost ?? 1000,
+      costPerKm: generalConfig.shippingCostPerKm ?? 400,
+      freeShippingMinAmount: generalConfig.freeShippingMinAmount ?? 0,
+      isPickup
+    });
+  }, [distanceKm, totalPrice, generalConfig, isPickup]);
+
+  const shippingCost = shippingResult.cost;
   const finalTotal = totalPrice + shippingCost;
 
   const hasStockIssues = stockWarnings.length > 0;
@@ -205,9 +246,28 @@ export const Cart: React.FC = () => {
             <span>Subtotal ({totalItems} {totalItems === 1 ? 'artículo' : 'artículos'})</span>
             <span>$ {originalPriceSum.toLocaleString('es-AR')}</span>
           </div>
-          <div className="flex justify-between text-on-surface-variant">
-            <span>{isPickup ? 'Retiro en sucursal' : 'Costo de Envío'}</span>
-            <span>{isPickup ? <span className="text-green-600 font-bold">Gratis</span> : `$ ${shippingCost.toLocaleString('es-AR')}`}</span>
+          <div className="flex justify-between items-start text-on-surface-variant">
+            <div>
+              <span>{isPickup ? 'Retiro en sucursal' : 'Costo de Envío'}</span>
+              {!isPickup && (
+                <span className="text-[10px] text-on-surface-variant/70 block">
+                  {shippingResult.isFreeShipping
+                    ? '¡Envío bonificado por monto!'
+                    : shippingResult.distanceKm !== null
+                      ? `(${shippingResult.distanceKm.toFixed(1)} km desde sucursal)`
+                      : '(Tarifa base - se calcula en checkout)'}
+                </span>
+              )}
+            </div>
+            <span className="text-right">
+              {isPickup ? (
+                <span className="text-green-600 font-bold">Gratis</span>
+              ) : shippingResult.isFreeShipping ? (
+                <span className="text-green-600 font-bold">¡Gratis!</span>
+              ) : (
+                <span className="font-semibold text-on-surface">$ {shippingCost.toLocaleString('es-AR')}</span>
+              )}
+            </span>
           </div>
           {discountApplied > 0 && (
             <div className="flex justify-between text-error font-bold">

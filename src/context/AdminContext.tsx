@@ -118,6 +118,9 @@ export interface GeneralConfig {
   storeLat: number;
   storeLng: number;
   blockedPhones: string[];
+  shippingBaseCost: number;
+  shippingCostPerKm: number;
+  freeShippingMinAmount: number;
 }
 
 export interface CashRegister {
@@ -861,7 +864,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           deliveryRadiusKm: 5,
           storeLat: -33.459009,
           storeLng: -67.551826,
-          blockedPhones: []
+          blockedPhones: [],
+          shippingBaseCost: 1000,
+          shippingCostPerKm: 400,
+          freeShippingMinAmount: 0
         })
       ]);
 
@@ -879,7 +885,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setAdminTags(_tags);
       setExpenses(_expenses);
       setAutoCashCloseConfig(_autoCashClose);
-      setGeneralConfig(_generalCfg);
+      setGeneralConfig({
+        ..._generalCfg,
+        shippingBaseCost: _generalCfg.shippingBaseCost ?? 1000,
+        shippingCostPerKm: _generalCfg.shippingCostPerKm ?? 400,
+        freeShippingMinAmount: _generalCfg.freeShippingMinAmount ?? 0
+      });
 
       // Seed categories if empty
       let finalCategories = _categories;
@@ -1091,7 +1102,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     deliveryRadiusKm: 5,
     storeLat: -33.459009,
     storeLng: -67.551826,
-    blockedPhones: []
+    blockedPhones: [],
+    shippingBaseCost: 1000,
+    shippingCostPerKm: 400,
+    freeShippingMinAmount: 0
   };
   const [generalConfig, setGeneralConfig] = useState<GeneralConfig>(defaultGeneralConfig);
   const updateGeneralConfig = (updates: Partial<GeneralConfig>) => {

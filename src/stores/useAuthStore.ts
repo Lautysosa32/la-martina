@@ -542,7 +542,13 @@ export const useAuth = () => {
               total: o.total,
               itemsCount: o.itemsCount || (o.order_items ? o.order_items.reduce((s: number, i: any) => s + (i.quantity || 1), 0) : (o.items ? o.items.length : 0)),
               status: o.status,
-              address: o.address,
+              address: (o.address || '')
+                .replace(/\s*\[GEO:[-\d.]+,[-\d.]+\]/g, '')
+                .replace(/\[ALTURA:([^\]]+)\]/g, 'Nº $1')
+                .replace(/\[REF:([^\]]+)\]/g, '($1)')
+                .replace(/\[NOTAS:([^\]]+)\]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim(),
               deliveryTime: o.delivery_time || o.deliveryTime,
               items: (o.order_items && o.order_items.length > 0)
                 ? o.order_items.map((item: any) => ({

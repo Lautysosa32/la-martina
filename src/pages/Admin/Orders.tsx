@@ -5,9 +5,10 @@ import { useAdmin, AdminOrder } from '../../context/AdminContext';
 import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { calculateDistanceKm } from '../../utils/shipping';
 
 export const AdminOrders: React.FC = () => {
-  const { orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked } = useAdmin();
+  const { orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked, generalConfig } = useAdmin();
   const [activeStatus, setActiveStatus] = useState('todos');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelModalData, setCancelModalData] = useState<AdminOrder | null>(null);
@@ -329,21 +330,29 @@ export const AdminOrders: React.FC = () => {
                                           <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">location_on</span>
                                           <span className="font-semibold text-on-surface">{order.delivery_address_label || order.address}</span>
                                         </p>
-                                        <p className="flex items-start gap-2">
-                                          <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">home</span>
-                                          <span><strong>Altura/Lote:</strong> {order.delivery_house_number || 'S/N'}</span>
-                                        </p>
-                                        <p className="flex items-start gap-2 text-primary font-bold">
-                                          <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">visibility</span>
-                                          <span><strong>Ref:</strong> {order.delivery_reference}</span>
-                                        </p>
-                                        {order.delivery_notes && (
-                                          <p className="flex items-start gap-2 text-on-surface-variant italic">
-                                            <span className="material-symbols-outlined text-[16px] text-on-surface-variant shrink-0 mt-0.5">chat</span>
-                                            <span>"{order.delivery_notes}"</span>
+                                        {order.delivery_house_number && order.delivery_house_number.trim() !== '' && (
+                                          <p className="flex items-start gap-2">
+                                            <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">home</span>
+                                            <span><strong>Altura/Lote:</strong> {order.delivery_house_number}</span>
                                           </p>
                                         )}
-                                        <p className="text-[10px] text-on-surface-variant font-mono mt-1">Coord: {order.delivery_lat.toFixed(6)}, {order.delivery_lng.toFixed(6)}</p>
+                                        {order.delivery_reference && order.delivery_reference.trim() !== '' && (
+                                          <p className="flex items-start gap-2 text-primary font-bold">
+                                            <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">visibility</span>
+                                            <span><strong>Ref:</strong> {order.delivery_reference}</span>
+                                          </p>
+                                        )}
+                                        {(order.delivery_notes || (order as any).notes) && (order.delivery_notes || (order as any).notes).trim() !== '' && (
+                                          <p className="flex items-start gap-2 text-on-surface-variant">
+                                            <span className="material-symbols-outlined text-[16px] text-primary shrink-0 mt-0.5">chat</span>
+                                            <span><strong>Nota:</strong> {order.delivery_notes || (order as any).notes}</span>
+                                          </p>
+                                        )}
+                                        <p className="text-[11px] font-bold text-primary flex items-center gap-1 mt-1">
+                                          <span className="material-symbols-outlined text-[15px]">near_me</span>
+                                          Distancia a sucursal: {calculateDistanceKm(generalConfig?.storeLat ?? -33.459009, generalConfig?.storeLng ?? -67.551826, order.delivery_lat, order.delivery_lng).toFixed(1)} km
+                                        </p>
+                                        <p className="text-[10px] text-on-surface-variant font-mono mt-0.5">Coord: {order.delivery_lat.toFixed(6)}, {order.delivery_lng.toFixed(6)}</p>
                                         <p className="flex items-center gap-2 text-on-surface font-medium">
                                           <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
                                           {order.deliveryTime}
@@ -352,13 +361,13 @@ export const AdminOrders: React.FC = () => {
                                         {/* Action buttons inside delivery card */}
                                         <div className="flex gap-2 mt-3 flex-wrap">
                                           <a 
-                                            href={`https://www.google.com/maps?q=${order.delivery_lat},${order.delivery_lng}`} 
+                                            href={`https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`} 
                                             target="_blank" 
                                             rel="noopener noreferrer"
                                             className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2 rounded-xl text-[10px] flex items-center gap-1 shadow-sm transition-colors"
                                           >
                                             <span className="material-symbols-outlined text-[14px]">map</span>
-                                            ABRIR MAPA
+                                            GOOGLE MAPS
                                           </a>
                                           <button
                                             type="button"
@@ -399,9 +408,33 @@ export const AdminOrders: React.FC = () => {
                                         </div>
                                       </div>
                                     ) : (
-                                      <div className="space-y-1 text-xs">
-                                        <p className="flex items-center gap-2"><span className="material-symbols-outlined text-[16px] text-primary">location_on</span>{order.address || 'No especificada'}</p>
-                                        <p className="flex items-center gap-2 mt-1"><span className="material-symbols-outlined text-[16px] text-primary">schedule</span>{order.deliveryTime}</p>
+                                      <div className="space-y-1.5 text-xs">
+                                        <p className="flex items-center gap-2">
+                                          <span className="material-symbols-outlined text-[16px] text-primary">location_on</span>
+                                          <span className="font-semibold text-on-surface">{order.delivery_address_label || order.address || 'No especificada'}</span>
+                                        </p>
+                                        {order.delivery_house_number && order.delivery_house_number.trim() !== '' && (
+                                          <p className="flex items-center gap-2">
+                                            <span className="material-symbols-outlined text-[16px] text-primary">home</span>
+                                            <span><strong>Altura/Lote:</strong> {order.delivery_house_number}</span>
+                                          </p>
+                                        )}
+                                        {order.delivery_reference && order.delivery_reference.trim() !== '' && (
+                                          <p className="flex items-center gap-2 text-primary font-bold">
+                                            <span className="material-symbols-outlined text-[16px] text-primary">visibility</span>
+                                            <span><strong>Ref:</strong> {order.delivery_reference}</span>
+                                          </p>
+                                        )}
+                                        {(order.delivery_notes || (order as any).notes) && (order.delivery_notes || (order as any).notes).trim() !== '' && (
+                                          <p className="flex items-center gap-2 text-on-surface-variant">
+                                            <span className="material-symbols-outlined text-[16px] text-primary">chat</span>
+                                            <span><strong>Nota:</strong> {order.delivery_notes || (order as any).notes}</span>
+                                          </p>
+                                        )}
+                                        <p className="flex items-center gap-2 mt-1">
+                                          <span className="material-symbols-outlined text-[16px] text-primary">schedule</span>
+                                          {order.deliveryTime}
+                                        </p>
                                       </div>
                                     )}
                                   </div>
@@ -697,21 +730,29 @@ export const AdminOrders: React.FC = () => {
                                 <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">location_on</span>
                                 <span className="font-semibold text-on-surface">{order.delivery_address_label || order.address}</span>
                               </p>
-                              <p className="flex items-start gap-2">
-                                <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">home</span>
-                                <span><strong>Altura/Lote:</strong> {order.delivery_house_number || 'S/N'}</span>
-                              </p>
-                              <p className="flex items-start gap-2 text-primary font-bold">
-                                <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">visibility</span>
-                                <span><strong>Ref:</strong> {order.delivery_reference}</span>
-                              </p>
-                              {order.delivery_notes && (
-                                <p className="flex items-start gap-2 text-on-surface-variant italic">
-                                  <span className="material-symbols-outlined text-[15px] text-on-surface-variant shrink-0 mt-0.5">chat</span>
-                                  <span>"{order.delivery_notes}"</span>
+                              {order.delivery_house_number && order.delivery_house_number.trim() !== '' && (
+                                <p className="flex items-start gap-2">
+                                  <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">home</span>
+                                  <span><strong>Altura/Lote:</strong> {order.delivery_house_number}</span>
                                 </p>
                               )}
-                              <p className="text-[9px] text-on-surface-variant font-mono">Coord: {order.delivery_lat.toFixed(6)}, {order.delivery_lng.toFixed(6)}</p>
+                              {order.delivery_reference && order.delivery_reference.trim() !== '' && (
+                                <p className="flex items-start gap-2 text-primary font-bold">
+                                  <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">visibility</span>
+                                  <span><strong>Ref:</strong> {order.delivery_reference}</span>
+                                </p>
+                              )}
+                              {(order.delivery_notes || (order as any).notes) && (order.delivery_notes || (order as any).notes).trim() !== '' && (
+                                <p className="flex items-start gap-2 text-on-surface-variant">
+                                  <span className="material-symbols-outlined text-[15px] text-primary shrink-0 mt-0.5">chat</span>
+                                  <span><strong>Nota:</strong> {order.delivery_notes || (order as any).notes}</span>
+                                </p>
+                              )}
+                              <p className="text-[10px] font-bold text-primary flex items-center gap-1 mt-1">
+                                <span className="material-symbols-outlined text-[14px]">near_me</span>
+                                Distancia a sucursal: {calculateDistanceKm(generalConfig?.storeLat ?? -33.459009, generalConfig?.storeLng ?? -67.551826, order.delivery_lat, order.delivery_lng).toFixed(1)} km
+                              </p>
+                              <p className="text-[9px] text-on-surface-variant font-mono mt-0.5">Coord: {order.delivery_lat.toFixed(6)}, {order.delivery_lng.toFixed(6)}</p>
                               <p className="flex items-center gap-2 text-on-surface font-medium">
                                 <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
                                 {order.deliveryTime}
@@ -720,7 +761,7 @@ export const AdminOrders: React.FC = () => {
                               {/* Mobile actions */}
                               <div className="flex gap-2 pt-1 flex-wrap">
                                 <a 
-                                  href={`https://www.google.com/maps?q=${order.delivery_lat},${order.delivery_lng}`} 
+                                  href={`https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
                                   className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2.5 rounded-xl text-[10px] flex items-center justify-center gap-1 shadow-sm flex-1 text-center"
@@ -753,11 +794,29 @@ export const AdminOrders: React.FC = () => {
                               </div>
                             </div>
                           ) : (
-                            <div className="space-y-1.5">
+                            <div className="space-y-1.5 text-xs">
                               <p className="flex items-center gap-2 text-on-surface font-medium">
                                 <span className="material-symbols-outlined text-[15px] text-primary">location_on</span>
-                                {order.address || 'No especificada'}
+                                {order.delivery_address_label || order.address || 'No especificada'}
                               </p>
+                              {order.delivery_house_number && order.delivery_house_number.trim() !== '' && (
+                                <p className="flex items-center gap-2 text-on-surface font-medium">
+                                  <span className="material-symbols-outlined text-[15px] text-primary">home</span>
+                                  <span><strong>Altura/Lote:</strong> {order.delivery_house_number}</span>
+                                </p>
+                              )}
+                              {order.delivery_reference && order.delivery_reference.trim() !== '' && (
+                                <p className="flex items-center gap-2 text-primary font-bold">
+                                  <span className="material-symbols-outlined text-[15px] text-primary">visibility</span>
+                                  <span><strong>Ref:</strong> {order.delivery_reference}</span>
+                                </p>
+                              )}
+                              {(order.delivery_notes || (order as any).notes) && (order.delivery_notes || (order as any).notes).trim() !== '' && (
+                                <p className="flex items-center gap-2 text-on-surface-variant">
+                                  <span className="material-symbols-outlined text-[15px] text-primary">chat</span>
+                                  <span><strong>Nota:</strong> {order.delivery_notes || (order as any).notes}</span>
+                                </p>
+                              )}
                               <p className="flex items-center gap-2 text-on-surface font-medium">
                                 <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
                                 {order.deliveryTime}
