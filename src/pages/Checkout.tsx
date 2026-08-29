@@ -7,10 +7,11 @@ import { MapSelector } from '../components/MapSelector';
 
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
-  const { user, addOrder } = useAuth();
+  const { user, addOrder, updateUser } = useAuth();
   const { addAdminOrder, customers, applyOrderOffers, deductStockForOrder, storeStatus } = useAdmin();
   const navigate = useNavigate();
   const [isOrdered, setIsOrdered] = useState(false);
+  const [confirmedName, setConfirmedName] = useState('');
   const [stockError, setStockError] = useState<{ id: string; name: string; requested: number; available: number }[] | null>(null);
   const [isMapModalOpen, setIsMapModalOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -31,13 +32,91 @@ export const Checkout: React.FC = () => {
   const [deliveryReference, setDeliveryReference] = useState<string>('');
   const [deliveryNotes, setDeliveryNotes] = useState<string>('');
 
+  const initialName = (user?.name && user.name !== 'Invitado' && user.name !== 'Sin Nombre') ? user.name : '';
   const [formData, setFormData] = useState({
-    name: user?.name || '',
+    name: initialName,
     phone: user?.phone || '',
     notes: '',
     paymentMethod: 'cash',
     deliveryTime: isPickup ? 'Retiro en sucursal' : 'Lo antes posible (Entrega en 30-60 min)'
   });
+
+  // Clean and format helper functions
+  const cleanPhone = (p: string) => {
+    let c = (p || '').replace(/\D/g, '');
+    if (c.startsWith('549')) c = c.substring(3);
+    else if (c.startsWith('54')) c = c.substring(2);
+    if (c.startsWith('0')) c = c.substring(1);
+    return c;
+  };
+
+  const cleanDni = (d: string) => (d || '').replace(/\D/g, '');
+
+  // Check if current phone belongs to a registered customer
+  const currentCustomer = React.useMemo(() => {
+    if (!formData.phone) return null;
+    const formPhoneClean = cleanPhone(formData.phone);
+    if (!formPhoneClean) return null;
+    return customers.find(c => cleanPhone(c.phone) === formPhoneClean) || null;
+  }, [customers, formData.phone]);
+
+  const hasCuentaCorriente = !!currentCustomer?.hasCurrentAccount;
+  const isRegisteredCustomer = !!(currentCustomer && currentCustomer.name && currentCustomer.name !== 'Invitado' && currentCustomer.name !== 'Sin Nombre');
+
+  // Cuenta Corriente DNI validation state
+  const [ccDniInput, setCcDniInput] = useState('');
+  const [isCcValidated, setIsCcValidated] = useState(false);
+  const [ccValidationError, setCcValidationError] = useState<string | null>(null);
+
+  // Reset CC validation when phone number changes
+  React.useEffect(() => {
+    setIsCcValidated(false);
+    setCcValidationError(null);
+    setCcDniInput('');
+    setFormData(prev => {
+      if (prev.paymentMethod === 'cuenta_corriente') {
+        return { ...prev, paymentMethod: 'cash' };
+      }
+      return prev;
+    });
+  }, [formData.phone]);
+
+  const handleValidateDniForCC = () => {
+    setCcValidationError(null);
+    const enteredDigits = cleanDni(ccDniInput);
+    if (!enteredDigits) {
+      setCcValidationError('Por favor ingresá tu número de DNI para validar tu cuenta.');
+      return;
+    }
+    if (!currentCustomer) {
+      setCcValidationError('No se encontró una cuenta de cliente asociada a este número de teléfono.');
+      return;
+    }
+    if (!currentCustomer.hasCurrentAccount) {
+      setCcValidationError('Este cliente no tiene habilitada la opción de Cuenta Corriente.');
+      return;
+    }
+    const registeredDigits = cleanDni(currentCustomer.dni || '');
+    if (!registeredDigits) {
+      setCcValidationError('Tu cuenta corriente no tiene un DNI registrado. Por favor comunicate con el local para asociarlo.');
+      return;
+    }
+
+    if (enteredDigits === registeredDigits) {
+      setIsCcValidated(true);
+      setCcValidationError(null);
+      setFormData(prev => ({ ...prev, paymentMethod: 'cuenta_corriente' }));
+    } else {
+      setIsCcValidated(false);
+      setCcValidationError('El DNI ingresado no coincide con el titular registrado.');
+      setFormData(prev => {
+        if (prev.paymentMethod === 'cuenta_corriente') {
+          return { ...prev, paymentMethod: 'cash' };
+        }
+        return prev;
+      });
+    }
+  };
 
   const handleMethodChange = (method: 'retiro' | 'envio') => {
     setDeliveryMethod(method);
@@ -51,22 +130,6 @@ export const Checkout: React.FC = () => {
 
   const isAsap = formData.deliveryTime.includes('Lo antes posible');
   const shippingCost = isPickup ? 0 : (items.length > 0 ? (isAsap ? 2500 : 1500) : 0);
-
-  // Check if current phone belongs to a customer
-  const currentCustomer = React.useMemo(() => {
-    if (!formData.phone) return null;
-    const clean = (p: string) => {
-      let c = p.replace(/\D/g, '');
-      if (c.startsWith('549')) c = c.substring(3);
-      else if (c.startsWith('54')) c = c.substring(2);
-      if (c.startsWith('0')) c = c.substring(1);
-      return c;
-    };
-    const formPhoneClean = clean(formData.phone);
-    return customers.find(c => clean(c.phone) === formPhoneClean);
-  }, [customers, formData.phone]);
-
-  const hasCuentaCorriente = currentCustomer?.hasCurrentAccount;
 
   // Dynamic order offers recalculation based on the phone typed at checkout
   const subtotalAfterItemDiscounts = totalPrice + cartOrderOfferDiscount;
@@ -113,6 +176,28 @@ export const Checkout: React.FC = () => {
       return;
     }
 
+    // Name resolution: prioritize existing registered customer in database
+    const finalCustomerName = isRegisteredCustomer
+      ? currentCustomer.name
+      : formData.name.trim();
+
+    if (!finalCustomerName) {
+      setFormError('Por favor, ingresá tu nombre completo antes de continuar.');
+      window.scrollTo({ top: 200, behavior: 'smooth' });
+      return;
+    }
+
+    // Validation for Cuenta Corriente
+    if (formData.paymentMethod === 'cuenta_corriente') {
+      const enteredDigits = cleanDni(ccDniInput);
+      const registeredDigits = cleanDni(currentCustomer?.dni || '');
+      if (!isCcValidated || !currentCustomer?.hasCurrentAccount || !enteredDigits || enteredDigits !== registeredDigits) {
+        setFormError('Debés validar tu DNI antes de confirmar un pedido con Cuenta Corriente.');
+        window.scrollTo({ top: 400, behavior: 'smooth' });
+        return;
+      }
+    }
+
     // Validation for delivery map location
     if (!isPickup) {
       // Valid if using saved profile address OR if new map coords were selected
@@ -153,10 +238,10 @@ export const Checkout: React.FC = () => {
         : `${deliveryAddressLabel} ${deliveryHouseNumber ? 'Nº ' + deliveryHouseNumber : ''} (${deliveryReference})`;
 
     // Resolve final delivery coordinates
-    // If using saved profile address → use stored coords; if using new map → use deliveryCoords
     const finalLat = usingProfileAddress ? (user?.address_lat ?? null) : (deliveryCoords?.lat ?? null);
     const finalLng = usingProfileAddress ? (user?.address_lng ?? null) : (deliveryCoords?.lng ?? null);
     const finalAddressLabel = usingProfileAddress ? savedProfileAddress : deliveryAddressLabel;
+    const validatedDni = isCcValidated ? cleanDni(currentCustomer?.dni || ccDniInput) : (currentCustomer?.dni || undefined);
 
     // Guardar en el historial del usuario
     const userOrder = {
@@ -168,6 +253,8 @@ export const Checkout: React.FC = () => {
       address: backwardAddressString,
       deliveryTime: formData.deliveryTime,
       items: [...items],
+      phone: formData.phone,
+      dni: validatedDni,
       discount: activeOrderOfferDiscount,
       discountLabel: activeOrderOfferLabel || undefined,
       delivery_lat: finalLat,
@@ -185,8 +272,9 @@ export const Checkout: React.FC = () => {
       id: orderId,
       date: dateStr,
       timestamp: Date.now(),
-      customer: formData.name || 'Cliente Anónimo',
+      customer: finalCustomerName,
       phone: formData.phone,
+      dni: validatedDni,
       address: backwardAddressString,
       deliveryTime: formData.deliveryTime,
       method: isPickup ? 'Retiro' : 'Envío',
@@ -207,6 +295,9 @@ export const Checkout: React.FC = () => {
     };
     addAdminOrder(adminOrder as any);
 
+    // Guardar datos en perfil local del invitado si aplica
+    updateUser({ name: finalCustomerName, phone: formData.phone });
+    setConfirmedName(finalCustomerName);
     setIsOrdered(true);
 
     setTimeout(() => {
@@ -222,7 +313,7 @@ export const Checkout: React.FC = () => {
         </div>
         <h1 className="font-display-xl font-bold text-on-surface mb-2">¡Pedido Confirmado!</h1>
         <p className="text-on-surface-variant mb-8 max-w-sm">
-          Gracias {formData.name}, hemos recibido tu pedido. En breve nos comunicaremos con vos al {formData.phone} para coordinar {isPickup ? 'el retiro' : 'la entrega'}.
+          Gracias {confirmedName || formData.name}, hemos recibido tu pedido. En breve nos comunicaremos con vos al {formData.phone} para coordinar {isPickup ? 'el retiro' : 'la entrega'}.
         </p>
         <div className="flex flex-col gap-4 w-full max-w-xs">
           <Link 
@@ -330,6 +421,24 @@ export const Checkout: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                {/* Badge if registered customer is detected by phone */}
+                {isRegisteredCustomer && (
+                  <div className="md:col-span-2 bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-center gap-3 animate-in fade-in duration-300">
+                    <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                      <span className="material-symbols-outlined text-[20px]">person_check</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-primary uppercase tracking-wider">Cliente Registrado Identificado</p>
+                      <p className="font-bold text-sm text-on-surface truncate">
+                        {currentCustomer.name}
+                      </p>
+                      <p className="text-xs text-on-surface-variant">
+                        Tu pedido se registrará automáticamente a este nombre.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {!isPickup && (
                   <div className="md:col-span-2 space-y-6">
@@ -534,7 +643,6 @@ export const Checkout: React.FC = () => {
                   { id: 'cash', label: isPickup ? 'Efectivo en sucursal' : 'Efectivo al recibir', icon: 'payments' },
                   { id: 'card', label: isPickup ? 'Tarjeta en sucursal' : 'Tarjeta (Posnet al recibir)', icon: 'credit_card' },
                   { id: 'transfer', label: 'Transferencia Bancaria', icon: 'account_balance' },
-                  ...(hasCuentaCorriente ? [{ id: 'cuenta_corriente', label: 'Anotar en Cuenta Corriente', icon: 'menu_book' }] : [])
                 ].map(method => (
                   <label key={method.id} className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${formData.paymentMethod === method.id ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'}`}>
                     <input type="radio" name="paymentMethod" value={method.id} checked={formData.paymentMethod === method.id} onChange={handleInputChange} className="hidden" />
@@ -543,6 +651,99 @@ export const Checkout: React.FC = () => {
                     {formData.paymentMethod === method.id && <span className="material-symbols-outlined text-primary">check_circle</span>}
                   </label>
                 ))}
+
+                {/* Cuenta Corriente: Solo si el cliente asociado al teléfono tiene habilitada cuenta corriente */}
+                {hasCuentaCorriente && (
+                  <div className="pt-2">
+                    {isCcValidated ? (
+                      <div className="space-y-2">
+                        <label className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${formData.paymentMethod === 'cuenta_corriente' ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'}`}>
+                          <input type="radio" name="paymentMethod" value="cuenta_corriente" checked={formData.paymentMethod === 'cuenta_corriente'} onChange={handleInputChange} className="hidden" />
+                          <span className={`material-symbols-outlined ${formData.paymentMethod === 'cuenta_corriente' ? 'text-primary' : 'text-on-surface-variant'}`}>menu_book</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm">Anotar en Cuenta Corriente</span>
+                              <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full inline-flex items-center gap-0.5">
+                                <span className="material-symbols-outlined text-[12px]">check</span> Verificado
+                              </span>
+                            </div>
+                            <p className="text-xs text-on-surface-variant mt-0.5">
+                              Titular: <strong>{currentCustomer?.name}</strong> • DNI: ***{cleanDni(currentCustomer?.dni || '').slice(-3)}
+                            </p>
+                          </div>
+                          {formData.paymentMethod === 'cuenta_corriente' && <span className="material-symbols-outlined text-primary">check_circle</span>}
+                        </label>
+                        <div className="flex justify-end pr-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCcValidated(false);
+                              setCcDniInput('');
+                              setFormData(prev => ({ ...prev, paymentMethod: 'cash' }));
+                            }}
+                            className="text-xs text-on-surface-variant hover:text-red-600 transition-colors underline"
+                          >
+                            Cancelar validación de Cuenta Corriente
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-surface-container-lowest border-2 border-dashed border-primary/30 rounded-2xl p-5 space-y-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0 mt-0.5">
+                            <span className="material-symbols-outlined text-[20px]">lock</span>
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="font-bold text-sm text-on-surface">Cuenta Corriente disponible para este número</p>
+                              <span className="text-[10px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-full">Requiere DNI</span>
+                            </div>
+                            <p className="text-xs text-on-surface-variant mt-0.5">
+                              Para pagar con Cuenta Corriente, ingresá el número de documento (DNI) del titular para validar tu identidad:
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                          <div className="relative flex-1">
+                            <input 
+                              type="text" 
+                              inputMode="numeric"
+                              placeholder="Ingresá tu DNI (ej: 38123456)" 
+                              value={ccDniInput}
+                              onChange={(e) => {
+                                setCcDniInput(e.target.value.replace(/\D/g, ''));
+                                setCcValidationError(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleValidateDniForCC();
+                                }
+                              }}
+                              className="w-full bg-white border border-outline-variant/30 rounded-xl px-4 py-2.5 outline-none focus:border-primary font-semibold text-sm transition-all"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleValidateDniForCC}
+                            className="bg-primary hover:bg-primary/90 text-white font-bold px-5 py-2.5 rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">verified</span>
+                            Validar DNI
+                          </button>
+                        </div>
+
+                        {ccValidationError && (
+                          <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-xs font-bold text-red-700 animate-in fade-in duration-200">
+                            <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
+                            <p>{ccValidationError}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </section>
 

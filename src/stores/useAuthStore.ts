@@ -16,6 +16,7 @@ export interface Order {
   deliveryTime?: string;
   items: any[];
   phone?: string;
+  dni?: string;
   discount?: number;
   discountLabel?: string;
   delivery_lat?: number | null;
@@ -87,11 +88,17 @@ export const formatArgentinePhone = (phone: string): { cleanPhone: string; displ
 const loadGuestProfile = (): GuestProfile => {
   try {
     const saved = localStorage.getItem('la-martina-user');
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.name === 'Invitado') {
+        parsed.name = '';
+      }
+      return parsed;
+    }
   } catch (e) {
     console.error("Error cargando perfil de invitado", e);
   }
-  return { name: 'Invitado', phone: '', address: '', orders: [] };
+  return { name: '', phone: '', address: '', orders: [] };
 };
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -572,6 +579,7 @@ export const useAuth = () => {
       orders: customerOrders
     } : {
       ...store.guestProfile,
+      name: store.guestProfile.name === 'Invitado' ? '' : (store.guestProfile.name || ''),
       orders: customerOrders
     };
   }, [store.customerProfile, store.guestProfile, isCustomer, customerOrders]);
