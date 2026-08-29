@@ -21,6 +21,28 @@ export const Settings: React.FC = () => {
   const [autoCloseForm, setAutoCloseForm] = useState<AutoCashCloseConfig>({ enabled: false, time: '22:00' });
   const [generalForm, setGeneralForm] = useState({ ...generalConfig });
 
+  const [newBlockedPhone, setNewBlockedPhone] = useState('');
+  const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
+
+  const togglePanel = (key: string) => {
+    setOpenPanels(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const expandAll = () => {
+    setOpenPanels({
+      tienda: true,
+      cobertura: true,
+      cuentas: true,
+      seguridad: true,
+      cierre: true,
+      notificaciones: true
+    });
+  };
+
+  const collapseAll = () => {
+    setOpenPanels({});
+  };
+
   // Sync local forms when context loads data from Supabase
   useEffect(() => {
     setForm(ticketConfig);
@@ -97,7 +119,13 @@ export const Settings: React.FC = () => {
       setAutoCloseForm(defaultAutoClose);
       updateAutoCashCloseConfig(defaultAutoClose);
 
-      const defaultGeneralConfig = { suspendEmployeeNotifications: false };
+      const defaultGeneralConfig = {
+        suspendEmployeeNotifications: false,
+        deliveryRadiusKm: 5,
+        storeLat: -33.459009,
+        storeLng: -67.551826,
+        blockedPhones: []
+      };
       setGeneralForm(defaultGeneralConfig);
       updateGeneralConfig(defaultGeneralConfig);
     }
@@ -377,245 +405,538 @@ export const Settings: React.FC = () => {
       )}
 
       {activeSection === 'general' && (
-        <div className="space-y-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
+        <div className="space-y-6">
+          {/* Barra superior de control de paneles */}
+          <div className="flex items-center justify-between px-2">
+            <p className="text-xs font-bold text-on-surface-variant flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[18px]">view_agenda</span>
+              Hacé clic en cualquier panel para expandir su configuración
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={expandAll}
+                className="text-xs font-bold text-primary hover:underline px-2 py-1 rounded-lg hover:bg-primary/5 transition-colors"
+              >
+                Expandir todos
+              </button>
+              <span className="text-on-surface-variant/40">•</span>
+              <button
+                type="button"
+                onClick={collapseAll}
+                className="text-xs font-bold text-on-surface-variant hover:text-on-surface px-2 py-1 rounded-lg hover:bg-surface-container-high transition-colors"
+              >
+                Contraer todos
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            {/* Columna Izquierda: Operaciones & Delivery */}
+            <div className="space-y-5">
               
-              {/* Cierre Automático (Moved Up) */}
-              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
-                      <span className="material-symbols-outlined text-primary text-[20px]">schedule</span>
+              {/* 1. Tienda Online */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('tienda')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-purple-100 text-purple-700 rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      🏬
                     </div>
-                    <div>
-                      <h3 className="font-black text-lg">Cierre Automático de Caja</h3>
-                      <p className="text-xs text-on-surface-variant">Cierra la caja automáticamente todos los días a la hora configurada</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Estado de la Tienda Online</h3>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
+                          storeForm.onlineSalesPaused ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                        }`}>
+                          {storeForm.onlineSalesPaused ? 'Pausada' : 'Activa'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Control de compras al público general y motivo de pausa</p>
                     </div>
                   </div>
-                </div>
-                <div className="p-6 space-y-6">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-bold text-sm">Activar cierre automático</p>
-                      <p className="text-xs text-on-surface-variant mt-0.5">Si está activo, la caja se cerrará sola a la hora indicada</p>
-                    </div>
-                    <button
-                      onClick={() => setAutoCloseForm(f => ({ ...f, enabled: !f.enabled }))}
-                      className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${
-                        autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
-                      }`}
-                    >
-                      <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${
-                        autoCloseForm.enabled ? 'left-7' : 'left-0.5'
-                      }`} />
-                    </button>
-                  </div>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
+                    openPanels['tienda'] ? 'rotate-180 text-primary' : ''
+                  }`}>
+                    expand_more
+                  </span>
+                </button>
 
-                  <div>
-                    <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Hora del Cierre</label>
-                    <input
-                      type="time"
-                      value={autoCloseForm.time}
-                      onChange={e => setAutoCloseForm(f => ({ ...f, time: e.target.value }))}
-                      className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-lg outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                    />
+                {openPanels['tienda'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div className={`flex flex-col gap-2 p-5 rounded-2xl border ${storeForm.onlineSalesPaused ? 'bg-red-50/50 border-red-200' : 'bg-green-50/50 border-green-200'}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className={`font-bold text-base ${storeForm.onlineSalesPaused ? 'text-red-700' : 'text-green-700'}`}>
+                            {storeForm.onlineSalesPaused ? 'Compras Pausadas' : 'Compras Activas'}
+                          </h4>
+                          <p className="text-xs text-on-surface-variant mt-1">
+                            {storeForm.onlineSalesPaused 
+                              ? 'Los clientes no pueden finalizar compras online. El POS sigue funcionando.'
+                              : 'Los clientes pueden comprar normalmente en la tienda web.'}
+                          </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox" 
+                            checked={!storeForm.onlineSalesPaused} 
+                            onChange={e => {
+                              const isPaused = !e.target.checked;
+                              setStoreForm(p => ({ 
+                                ...p, 
+                                onlineSalesPaused: isPaused,
+                                pausedAt: isPaused ? new Date().toISOString() : null
+                              }));
+                            }} 
+                            className="sr-only peer" 
+                          />
+                          <div className="w-14 h-7 bg-red-500 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-500 shadow-inner"></div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {storeForm.onlineSalesPaused && (
+                      <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                        <div>
+                          <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Motivo de la Pausa (Visible para clientes)</label>
+                          <textarea
+                            value={storeForm.pauseReason}
+                            onChange={e => setStoreForm(p => ({ ...p, pauseReason: e.target.value }))}
+                            rows={2}
+                            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-medium text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all resize-none"
+                            placeholder="Ej: Estamos actualizando precios. Volvemos en 30 minutos."
+                          />
+                        </div>
+                        <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                          <input 
+                            type="checkbox" 
+                            checked={storeForm.allowBrowsingWhilePaused} 
+                            onChange={e => setStoreForm(p => ({ ...p, allowBrowsingWhilePaused: e.target.checked }))} 
+                            className="w-5 h-5 accent-primary rounded" 
+                          />
+                          <div>
+                            <div className="font-bold text-sm">Permitir navegación de catálogo</div>
+                            <div className="text-xs text-on-surface-variant">Si está activo, los clientes pueden ver productos pero no finalizar checkout.</div>
+                          </div>
+                        </label>
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
               </div>
 
-              {/* Notificaciones (Modified Logic) */}
-              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
-                      <span className="material-symbols-outlined text-orange-700 text-[20px]">notifications_active</span>
+              {/* 2. Zona de Cobertura y Delivery */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('cobertura')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      📍
                     </div>
-                    <div>
-                      <h3 className="font-black text-lg">Notificaciones a Empleados</h3>
-                      <p className="text-xs text-on-surface-variant">Control general de notificaciones por WhatsApp</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Zona de Cobertura y Delivery</h3>
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 shrink-0">
+                          {generalForm.deliveryRadiusKm || 5} km
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Radio máximo de entrega y coordenadas de la sucursal</p>
                     </div>
                   </div>
-                </div>
-                <div className="p-6 space-y-6">
-                  <div className="flex items-center justify-between bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/20">
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
+                    openPanels['cobertura'] ? 'rotate-180 text-primary' : ''
+                  }`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {openPanels['cobertura'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
                     <div>
-                      <h4 className="font-bold text-sm">Habilitar notificaciones a empleados</h4>
-                      <p className="text-xs text-on-surface-variant">Si está activo, se enviarán alertas de pedidos y bajo stock por WhatsApp.</p>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider">Radio Máximo de Cobertura</label>
+                        <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-lg">{generalForm.deliveryRadiusKm || 5} km</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="30"
+                        step="0.5"
+                        value={generalForm.deliveryRadiusKm || 5}
+                        onChange={e => setGeneralForm(p => ({ ...p, deliveryRadiusKm: parseFloat(e.target.value) || 5 }))}
+                        className="w-full h-2 bg-surface-container-high rounded-lg appearance-none cursor-pointer accent-primary"
+                      />
+                      <div className="flex justify-between text-[10px] text-on-surface-variant font-bold mt-1">
+                        <span>1 km</span>
+                        <span>15 km</span>
+                        <span>30 km</span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant mt-2">Los pedidos fuera de esta distancia se bloquearán para entrega a domicilio.</p>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" checked={!generalForm.suspendEmployeeNotifications} onChange={e => setGeneralForm(p => ({ ...p, suspendEmployeeNotifications: !e.target.checked }))} className="sr-only peer" />
-                      <div className="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
-                    </label>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-outline-variant/10">
+                      <div>
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Latitud del Local</label>
+                        <input
+                          type="number"
+                          step="0.000001"
+                          value={generalForm.storeLat ?? -33.459009}
+                          onChange={e => setGeneralForm(p => ({ ...p, storeLat: parseFloat(e.target.value) || -33.459009 }))}
+                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Longitud del Local</label>
+                        <input
+                          type="number"
+                          step="0.000001"
+                          value={generalForm.storeLng ?? -67.551826}
+                          onChange={e => setGeneralForm(p => ({ ...p, storeLng: parseFloat(e.target.value) || -67.551826 }))}
+                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all font-mono"
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
-              <div className="flex gap-3 pb-8 lg:pb-0">
-                <button onClick={handleSave} className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[20px]">save</span>
-                  Guardar Configuración
+              {/* 3. Cuenta Corriente */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('cuentas')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-blue-100 text-blue-700 rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      💳
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Límites de Cuenta Corriente</h3>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
+                          accountForm.enabled ? 'bg-blue-100 text-blue-800' : 'bg-surface-container-high text-on-surface-variant'
+                        }`}>
+                          {accountForm.enabled ? 'Habilitado' : 'Desactivado'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Configuración global para ventas a cuenta y límites de crédito</p>
+                    </div>
+                  </div>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
+                    openPanels['cuentas'] ? 'rotate-180 text-primary' : ''
+                  }`}>
+                    expand_more
+                  </span>
                 </button>
-                <button onClick={handleReset} className="flex-1 bg-white border border-outline-variant/10 font-bold py-4 rounded-2xl text-on-surface-variant hover:bg-surface-container-lowest transition-all flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]">restart_alt</span>
-                  Restaurar
-                </button>
+
+                {openPanels['cuentas'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/20">
+                      <div>
+                        <h4 className="font-bold text-sm">Habilitar Control de Límites</h4>
+                        <p className="text-xs text-on-surface-variant">Activa o desactiva la validación de límites en la caja y checkout.</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" checked={accountForm.enabled} onChange={e => setAccountForm(p => ({ ...p, enabled: e.target.checked }))} className="sr-only peer" />
+                        <div className="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                      </label>
+                    </div>
+
+                    {accountForm.enabled && (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Límite Monetario ($)</label>
+                            <input
+                              type="number"
+                              value={accountForm.maxDebtAmount}
+                              onChange={e => setAccountForm(p => ({ ...p, maxDebtAmount: Number(e.target.value) }))}
+                              className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Límite Temporal (Días)</label>
+                            <input
+                              type="number"
+                              value={accountForm.maxDebtDays}
+                              onChange={e => setAccountForm(p => ({ ...p, maxDebtDays: Number(e.target.value) }))}
+                              className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 pt-2">
+                          <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                            <input type="checkbox" checked={accountForm.warnOnAmountLimit} onChange={e => setAccountForm(p => ({ ...p, warnOnAmountLimit: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
+                            <div>
+                              <div className="font-bold text-sm">Advertir por Límite Monetario</div>
+                              <div className="text-xs text-on-surface-variant">Mostrar alerta si la compra supera el monto máximo permitido</div>
+                            </div>
+                          </label>
+
+                          <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                            <input type="checkbox" checked={accountForm.warnOnTimeLimit} onChange={e => setAccountForm(p => ({ ...p, warnOnTimeLimit: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
+                            <div>
+                              <div className="font-bold text-sm">Advertir por Límite Temporal</div>
+                              <div className="text-xs text-on-surface-variant">Mostrar alerta si el cliente tiene deudas previas vencidas</div>
+                            </div>
+                          </label>
+
+                          <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
+                            <input type="checkbox" checked={accountForm.allowOverride} onChange={e => setAccountForm(p => ({ ...p, allowOverride: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
+                            <div>
+                              <div className="font-bold text-sm">Permitir Excepciones en Caja (Override)</div>
+                              <div className="text-xs text-on-surface-variant">Permite al cajero continuar la venta bajo su responsabilidad</div>
+                            </div>
+                          </label>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
             </div>
 
-            <div className="space-y-6">
-              {/* Tienda Online */}
-              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-                      <span className="material-symbols-outlined text-purple-700 text-[20px]">store_mall_directory</span>
+            {/* Columna Derecha: Seguridad & Automatizaciones */}
+            <div className="space-y-5">
+
+              {/* 4. Teléfonos Bloqueados (Lista Negra) */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('seguridad')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-red-100 text-red-700 rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      🚫
                     </div>
-                    <div>
-                      <h3 className="font-black text-lg">Estado de la Tienda Online</h3>
-                      <p className="text-xs text-on-surface-variant">Control de ventas al público general</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Seguridad y Teléfonos Bloqueados</h3>
+                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 shrink-0">
+                          {generalForm.blockedPhones?.length || 0} bloqueados
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Lista negra de números que no pueden realizar pedidos</p>
                     </div>
                   </div>
-                </div>
-                <div className="p-6 space-y-6">
-                  <div className={`flex flex-col gap-2 p-5 rounded-2xl border ${storeForm.onlineSalesPaused ? 'bg-red-50/50 border-red-200' : 'bg-green-50/50 border-green-200'}`}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className={`font-bold text-lg ${storeForm.onlineSalesPaused ? 'text-red-700' : 'text-green-700'}`}>
-                          {storeForm.onlineSalesPaused ? 'Compras Pausadas' : 'Compras Activas'}
-                        </h4>
-                        <p className="text-sm text-on-surface-variant mt-1">
-                          {storeForm.onlineSalesPaused 
-                            ? 'Los clientes no pueden finalizar compras. El POS sigue funcionando.'
-                            : 'Los clientes pueden comprar normalmente en la tienda.'}
-                        </p>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input 
-                          type="checkbox" 
-                          checked={!storeForm.onlineSalesPaused} 
-                          onChange={e => {
-                            const isPaused = !e.target.checked;
-                            setStoreForm(p => ({ 
-                              ...p, 
-                              onlineSalesPaused: isPaused,
-                              pausedAt: isPaused ? new Date().toISOString() : null
-                            }));
-                          }} 
-                          className="sr-only peer" 
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
+                    openPanels['seguridad'] ? 'rotate-180 text-primary' : ''
+                  }`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {openPanels['seguridad'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Bloquear un nuevo teléfono</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Ej: 2634877314"
+                          value={newBlockedPhone}
+                          onChange={e => setNewBlockedPhone(e.target.value)}
+                          className="flex-1 bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
                         />
-                        <div className="w-14 h-7 bg-red-500 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-500 shadow-inner"></div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const clean = newBlockedPhone.replace(/\D/g, '');
+                            if (!clean) return;
+                            const current = generalForm.blockedPhones || [];
+                            if (!current.includes(clean)) {
+                              setGeneralForm(p => ({ ...p, blockedPhones: [...current, clean] }));
+                            }
+                            setNewBlockedPhone('');
+                          }}
+                          className="bg-red-500 hover:bg-red-600 text-white font-bold px-5 py-3 rounded-xl text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">add</span>
+                          Bloquear
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-2 block">
+                        Números bloqueados actualmente ({generalForm.blockedPhones?.length || 0})
+                      </label>
+                      {(!generalForm.blockedPhones || generalForm.blockedPhones.length === 0) ? (
+                        <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/10 text-center text-xs text-on-surface-variant">
+                          No hay números en la lista negra.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                          {generalForm.blockedPhones.map(phone => (
+                            <div key={phone} className="flex items-center justify-between p-3 bg-red-50/50 rounded-xl border border-red-200/40 text-xs font-bold">
+                              <span className="flex items-center gap-2 text-red-900">
+                                <span className="material-symbols-outlined text-[16px] text-red-500">phone_disabled</span>
+                                {phone}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setGeneralForm(p => ({
+                                    ...p,
+                                    blockedPhones: (p.blockedPhones || []).filter(item => item !== phone)
+                                  }));
+                                }}
+                                className="text-red-500 hover:text-red-700 bg-white hover:bg-red-100 px-3 py-1 rounded-lg border border-red-200 text-[10px] font-bold transition-all flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">delete</span>
+                                Desbloquear
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 5. Cierre Automático de Caja */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('cierre')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-primary/10 text-primary rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      ⏰
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Cierre Automático de Caja</h3>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
+                          autoCloseForm.enabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface-variant'
+                        }`}>
+                          {autoCloseForm.enabled ? autoCloseForm.time : 'Inactivo'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Cierra la caja automáticamente todos los días a la hora configurada</p>
+                    </div>
+                  </div>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
+                    openPanels['cierre'] ? 'rotate-180 text-primary' : ''
+                  }`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {openPanels['cierre'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="font-bold text-sm">Activar cierre automático</p>
+                        <p className="text-xs text-on-surface-variant mt-0.5">Si está activo, la caja se cerrará sola a la hora indicada</p>
+                      </div>
+                      <button
+                        onClick={() => setAutoCloseForm(f => ({ ...f, enabled: !f.enabled }))}
+                        className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${
+                          autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
+                        }`}
+                      >
+                        <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${
+                          autoCloseForm.enabled ? 'left-7' : 'left-0.5'
+                        }`} />
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Hora del Cierre</label>
+                      <input
+                        type="time"
+                        value={autoCloseForm.time}
+                        onChange={e => setAutoCloseForm(f => ({ ...f, time: e.target.value }))}
+                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-lg outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 6. Notificaciones a Empleados */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('notificaciones')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-orange-100 text-orange-700 rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      🔔
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Notificaciones a Empleados</h3>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
+                          !generalForm.suspendEmployeeNotifications ? 'bg-orange-100 text-orange-800' : 'bg-surface-container-high text-on-surface-variant'
+                        }`}>
+                          {!generalForm.suspendEmployeeNotifications ? 'Activas' : 'Pausadas'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Control general de notificaciones y alertas por WhatsApp</p>
+                    </div>
+                  </div>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
+                    openPanels['notificaciones'] ? 'rotate-180 text-primary' : ''
+                  }`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {openPanels['notificaciones'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/20">
+                      <div>
+                        <h4 className="font-bold text-sm">Habilitar notificaciones a empleados</h4>
+                        <p className="text-xs text-on-surface-variant">Si está activo, se enviarán alertas de pedidos y bajo stock por WhatsApp.</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" checked={!generalForm.suspendEmployeeNotifications} onChange={e => setGeneralForm(p => ({ ...p, suspendEmployeeNotifications: !e.target.checked }))} className="sr-only peer" />
+                        <div className="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
                       </label>
                     </div>
                   </div>
-
-                  {storeForm.onlineSalesPaused && (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-top-4">
-                      <div>
-                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Motivo de la Pausa (Visible para clientes)</label>
-                        <textarea
-                          value={storeForm.pauseReason}
-                          onChange={e => setStoreForm(p => ({ ...p, pauseReason: e.target.value }))}
-                          rows={2}
-                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-medium text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all resize-none"
-                          placeholder="Ej: Estamos actualizando precios. Volvemos en 30 minutos."
-                        />
-                      </div>
-                      <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
-                        <input 
-                          type="checkbox" 
-                          checked={storeForm.allowBrowsingWhilePaused} 
-                          onChange={e => setStoreForm(p => ({ ...p, allowBrowsingWhilePaused: e.target.checked }))} 
-                          className="w-5 h-5 accent-primary rounded" 
-                        />
-                        <div>
-                          <div className="font-bold text-sm">Permitir navegación</div>
-                          <div className="text-xs text-on-surface-variant">Si está activo, los clientes pueden ver el catálogo pero no pueden hacer checkout. Si se desactiva, se bloquea toda la tienda.</div>
-                        </div>
-                      </label>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
 
-              {/* Cuenta Corriente */}
-              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                      <span className="material-symbols-outlined text-blue-700 text-[20px]">account_balance_wallet</span>
-                    </div>
-                    <div>
-                      <h3 className="font-black text-lg">Límites de Cuenta Corriente</h3>
-                      <p className="text-xs text-on-surface-variant">Configuración global para ventas a cuenta</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-6 space-y-6">
-                  <div className="flex items-center justify-between bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/20">
-                    <div>
-                      <h4 className="font-bold text-sm">Habilitar Control de Límites</h4>
-                      <p className="text-xs text-on-surface-variant">Activa o desactiva la validación de límites en la caja.</p>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" checked={accountForm.enabled} onChange={e => setAccountForm(p => ({ ...p, enabled: e.target.checked }))} className="sr-only peer" />
-                      <div className="w-11 h-6 bg-surface-container-high peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                  </div>
+            </div>
+          </div>
 
-                  {accountForm.enabled && (
-                    <>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Límite Monetario ($)</label>
-                          <input
-                            type="number"
-                            value={accountForm.maxDebtAmount}
-                            onChange={e => setAccountForm(p => ({ ...p, maxDebtAmount: Number(e.target.value) }))}
-                            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Límite Temporal (Días)</label>
-                          <input
-                            type="number"
-                            value={accountForm.maxDebtDays}
-                            onChange={e => setAccountForm(p => ({ ...p, maxDebtDays: Number(e.target.value) }))}
-                            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-3 pt-2">
-                        <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
-                          <input type="checkbox" checked={accountForm.warnOnAmountLimit} onChange={e => setAccountForm(p => ({ ...p, warnOnAmountLimit: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
-                          <div>
-                            <div className="font-bold text-sm">Advertir por Límite Monetario</div>
-                            <div className="text-xs text-on-surface-variant">Mostrar alerta si la compra supera el monto máximo permitido</div>
-                          </div>
-                        </label>
-
-                        <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
-                          <input type="checkbox" checked={accountForm.warnOnTimeLimit} onChange={e => setAccountForm(p => ({ ...p, warnOnTimeLimit: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
-                          <div>
-                            <div className="font-bold text-sm">Advertir por Límite Temporal</div>
-                            <div className="text-xs text-on-surface-variant">Mostrar alerta si el cliente tiene deudas previas vencidas</div>
-                          </div>
-                        </label>
-
-                        <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
-                          <input type="checkbox" checked={accountForm.allowOverride} onChange={e => setAccountForm(p => ({ ...p, allowOverride: e.target.checked }))} className="w-5 h-5 accent-primary rounded" />
-                          <div>
-                            <div className="font-bold text-sm">Permitir Excepciones (Override)</div>
-                            <div className="text-xs text-on-surface-variant">Permite al cajero continuar la venta "de todas formas" bajo su responsabilidad</div>
-                          </div>
-                        </label>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
+          {/* Barra de Acciones Global */}
+          <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm">
+            <div className="flex-1">
+              <h4 className="font-black text-base text-on-background">Guardar Cambios de Configuración</h4>
+              <p className="text-xs text-on-surface-variant">Aplica todas las modificaciones realizadas en la configuración general.</p>
+            </div>
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <button 
+                onClick={handleReset} 
+                className="flex-1 sm:flex-initial bg-surface-container-low border border-outline-variant/10 font-bold px-6 py-3.5 rounded-2xl text-on-surface-variant hover:bg-surface-container-high transition-all flex items-center justify-center gap-2 text-sm"
+              >
+                <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                Restaurar
+              </button>
+              <button 
+                onClick={handleSave} 
+                className="flex-1 sm:flex-initial bg-primary text-white font-black px-8 py-3.5 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 text-sm"
+              >
+                <span className="material-symbols-outlined text-[20px]">save</span>
+                Guardar Configuración
+              </button>
             </div>
           </div>
 

@@ -23,6 +23,7 @@ export const fetchOrders = async (): Promise<AdminOrder[]> => {
     timestamp: dbOrder.timestamp,
     customer: dbOrder.customer,
     phone: dbOrder.phone,
+    dni: dbOrder.dni,
     address: dbOrder.address,
     deliveryTime: dbOrder.delivery_time,
     method: dbOrder.method,
@@ -31,8 +32,16 @@ export const fetchOrders = async (): Promise<AdminOrder[]> => {
     paymentStatus: dbOrder.payment_status,
     status: dbOrder.status,
     total: dbOrder.total,
+    paidAmount: Number(dbOrder.paid_amount ?? (dbOrder.payment_status === 'Pagado' ? dbOrder.total : 0)),
     discount: dbOrder.discount,
     discountLabel: dbOrder.discount_label,
+    delivery_lat: dbOrder.delivery_lat,
+    delivery_lng: dbOrder.delivery_lng,
+    delivery_address_label: dbOrder.delivery_address_label,
+    delivery_house_number: dbOrder.delivery_house_number,
+    delivery_reference: dbOrder.delivery_reference,
+    delivery_notes: dbOrder.delivery_notes,
+    delivery_method: dbOrder.delivery_method,
     items: (dbOrder.order_items || []).map((item: any) => ({
       id: item.product_id,
       name: item.name,
@@ -44,7 +53,7 @@ export const fetchOrders = async (): Promise<AdminOrder[]> => {
 };
 
 export const insertOrder = async (order: AdminOrder): Promise<void> => {
-  const dbOrder = {
+  const dbOrder: any = {
     id: order.id,
     branch_id: BRANCH_ID,
     date: order.date,
@@ -58,14 +67,39 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
     payment_status: order.paymentStatus,
     status: order.status,
     total: order.total,
+    paid_amount: order.paidAmount ?? (order.paymentStatus === 'Pagado' ? order.total : 0),
     discount: order.discount,
     discount_label: order.discountLabel
   };
+  if (order.dni) dbOrder.dni = order.dni;
+
   const { error } = await supabase.from('orders').insert(dbOrder);
   if (error) {
     console.error('Error inserting order:', error);
-    alert(`Error guardando orden: ${error.message}`);
-    return;
+    // Si falla por una columna extra como dni o paid_amount, intentar inserción base segura
+    const baseDbOrder = {
+      id: order.id,
+      branch_id: BRANCH_ID,
+      date: order.date,
+      timestamp: order.timestamp || Date.now(),
+      customer: order.customer,
+      phone: order.phone,
+      address: order.address,
+      delivery_time: order.deliveryTime,
+      method: order.method,
+      payment_method: order.paymentMethod,
+      payment_status: order.paymentStatus,
+      status: order.status,
+      total: order.total,
+      discount: order.discount,
+      discount_label: order.discountLabel
+    };
+    const { error: retryError } = await supabase.from('orders').insert(baseDbOrder);
+    if (retryError) {
+      console.error('Retry insert error:', retryError);
+      alert(`Error guardando orden: ${retryError.message}`);
+      return;
+    }
   }
 
   if (order.items && order.items.length > 0) {
@@ -90,9 +124,12 @@ export const updateOrderInDb = async (id: string, updates: Partial<AdminOrder>):
   if (updates.status !== undefined) dbUpdates.status = updates.status;
   if (updates.paymentStatus !== undefined) dbUpdates.payment_status = updates.paymentStatus;
   if (updates.paymentMethod !== undefined) dbUpdates.payment_method = updates.paymentMethod;
+  if (updates.paidAmount !== undefined) dbUpdates.paid_amount = updates.paidAmount;
+  if (updates.total !== undefined) dbUpdates.total = updates.total;
   if (updates.deliveryTime !== undefined) dbUpdates.delivery_time = updates.deliveryTime;
   if (updates.address !== undefined) dbUpdates.address = updates.address;
   if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
+  if (updates.dni !== undefined) dbUpdates.dni = updates.dni;
   if (updates.customer !== undefined) dbUpdates.customer = updates.customer;
   
   if (Object.keys(dbUpdates).length === 0) return;

@@ -1,14 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useCart } from '../context/CartContext';
 import { useAuth, Order } from '../stores/useAuthStore';
 import { useAdmin } from '../context/AdminContext';
 import { Link, useNavigate } from 'react-router-dom';
 import { MapSelector } from '../components/MapSelector';
+import { whatsappMessageService } from '../services/whatsapp-message.service';
+import { upsertCustomerProfile } from '../services/admin.service';
+import { checkCustomerOverdueDebt } from '../utils/billing-cycle';
+
+const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Radio terrestre en km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
 
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
-  const { user, addOrder, updateUser } = useAuth();
-  const { addAdminOrder, customers, applyOrderOffers, deductStockForOrder, storeStatus } = useAdmin();
+  const { user, addOrder, updateUser, customerProfile } = useAuth();
+  const { addAdminOrder, customers, orders, applyOrderOffers, deductStockForOrder, storeStatus, generalConfig, isPhoneBlocked, currentAccountConfig, formatCurrency } = useAdmin();
   const navigate = useNavigate();
   const [isOrdered, setIsOrdered] = useState(false);
   const [confirmedName, setConfirmedName] = useState('');
@@ -23,14 +38,48 @@ export const Checkout: React.FC = () => {
 
   const isPickup = deliveryMethod === 'retiro';
 
-  // Map & Address specific details
+  // Map & Address specific details (load last used from local storage if available)
+  const getLastLocation = () => {
+    try {
+      const data = localStorage.getItem('la_martina_last_delivery_location');
+      return data ? JSON.parse(data) : null;
+    } catch {
+      return null;
+    }
+  };
+  const lastSavedLoc = getLastLocation();
+
   const savedProfileAddress = user?.address || '';
-  const [usingProfileAddress, setUsingProfileAddress] = useState<boolean>(!!user?.address);
-  const [deliveryCoords, setDeliveryCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [deliveryAddressLabel, setDeliveryAddressLabel] = useState<string>('');
-  const [deliveryHouseNumber, setDeliveryHouseNumber] = useState<string>('');
-  const [deliveryReference, setDeliveryReference] = useState<string>('');
-  const [deliveryNotes, setDeliveryNotes] = useState<string>('');
+  const [usingProfileAddress, setUsingProfileAddress] = useState<boolean>(!!user?.address && !lastSavedLoc);
+  const [deliveryCoords, setDeliveryCoords] = useState<{ lat: number; lng: number } | null>(
+    lastSavedLoc?.coords || null
+  );
+  const [deliveryAddressLabel, setDeliveryAddressLabel] = useState<string>(
+    lastSavedLoc?.addressLabel || ''
+  );
+  const [deliveryHouseNumber, setDeliveryHouseNumber] = useState<string>(
+    lastSavedLoc?.houseNumber || ''
+  );
+  const [deliveryReference, setDeliveryReference] = useState<string>(
+    lastSavedLoc?.reference || ''
+  );
+  const [deliveryNotes, setDeliveryNotes] = useState<string>(
+    lastSavedLoc?.notes || ''
+  );
+
+  const saveLastDeliveryLocation = (coords: any, label: string, houseNum: string, ref: string, notes: string) => {
+    try {
+      localStorage.setItem('la_martina_last_delivery_location', JSON.stringify({
+        coords,
+        addressLabel: label,
+        houseNumber: houseNum,
+        reference: ref,
+        notes
+      }));
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const initialName = (user?.name && user.name !== 'Invitado' && user.name !== 'Sin Nombre') ? user.name : '';
   const [formData, setFormData] = useState({
@@ -52,8 +101,107 @@ export const Checkout: React.FC = () => {
 
   const cleanDni = (d: string) => (d || '').replace(/\D/g, '');
 
+  // ─── Trusted Device & OTP Verification ───────────────────────
+  const getDeviceVerifiedPhones = (): string[] => {
+    try {
+      const stored = localStorage.getItem('la_martina_verified_phones');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const addDeviceVerifiedPhone = (p: string) => {
+    const clean = cleanPhone(p);
+    if (!clean) return;
+    const list = getDeviceVerifiedPhones();
+    if (!list.includes(clean)) {
+      list.push(clean);
+      localStorage.setItem('la_martina_verified_phones', JSON.stringify(list));
+    }
+  };
+
+  const [otpCodeSent, setOtpCodeSent] = useState<string | null>(null);
+  const [otpInput, setOtpInput] = useState('');
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpSuccess, setOtpSuccess] = useState<string | null>(null);
+  const [otpCountdown, setOtpCountdown] = useState(0);
+  const [deviceVerifiedManually, setDeviceVerifiedManually] = useState(false);
+
+  // Check if current phone is verified in this device
+  const isPhoneVerifiedOnDevice = useMemo(() => {
+    const clean = cleanPhone(formData.phone);
+    if (!clean || clean.length < 8) return false;
+    return getDeviceVerifiedPhones().includes(clean);
+  }, [formData.phone]);
+
+  const isPhoneEffectiveVerified = isPhoneVerifiedOnDevice || deviceVerifiedManually;
+
+  useEffect(() => {
+    if (otpCountdown > 0) {
+      const timer = setTimeout(() => setOtpCountdown(c => c - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [otpCountdown]);
+
+  // Reset manual verification when phone changes
+  useEffect(() => {
+    setDeviceVerifiedManually(false);
+    setOtpCodeSent(null);
+    setOtpInput('');
+    setOtpError(null);
+    setOtpSuccess(null);
+  }, [formData.phone]);
+
+  const handleSendOtp = async () => {
+    setOtpError(null);
+    setOtpSuccess(null);
+    const phoneDigits = cleanPhone(formData.phone);
+    if (!phoneDigits || phoneDigits.length < 8) {
+      setOtpError('Ingresá un número de celular válido con código de área.');
+      return;
+    }
+
+    if (isPhoneBlocked(phoneDigits)) {
+      setOtpError('No se pueden procesar pedidos con este número de teléfono.');
+      return;
+    }
+
+    setIsSendingOtp(true);
+    const generated = Math.floor(1000 + Math.random() * 9000).toString(); // 4 dígitos
+    setOtpCodeSent(generated);
+
+    try {
+      await whatsappMessageService.createOtpMessage(phoneDigits, generated, formData.name);
+      setOtpSuccess('¡Código enviado por WhatsApp! Revisá tus mensajes.');
+      setOtpCountdown(60);
+    } catch (err) {
+      console.error('Error enviando OTP:', err);
+      setOtpError('Error enviando código de verificación. Reintentá en unos momentos.');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = () => {
+    setOtpError(null);
+    if (!otpInput || otpInput.trim().length !== 4) {
+      setOtpError('Ingresá el código de 4 dígitos.');
+      return;
+    }
+    if (otpInput.trim() === otpCodeSent) {
+      addDeviceVerifiedPhone(formData.phone);
+      setDeviceVerifiedManually(true);
+      setOtpSuccess('¡Número verificado correctamente en este dispositivo!');
+      setOtpError(null);
+    } else {
+      setOtpError('El código ingresado es incorrecto.');
+    }
+  };
+
   // Check if current phone belongs to a registered customer
-  const currentCustomer = React.useMemo(() => {
+  const currentCustomer = useMemo(() => {
     if (!formData.phone) return null;
     const formPhoneClean = cleanPhone(formData.phone);
     if (!formPhoneClean) return null;
@@ -63,13 +211,48 @@ export const Checkout: React.FC = () => {
   const hasCuentaCorriente = !!currentCustomer?.hasCurrentAccount;
   const isRegisteredCustomer = !!(currentCustomer && currentCustomer.name && currentCustomer.name !== 'Invitado' && currentCustomer.name !== 'Sin Nombre');
 
+  const isAsap = formData.deliveryTime.includes('Lo antes posible');
+  const shippingCost = isPickup ? 0 : (items.length > 0 ? (isAsap ? 2500 : 1500) : 0);
+
+  // Dynamic order offers recalculation based on the phone typed at checkout
+  const subtotalAfterItemDiscounts = totalPrice + cartOrderOfferDiscount;
+  const orderOffer = React.useMemo(() => {
+    return applyOrderOffers(subtotalAfterItemDiscounts, currentCustomer);
+  }, [subtotalAfterItemDiscounts, currentCustomer, applyOrderOffers]);
+
+  const activeOrderOfferDiscount = orderOffer.discountAmount;
+  const activeOrderOfferLabel = orderOffer.offerLabel;
+
+  const activeTotalPrice = subtotalAfterItemDiscounts - activeOrderOfferDiscount;
+  const activeDiscountApplied = originalPriceSum - activeTotalPrice;
+  const finalTotal = activeTotalPrice + shippingCost;
+
+  // Cuenta Corriente Validations (Temporal Overdue & Monetary Limit including Shipping)
+  const ccOverdueStatus = useMemo(() => {
+    if (!formData.phone || !currentCustomer?.hasCurrentAccount) {
+      return { isOverdue: false, overdueDebt: 0, oldestDueDate: null, oldestOrderDate: null };
+    }
+    return checkCustomerOverdueDebt(formData.phone, orders);
+  }, [formData.phone, currentCustomer, orders]);
+
+  const effectiveCcAmountLimit = useMemo(() => {
+    if (!currentCustomer) return currentAccountConfig.maxDebtAmount;
+    return currentCustomer.useCustomAccountLimits
+      ? (currentCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount)
+      : currentAccountConfig.maxDebtAmount;
+  }, [currentCustomer, currentAccountConfig]);
+
+  const currentCustomerDebt = currentCustomer?.currentDebt || 0;
+  const potentialTotalCcDebt = currentCustomerDebt + finalTotal;
+  const isCcExceedingAmount = potentialTotalCcDebt > effectiveCcAmountLimit;
+
   // Cuenta Corriente DNI validation state
   const [ccDniInput, setCcDniInput] = useState('');
   const [isCcValidated, setIsCcValidated] = useState(false);
   const [ccValidationError, setCcValidationError] = useState<string | null>(null);
 
   // Reset CC validation when phone number changes
-  React.useEffect(() => {
+  useEffect(() => {
     setIsCcValidated(false);
     setCcValidationError(null);
     setCcDniInput('');
@@ -103,6 +286,14 @@ export const Checkout: React.FC = () => {
     }
 
     if (enteredDigits === registeredDigits) {
+      if (ccOverdueStatus.isOverdue) {
+        setIsCcValidated(false);
+        const dueFormatted = ccOverdueStatus.oldestDueDate ? ccOverdueStatus.oldestDueDate.toLocaleDateString('es-AR') : 'el día 10';
+        setCcValidationError(`Tu Cuenta Corriente está pausada por saldo vencido ($${formatCurrency(ccOverdueStatus.overdueDebt, true, true)} - venció el ${dueFormatted}). Regularizá tu saldo en el local o elegí otro medio de pago.`);
+        setFormData(prev => ({ ...prev, paymentMethod: 'cash' }));
+        return;
+      }
+
       setIsCcValidated(true);
       setCcValidationError(null);
       setFormData(prev => ({ ...prev, paymentMethod: 'cuenta_corriente' }));
@@ -128,21 +319,23 @@ export const Checkout: React.FC = () => {
     }));
   };
 
-  const isAsap = formData.deliveryTime.includes('Lo antes posible');
-  const shippingCost = isPickup ? 0 : (items.length > 0 ? (isAsap ? 2500 : 1500) : 0);
+  // ─── Distance & Coverage Zone Check ──────────────────────────
+  const storeLat = generalConfig.storeLat ?? -33.459009;
+  const storeLng = generalConfig.storeLng ?? -67.551826;
+  const maxRadiusKm = generalConfig.deliveryRadiusKm ?? 5;
 
-  // Dynamic order offers recalculation based on the phone typed at checkout
-  const subtotalAfterItemDiscounts = totalPrice + cartOrderOfferDiscount;
-  const orderOffer = React.useMemo(() => {
-    return applyOrderOffers(subtotalAfterItemDiscounts, currentCustomer);
-  }, [subtotalAfterItemDiscounts, currentCustomer, applyOrderOffers]);
+  const currentDistanceKm = useMemo(() => {
+    if (isPickup) return 0;
+    const lat = usingProfileAddress ? user?.address_lat : deliveryCoords?.lat;
+    const lng = usingProfileAddress ? user?.address_lng : deliveryCoords?.lng;
+    if (lat === null || lat === undefined || lng === null || lng === undefined) return null;
+    return calculateDistanceKm(storeLat, storeLng, lat, lng);
+  }, [isPickup, usingProfileAddress, user, deliveryCoords, storeLat, storeLng]);
 
-  const activeOrderOfferDiscount = orderOffer.discountAmount;
-  const activeOrderOfferLabel = orderOffer.offerLabel;
-
-  const activeTotalPrice = subtotalAfterItemDiscounts - activeOrderOfferDiscount;
-  const activeDiscountApplied = originalPriceSum - activeTotalPrice;
-  const finalTotal = activeTotalPrice + shippingCost;
+  const isOutsideCoverage = useMemo(() => {
+    if (isPickup || currentDistanceKm === null) return false;
+    return currentDistanceKm > maxRadiusKm;
+  }, [isPickup, currentDistanceKm, maxRadiusKm]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -155,6 +348,7 @@ export const Checkout: React.FC = () => {
     setUsingProfileAddress(false);
     setFormError(null);
     setIsMapModalOpen(false);
+    saveLastDeliveryLocation({ lat, lng }, address, deliveryHouseNumber, deliveryReference, deliveryNotes);
   };
 
   const handleSwitchToMapAddress = () => {
@@ -187,12 +381,46 @@ export const Checkout: React.FC = () => {
       return;
     }
 
+    // Phone blocklist validation
+    const cleanP = cleanPhone(formData.phone);
+    if (isPhoneBlocked(cleanP)) {
+      setFormError('No es posible procesar este pedido con este número de contacto.');
+      window.scrollTo({ top: 200, behavior: 'smooth' });
+      return;
+    }
+
+    // Phone OTP validation (device-based trust)
+    if (!isPhoneEffectiveVerified) {
+      setFormError('Debés verificar tu número de WhatsApp antes de confirmar tu pedido.');
+      window.scrollTo({ top: 300, behavior: 'smooth' });
+      return;
+    }
+
+    // Coverage Zone Validation
+    if (!isPickup && isOutsideCoverage) {
+      setFormError(`La ubicación seleccionada está fuera de nuestro radio de entrega (${maxRadiusKm} km). Podés optar por 'Retiro en sucursal'.`);
+      window.scrollTo({ top: 300, behavior: 'smooth' });
+      return;
+    }
+
     // Validation for Cuenta Corriente
     if (formData.paymentMethod === 'cuenta_corriente') {
       const enteredDigits = cleanDni(ccDniInput);
       const registeredDigits = cleanDni(currentCustomer?.dni || '');
       if (!isCcValidated || !currentCustomer?.hasCurrentAccount || !enteredDigits || enteredDigits !== registeredDigits) {
         setFormError('Debés validar tu DNI antes de confirmar un pedido con Cuenta Corriente.');
+        window.scrollTo({ top: 400, behavior: 'smooth' });
+        return;
+      }
+
+      if (ccOverdueStatus.isOverdue) {
+        setFormError(`Tu Cuenta Corriente tiene un saldo vencido de $${formatCurrency(ccOverdueStatus.overdueDebt, true, true)}. No es posible realizar pedidos a cuenta hasta regularizar el pago en el local.`);
+        window.scrollTo({ top: 400, behavior: 'smooth' });
+        return;
+      }
+
+      if (isCcExceedingAmount) {
+        setFormError(`El pedido ($${formatCurrency(finalTotal, true, true)}) supera tu límite disponible de Cuenta Corriente ($${formatCurrency(effectiveCcAmountLimit, true, true)}). Por favor reducí las cantidades en el carrito o seleccioná otro método de pago.`);
         window.scrollTo({ top: 400, behavior: 'smooth' });
         return;
       }
@@ -247,6 +475,7 @@ export const Checkout: React.FC = () => {
     const userOrder = {
       id: orderId,
       date: dateStr,
+      timestamp: Date.now(),
       total: finalTotal,
       itemsCount: totalItems,
       status: 'Procesando' as const,
@@ -294,6 +523,36 @@ export const Checkout: React.FC = () => {
       delivery_method: isPickup ? 'retiro' : 'envio'
     };
     addAdminOrder(adminOrder as any);
+
+    // Auto-crear cliente verificado en la base de datos si es invitado nuevo
+    if (cleanP && !currentCustomer) {
+      const parts = finalCustomerName.trim().split(' ');
+      const firstName = parts[0] || finalCustomerName;
+      const lastName = parts.slice(1).join(' ') || '';
+      upsertCustomerProfile({
+        user_id: customerProfile?.user_id || `guest_${cleanP}`,
+        phone: cleanP,
+        name: firstName,
+        last_name: lastName,
+        address: backwardAddressString,
+        address_lat: finalLat,
+        address_lng: finalLng,
+        branch_id: 'main',
+        active: true,
+        dni: validatedDni || cleanP
+      } as any).catch(console.error);
+    }
+
+    // Guardar última ubicación en localStorage para futuros pedidos
+    if (!isPickup && finalLat && finalLng) {
+      saveLastDeliveryLocation(
+        { lat: finalLat, lng: finalLng },
+        finalAddressLabel || '',
+        deliveryHouseNumber,
+        deliveryReference,
+        deliveryNotes
+      );
+    }
 
     // Guardar datos en perfil local del invitado si aplica
     updateUser({ name: finalCustomerName, phone: formData.phone });
@@ -400,11 +659,21 @@ export const Checkout: React.FC = () => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-on-surface-variant">Nombre Completo</label>
+                  <div className="h-6 flex items-center">
+                    <label className="text-sm font-bold text-on-surface-variant">Nombre Completo</label>
+                  </div>
                   <input required name="name" value={formData.name} onChange={handleInputChange} type="text" placeholder="Juan Pérez" className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-on-surface-variant">Teléfono / WhatsApp</label>
+                  <div className="h-6 flex justify-between items-center">
+                    <label className="text-sm font-bold text-on-surface-variant">Teléfono / WhatsApp</label>
+                    {isPhoneEffectiveVerified && (
+                      <span className="text-[10px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200 inline-flex items-center gap-1 shrink-0">
+                        <span className="material-symbols-outlined text-[13px]">verified</span>
+                        Verificado
+                      </span>
+                    )}
+                  </div>
                   <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
                     <span className="material-symbols-outlined pl-4 text-on-surface-variant text-[20px] shrink-0">call</span>
                     <span className="pl-2 pr-1.5 text-on-surface font-semibold text-sm shrink-0 border-r border-outline-variant/20 mr-2">+54</span>
@@ -421,6 +690,87 @@ export const Checkout: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                {/* OTP Verification Block (si el número no está verificado en este dispositivo) */}
+                {!isPhoneEffectiveVerified && cleanPhone(formData.phone).length >= 8 && (
+                  <div className="md:col-span-2 bg-amber-50/70 border border-amber-200 rounded-2xl p-4 md:p-5 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-800 shrink-0 mt-0.5">
+                        <span className="material-symbols-outlined text-[20px]">security</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm text-amber-950">Verificación de seguridad requerida</p>
+                        <p className="text-xs text-amber-900/80 mt-0.5 leading-relaxed">
+                          Para proteger tu pedido, te enviaremos un código de 4 dígitos por WhatsApp. Una vez verificado, este dispositivo quedará autorizado para futuras compras.
+                        </p>
+                      </div>
+                    </div>
+
+                    {!otpCodeSent ? (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={handleSendOtp}
+                          disabled={isSendingOtp}
+                          className="w-full sm:w-auto bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold px-5 py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">chat</span>
+                          {isSendingOtp ? 'Enviando código...' : 'Solicitar código por WhatsApp'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 pt-1">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={4}
+                            placeholder="Código 4 dígitos"
+                            value={otpInput}
+                            onChange={e => setOtpInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleVerifyOtp();
+                              }
+                            }}
+                            className="bg-white border-2 border-amber-300 rounded-xl px-4 py-2.5 font-mono text-center tracking-[0.3em] font-black text-base outline-none focus:border-amber-600 sm:w-44"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleVerifyOtp}
+                            className="bg-amber-700 hover:bg-amber-800 text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                            Confirmar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSendOtp}
+                            disabled={otpCountdown > 0 || isSendingOtp}
+                            className="bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold px-4 py-2.5 rounded-xl text-xs transition-all disabled:opacity-50 text-center"
+                          >
+                            {otpCountdown > 0 ? `Reenviar (${otpCountdown}s)` : 'Reenviar código'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {otpError && (
+                      <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-xs font-bold text-red-700 animate-in fade-in duration-200">
+                        <span className="material-symbols-outlined text-[16px] shrink-0">error</span>
+                        <p>{otpError}</p>
+                      </div>
+                    )}
+
+                    {otpSuccess && (
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-xl flex items-center gap-2 text-xs font-bold text-green-700 animate-in fade-in duration-200">
+                        <span className="material-symbols-outlined text-[16px] shrink-0">check_circle</span>
+                        <p>{otpSuccess}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Badge if registered customer is detected by phone */}
                 {isRegisteredCustomer && (
@@ -514,6 +864,22 @@ export const Checkout: React.FC = () => {
                       )}
                     </div>
 
+                    {/* Advertencia de Zona de Cobertura */}
+                    {!isPickup && isOutsideCoverage && currentDistanceKm !== null && (
+                      <div className="p-4 bg-red-50 border border-red-300 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <span className="material-symbols-outlined text-red-600 text-2xl shrink-0 mt-0.5">wrong_location</span>
+                        <div>
+                          <h4 className="font-bold text-sm text-red-900">Ubicación fuera del radio de entrega</h4>
+                          <p className="text-xs text-red-700 mt-1 leading-relaxed">
+                            La dirección seleccionada se encuentra a <strong>{currentDistanceKm.toFixed(1)} km</strong> del local. Nuestro radio máximo de entrega es de <strong>{maxRadiusKm} km</strong>.
+                          </p>
+                          <p className="text-xs text-red-700 font-bold mt-2">
+                            👉 Podés cambiar la opción a <strong>"Retiro en sucursal"</strong> para completar tu pedido.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {deliveryCoords && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 animate-in slide-in-from-top-3 duration-500">
                         <div className="space-y-2">
@@ -597,37 +963,45 @@ export const Checkout: React.FC = () => {
                         }
 
                         return (
-                          <button
+                          <label
                             key={slot.id}
-                            type="button"
-                            disabled={!isAvailable}
-                            onClick={() => setFormData(prev => ({ ...prev, deliveryTime: `${slot.label} (${slot.sub})` }))}
-                            className={`flex items-center gap-3 p-2.5 rounded-2xl border-2 text-left transition-all relative ${!isAvailable
-                              ? 'opacity-40 grayscale cursor-not-allowed border-outline-variant/5 bg-surface-container-low'
-                              : formData.deliveryTime.includes(slot.label)
-                                ? 'border-primary bg-primary/5 shadow-sm'
-                                : 'border-outline-variant/10 hover:bg-surface-container-low'
-                              }`}
+                            className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all ${
+                              !isAvailable
+                                ? 'opacity-40 bg-surface-container-low border-outline-variant/10 cursor-not-allowed'
+                                : formData.deliveryTime === slot.label
+                                  ? 'border-primary bg-primary/5 cursor-pointer shadow-sm'
+                                  : 'border-outline-variant/20 hover:bg-surface-container-low cursor-pointer'
+                            }`}
                           >
-                            <div className={`w-8 h-8 rounded-full shrink-0 flex items-center justify-center ${!isAvailable ? 'bg-gray-200 text-gray-400' : formData.deliveryTime.includes(slot.label) ? 'bg-primary text-white' : 'bg-surface-container-high text-on-surface-variant'}`}>
-                              <span className="material-symbols-outlined text-[18px]">{slot.icon}</span>
-                            </div>
+                            <input
+                              type="radio"
+                              name="deliveryTime"
+                              value={slot.label}
+                              checked={formData.deliveryTime === slot.label}
+                              onChange={handleInputChange}
+                              disabled={!isAvailable}
+                              className="hidden"
+                            />
+                            <span className={`material-symbols-outlined text-[22px] ${formData.deliveryTime === slot.label ? 'text-primary' : 'text-on-surface-variant'}`}>
+                              {slot.icon}
+                            </span>
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between gap-1">
-                                <p className="font-bold text-[13px] truncate">{slot.label}</p>
-                                {slot.id === 'asap' && isAvailable && !isPickup && (
-                                  <span className="text-[9px] font-bold bg-error/10 text-error px-1.5 py-0.5 rounded-full shrink-0">
-                                    +$1k
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-[11px] text-on-surface-variant leading-tight">{slot.sub}</p>
+                              <p className="font-bold text-sm text-on-surface leading-tight">{slot.label}</p>
+                              <p className="text-[11px] text-on-surface-variant font-medium mt-0.5">{slot.sub}</p>
                             </div>
-                          </button>
+                            {formData.deliveryTime === slot.label && (
+                              <span className="material-symbols-outlined text-primary text-[20px]">check_circle</span>
+                            )}
+                          </label>
                         );
                       });
                     })()}
                   </div>
+                </div>
+
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-sm font-bold text-on-surface-variant">Notas adicionales para el pedido</label>
+                  <textarea name="notes" value={formData.notes} onChange={handleInputChange} rows={3} placeholder="Instrucciones sobre tus productos..." className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-medium text-sm resize-none"></textarea>
                 </div>
               </div>
             </section>
@@ -640,10 +1014,10 @@ export const Checkout: React.FC = () => {
               </div>
               <div className="space-y-4">
                 {[
-                  { id: 'cash', label: isPickup ? 'Efectivo en sucursal' : 'Efectivo al recibir', icon: 'payments' },
-                  { id: 'card', label: isPickup ? 'Tarjeta en sucursal' : 'Tarjeta (Posnet al recibir)', icon: 'credit_card' },
+                  { id: 'cash', label: isPickup ? 'Efectivo en el local' : 'Efectivo contra entrega', icon: 'payments' },
+                  { id: 'card', label: 'Tarjeta de Débito / Crédito', icon: 'credit_card' },
                   { id: 'transfer', label: 'Transferencia Bancaria', icon: 'account_balance' },
-                ].map(method => (
+                ].map((method) => (
                   <label key={method.id} className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${formData.paymentMethod === method.id ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'}`}>
                     <input type="radio" name="paymentMethod" value={method.id} checked={formData.paymentMethod === method.id} onChange={handleInputChange} className="hidden" />
                     <span className={`material-symbols-outlined ${formData.paymentMethod === method.id ? 'text-primary' : 'text-on-surface-variant'}`}>{method.icon}</span>
@@ -656,8 +1030,10 @@ export const Checkout: React.FC = () => {
                 {hasCuentaCorriente && (
                   <div className="pt-2">
                     {isCcValidated ? (
-                      <div className="space-y-2">
-                        <label className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${formData.paymentMethod === 'cuenta_corriente' ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'}`}>
+                      <div className="space-y-3">
+                        <label className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${
+                          formData.paymentMethod === 'cuenta_corriente' ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'
+                        }`}>
                           <input type="radio" name="paymentMethod" value="cuenta_corriente" checked={formData.paymentMethod === 'cuenta_corriente'} onChange={handleInputChange} className="hidden" />
                           <span className={`material-symbols-outlined ${formData.paymentMethod === 'cuenta_corriente' ? 'text-primary' : 'text-on-surface-variant'}`}>menu_book</span>
                           <div className="flex-1 min-w-0">
@@ -673,6 +1049,40 @@ export const Checkout: React.FC = () => {
                           </div>
                           {formData.paymentMethod === 'cuenta_corriente' && <span className="material-symbols-outlined text-primary">check_circle</span>}
                         </label>
+
+                        {/* Advertencia de Límite Monetario Superado */}
+                        {isCcExceedingAmount && (
+                          <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-3 animate-in fade-in">
+                            <div className="flex items-start gap-2.5 text-amber-900">
+                              <span className="material-symbols-outlined text-[20px] text-amber-700 shrink-0 mt-0.5">warning</span>
+                              <div>
+                                <p className="font-bold text-sm">Este pedido supera tu límite de Cuenta Corriente</p>
+                                <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                                  Límite de crédito: <strong>${formatCurrency(effectiveCcAmountLimit, true, true)}</strong> • Deuda actual: <strong>${formatCurrency(currentCustomerDebt, true, true)}</strong>.
+                                  Con este pedido de <strong>${formatCurrency(finalTotal, true, true)}</strong>{!isPickup && shippingCost > 0 ? ` (incluye $${formatCurrency(shippingCost, true, true)} de envío)` : ''}, el saldo acumulado sería <strong>${formatCurrency(potentialTotalCcDebt, true, true)}</strong> (supera por ${formatCurrency(potentialTotalCcDebt - effectiveCcAmountLimit, true, true)}).
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => navigate('/cart')}
+                                className="bg-primary hover:bg-primary/90 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">shopping_cart</span>
+                                Volver al Carrito para modificar cantidades
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setFormData(prev => ({ ...prev, paymentMethod: 'cash' }))}
+                                className="bg-white border border-amber-300 text-amber-900 font-bold py-2.5 px-4 rounded-xl text-xs hover:bg-amber-100/50 transition-all text-center"
+                              >
+                                Cambiar a Efectivo
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="flex justify-end pr-2">
                           <button
                             type="button"
@@ -773,6 +1183,16 @@ export const Checkout: React.FC = () => {
                 <span className="material-symbols-outlined">block</span>
                 COMPRAS PAUSADAS
               </div>
+            ) : !isPhoneEffectiveVerified ? (
+              <div className="w-full bg-amber-100 text-amber-900 py-4 px-6 rounded-full flex justify-center items-center gap-2 text-sm font-bold border border-amber-300 cursor-not-allowed text-center">
+                <span className="material-symbols-outlined text-[20px]">lock</span>
+                VERIFICÁ TU NÚMERO DE TELÉFONO PARA CONFIRMAR
+              </div>
+            ) : !isPickup && isOutsideCoverage ? (
+              <div className="w-full bg-red-100 text-red-900 py-4 px-6 rounded-full flex justify-center items-center gap-2 text-sm font-bold border border-red-300 cursor-not-allowed text-center">
+                <span className="material-symbols-outlined text-[20px]">block</span>
+                UBICACIÓN FUERA DE COBERTURA (CAMBIÁ A RETIRO)
+              </div>
             ) : (
               <button type="submit" className="w-full bg-primary text-white font-label-sm py-5 rounded-full flex justify-center items-center gap-3 hover:bg-primary/90 transition-all shadow-xl text-lg font-bold">
                 CONFIRMAR PEDIDO
@@ -833,6 +1253,9 @@ export const Checkout: React.FC = () => {
         <MapSelector 
           initialLat={deliveryCoords?.lat}
           initialLng={deliveryCoords?.lng}
+          storeLat={storeLat}
+          storeLng={storeLng}
+          deliveryRadiusKm={maxRadiusKm}
           onClose={() => setIsMapModalOpen(false)} 
           onLocationSelected={handleLocationSelected} 
         />

@@ -15,10 +15,11 @@ export const Profile: React.FC = () => {
     signUpCustomer, 
     signInCustomer, 
     signOutCustomer, 
-    loading: authLoading 
+    loading: authLoading,
+    updateOrderStatus: updateLocalOrderStatus
   } = useAuth();
   const { addItem } = useCart();
-  const { customers, orders, toggleCurrentAccount } = useAdmin();
+  const { customers, orders, toggleCurrentAccount, updateOrderStatus } = useAdmin();
   const navigate = useNavigate();
   
   const [isEditing, setIsEditing] = useState(false);
@@ -26,6 +27,7 @@ export const Profile: React.FC = () => {
   const [showCCModal, setShowCCModal] = useState(false);
   const [selectedCCDate, setSelectedCCDate] = useState<string | null>(null);
   const [ccError, setCcError] = useState<string | null>(null);
+  const [cancelOrderData, setCancelOrderData] = useState<any | null>(null);
 
   // Customer Auth Flow States
   const [continueAsGuest, setContinueAsGuest] = useState(false);
@@ -152,214 +154,7 @@ export const Profile: React.FC = () => {
     }
   };
 
-  // ─── Render Auth UI ───
-  if (!isAuthenticated && !continueAsGuest) {
-    return (
-      <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-12 flex flex-col items-center justify-center min-h-[75vh] animate-in fade-in duration-500">
-        
-        {/* Main Auth Grid */}
-        <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 items-stretch">
-          
-          {/* Left Column: Benefits (Visual hook) */}
-          <div className="md:col-span-6 flex flex-col justify-center space-y-6 bg-primary/5 rounded-[2.5rem] p-8 border border-primary/10 text-left">
-            <div>
-              <span className="text-xs font-bold bg-primary/10 text-primary px-3 py-1 rounded-full uppercase tracking-wider">Martina Club</span>
-              <h2 className="text-2xl md:text-3xl font-black text-on-background mt-3 mb-1">¡Comprá con más beneficios!</h2>
-              <p className="text-sm text-on-surface-variant">Unite gratis para acceder a funciones premium en nuestra tienda.</p>
-            </div>
-
-            <div className="space-y-4">
-              {[
-                { icon: 'history', title: 'Historial de Pedidos', desc: 'Revisá tus compras pasadas y repetilas al instante.' },
-                { icon: 'favorite', title: 'Tus Favoritos', desc: 'Guardá tus productos favoritos en la nube para no perderlos.' },
-                { icon: 'location_on', title: 'Direcciones Guardadas', desc: 'Configurá tus casas u oficinas en el mapa para checkouts en 1 clic.' },
-                { icon: 'local_offer', title: 'Descuentos Especiales', desc: 'Promociones personalizadas para clientes registrados.' }
-              ].map((item, idx) => (
-                <div key={idx} className="flex gap-4 items-start">
-                  <div className="w-10 h-10 bg-white text-primary rounded-xl flex items-center justify-center shrink-0 shadow-sm border border-outline-variant/10">
-                    <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-on-surface leading-tight">{item.title}</h4>
-                    <p className="text-xs text-on-surface-variant leading-tight mt-0.5">{item.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Right Column: Interactive Login/Signup Card */}
-          <div className="md:col-span-6 bg-white p-6 md:p-8 rounded-[2.5rem] border border-outline-variant/20 shadow-xl flex flex-col relative overflow-hidden justify-between">
-            {authLoading && (
-              <div className="absolute inset-0 bg-white/70 backdrop-blur-sm z-50 flex items-center justify-center">
-                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-              </div>
-            )}
-
-            <div>
-              {/* Tab selector */}
-              <div className="flex bg-surface-container-low p-1 rounded-2xl mb-8 border border-outline-variant/5">
-                <button
-                  onClick={() => { setAuthTab('login'); setErrorMsg(null); }}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${authTab === 'login' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'}`}
-                >
-                  INICIAR SESIÓN
-                </button>
-                <button
-                  onClick={() => { setAuthTab('register'); setErrorMsg(null); }}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${authTab === 'register' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'}`}
-                >
-                  REGISTRARME
-                </button>
-              </div>
-
-              {errorMsg && (
-                <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-2 animate-in slide-in-from-top-1 duration-200">
-                  <span className="material-symbols-outlined text-red-600 text-[18px]">error</span>
-                  <p className="text-xs text-red-700 font-bold leading-tight">{errorMsg}</p>
-                </div>
-              )}
-
-              {/* Login Form */}
-              {authTab === 'login' ? (
-                <form onSubmit={handleLogin} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">WhatsApp / Celular</label>
-                    <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
-                      <span className="material-symbols-outlined pl-4 text-on-surface-variant text-[20px] shrink-0">call</span>
-                      <span className="pl-2 pr-1.5 text-on-surface font-semibold text-sm shrink-0 border-r border-outline-variant/20 mr-2">+54</span>
-                      <input
-                        required
-                        type="tel"
-                        placeholder="261 455 6677"
-                        value={phone.startsWith('+54') ? phone.substring(3) : (phone.startsWith('54') ? phone.substring(2) : phone)}
-                        onChange={e => {
-                          const val = e.target.value.replace(/\D/g, '');
-                          setPhone(val ? '+54' + val : '');
-                        }}
-                        className="w-full bg-transparent py-3 pr-4 outline-none font-semibold text-sm"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">Contraseña</label>
-                    <div className="relative">
-                      <input
-                        required
-                        type="password"
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl pl-11 pr-4 py-3 outline-none focus:border-primary transition-all font-semibold"
-                      />
-                      <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">lock</span>
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-4 rounded-2xl shadow-lg shadow-primary/20 transition-all text-sm mt-6"
-                  >
-                    INGRESAR
-                  </button>
-                </form>
-              ) : (
-                /* Registration Form */
-                <form onSubmit={handleRegister} className="space-y-3.5">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Nombre *</label>
-                      <input
-                        required
-                        type="text"
-                        placeholder="Juan"
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Apellido</label>
-                      <input
-                        type="text"
-                        placeholder="Pérez"
-                        value={lastName}
-                        onChange={e => setLastName(e.target.value)}
-                        className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold text-xs"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">WhatsApp / Celular *</label>
-                    <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
-                      <span className="material-symbols-outlined pl-3 text-on-surface-variant text-[18px] shrink-0">call</span>
-                      <span className="pl-1.5 pr-1.5 text-on-surface font-semibold text-xs shrink-0 border-r border-outline-variant/20 mr-1.5">+54</span>
-                      <input
-                        required
-                        type="tel"
-                        placeholder="261 455 6677"
-                        value={phone.startsWith('+54') ? phone.substring(3) : (phone.startsWith('54') ? phone.substring(2) : phone)}
-                        onChange={e => {
-                          const val = e.target.value.replace(/\D/g, '');
-                          setPhone(val ? '+54' + val : '');
-                        }}
-                        className="w-full bg-transparent py-3 pr-4 outline-none font-semibold text-xs"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Email (Opcional)</label>
-                    <div className="relative">
-                      <input
-                        type="email"
-                        placeholder="juan@ejemplo.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-primary transition-all font-semibold text-xs"
-                      />
-                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">mail</span>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Contraseña *</label>
-                    <div className="relative">
-                      <input
-                        required
-                        type="password"
-                        placeholder="Mínimo 6 caracteres"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-primary transition-all font-semibold text-xs"
-                      />
-                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">lock</span>
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-primary/20 transition-all text-xs mt-4 uppercase tracking-wider"
-                  >
-                    CREAR CUENTA
-                  </button>
-                </form>
-              )}
-            </div>
-
-            <div className="mt-8 border-t border-outline-variant/10 pt-6 text-center">
-              <button
-                type="button"
-                onClick={() => setContinueAsGuest(true)}
-                className="text-on-surface-variant text-xs hover:text-primary font-bold transition-all underline decoration-dashed underline-offset-4"
-              >
-                Continuar como invitado sin cuenta
-              </button>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    );
-  }
-
-  // ─── Render Logged in / Guest Profile view ───
+  // ─── Render Profile view ───
   return (
     <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-8 animate-in fade-in duration-700">
       <div className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -375,19 +170,19 @@ export const Profile: React.FC = () => {
           <p className="text-on-surface-variant text-base">Gestioná tus datos y revisá tus pedidos anteriores.</p>
         </div>
 
-        {!isAuthenticated && (
+        {isCustomer && (
           <button
-            onClick={() => setContinueAsGuest(false)}
-            className="self-start md:self-auto bg-primary hover:bg-primary/90 text-white font-bold px-6 py-3 rounded-2xl shadow-md transition-all text-xs flex items-center gap-2"
+            onClick={() => signOutCustomer()}
+            className="self-start md:self-auto bg-surface-container-low hover:bg-red-50 hover:text-red-700 text-on-surface-variant font-bold px-6 py-3 rounded-2xl border border-outline-variant/20 transition-all text-xs flex items-center gap-2"
           >
-            <span className="material-symbols-outlined text-[18px]">login</span>
-            INICIAR SESIÓN / CREAR CUENTA
+            <span className="material-symbols-outlined text-[18px]">logout</span>
+            CERRAR SESIÓN
           </button>
         )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-        {/* Datos Personales */}
+        {/* Columna Izquierda: Datos Personales, Cuenta Corriente y Martina Club */}
         <div className="md:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-outline-variant/10 shadow-sm relative overflow-hidden">
             {authLoading && (
@@ -479,71 +274,87 @@ export const Profile: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setIsMapModalOpen(true)}
-                          className="bg-white hover:bg-green-50 border border-green-200 text-green-700 font-bold px-3 py-2 rounded-xl text-[10px] transition-all shrink-0"
+                          className="text-xs text-primary font-bold hover:underline shrink-0 bg-white px-2.5 py-1.5 rounded-xl border border-primary/20"
                         >
-                          CAMBIAR
+                          Cambiar
                         </button>
                       </div>
                     ) : (
                       <button
                         type="button"
                         onClick={() => setIsMapModalOpen(true)}
-                        className="w-full bg-primary/5 hover:bg-primary/10 border border-dashed border-primary/30 text-primary rounded-2xl p-4 font-bold text-xs flex items-center justify-center gap-2 transition-all"
+                        className="w-full bg-surface-container-low hover:bg-surface-container-high border border-outline-variant/30 text-on-surface font-bold py-3 px-4 rounded-xl transition-all text-xs flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <span className="material-symbols-outlined text-2xl">add_location_alt</span>
-                        SELECCIONAR UBICACIÓN EN MAPA
+                        <span className="material-symbols-outlined text-primary text-[20px]">add_location_alt</span>
+                        {addressLabel ? 'Modificar en el mapa' : 'Ubicar mi domicilio en el mapa'}
                       </button>
                     )}
 
-                    {/* Campos adicionales solo si se eligió ubicación */}
-                    {addressCoords && (
-                      <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+                    {/* Campos de texto complementarios */}
+                    <div className="space-y-2 pt-1">
+                      <div>
+                        <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-0.5 block">Calle y Altura / Dirección escrita</label>
                         <input
                           type="text"
-                          placeholder="Número de casa / Altura / Lote"
-                          value={addressHouseNumber}
-                          onChange={e => setAddressHouseNumber(e.target.value)}
-                          className="w-full bg-white border border-outline-variant rounded-xl px-4 py-2.5 outline-none focus:border-primary font-semibold text-sm"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Referencia visual (ej: portón negro, esquina)"
-                          value={addressReference}
-                          onChange={e => setAddressReference(e.target.value)}
-                          className="w-full bg-white border border-outline-variant rounded-xl px-4 py-2.5 outline-none focus:border-primary font-semibold text-sm"
-                        />
-                        <input
-                          type="text"
-                          placeholder="Aclaración adicional (opcional)"
-                          value={addressNotes}
-                          onChange={e => setAddressNotes(e.target.value)}
-                          className="w-full bg-white border border-outline-variant rounded-xl px-4 py-2.5 outline-none focus:border-primary text-sm"
+                          placeholder="Ej: San Martín 1234"
+                          value={addressLabel}
+                          onChange={e => setAddressLabel(e.target.value)}
+                          className="w-full bg-white border border-outline-variant rounded-xl px-3 py-2 outline-none focus:border-primary font-semibold text-xs"
                         />
                       </div>
-                    )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-0.5 block">Nº Casa / Lote / Depto</label>
+                          <input
+                            type="text"
+                            placeholder="Ej: Depto 3B, Mza 4 Lote 12"
+                            value={addressHouseNumber}
+                            onChange={e => setAddressHouseNumber(e.target.value)}
+                            className="w-full bg-white border border-outline-variant rounded-xl px-3 py-2 outline-none focus:border-primary font-semibold text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-0.5 block">Referencia visual</label>
+                          <input
+                            type="text"
+                            placeholder="Ej: Portón verde, rejas negras"
+                            value={addressReference}
+                            onChange={e => setAddressReference(e.target.value)}
+                            className="w-full bg-white border border-outline-variant rounded-xl px-3 py-2 outline-none focus:border-primary font-semibold text-xs"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-0.5 block">Indicaciones para el repartidor (opcional)</label>
+                        <input
+                          type="text"
+                          placeholder="Ej: Tocar timbre 'Gómez', casa con perro"
+                          value={addressNotes}
+                          onChange={e => setAddressNotes(e.target.value)}
+                          className="w-full bg-white border border-outline-variant rounded-xl px-3 py-2 outline-none focus:border-primary font-semibold text-xs"
+                        />
+                      </div>
+                    </div>
                   </div>
                 ) : (
-                  <p className="font-medium text-sm text-on-surface-variant">{user?.address || 'No especificada'}</p>
+                  <div>
+                    <div className="flex items-start gap-2">
+                      <span className="material-symbols-outlined text-primary text-[18px] mt-0.5">location_on</span>
+                      <p className="font-semibold text-on-surface text-sm">{user?.address || 'No especificada'}</p>
+                    </div>
+                    {user?.address_lat && user?.address_lng && (
+                      <p className="text-[10px] text-green-600 font-bold ml-6 mt-0.5">📍 Ubicación fijada en el mapa</p>
+                    )}
+                  </div>
                 )}
               </div>
 
               {isEditing && (
                 <button
                   onClick={handleSave}
-                  className="w-full bg-primary text-white font-bold py-3.5 rounded-xl mt-4 hover:bg-primary/90 transition-all text-xs tracking-wider"
+                  className="w-full bg-primary text-white font-bold py-3 rounded-xl hover:bg-primary/90 transition-all text-sm mt-4 shadow-md"
                 >
-                  GUARDAR CAMBIOS
-                </button>
-              )}
-
-              {/* Ocultar botón Editar si es cliente (no hay nada editable excepto dirección) */}
-              {isAuthenticated && (
-                <button
-                  onClick={signOutCustomer}
-                  className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-bold py-3.5 rounded-xl mt-6 transition-all flex items-center justify-center gap-2 text-xs uppercase tracking-wider border border-red-100"
-                >
-                  <span className="material-symbols-outlined text-[18px]">logout</span>
-                  Cerrar Sesión
+                  Guardar Cambios
                 </button>
               )}
             </div>
@@ -585,24 +396,264 @@ export const Profile: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* Card de Martina Club / Iniciar Sesión / Registro para Invitados */}
+          {(!isCustomer || !isAuthenticated) && (
+            <div className="bg-white p-6 rounded-3xl border border-primary/20 shadow-sm relative overflow-hidden space-y-6 animate-in fade-in duration-500">
+              {authLoading && (
+                <div className="absolute inset-0 bg-white/70 backdrop-blur-sm z-50 flex items-center justify-center">
+                  <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
+
+              {/* Banner Martina Club */}
+              <div className="bg-primary/5 -mx-6 -mt-6 p-6 border-b border-primary/10">
+                <span className="text-[10px] font-black bg-primary/10 text-primary px-3 py-1 rounded-full uppercase tracking-wider">Martina Club</span>
+                <h3 className="text-lg font-black text-on-background mt-2 mb-1">¡Comprá con más beneficios!</h3>
+                <p className="text-xs text-on-surface-variant leading-relaxed">
+                  Creá tu cuenta gratis o iniciá sesión para sincronizar favoritos y pedidos en la nube.
+                </p>
+
+                {/* Beneficios compactos */}
+                <div className="mt-4 grid grid-cols-2 gap-2.5 text-[11px] font-bold text-on-surface">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-primary text-[16px]">history</span>
+                    <span>Historial</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-primary text-[16px]">favorite</span>
+                    <span>Favoritos</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-primary text-[16px]">location_on</span>
+                    <span>Direcciones</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-primary text-[16px]">local_offer</span>
+                    <span>Promos club</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabs de Login / Registro */}
+              <div>
+                <div className="flex bg-surface-container-low p-1 rounded-2xl mb-4 border border-outline-variant/5">
+                  <button
+                    type="button"
+                    onClick={() => { setAuthTab('login'); setErrorMsg(null); }}
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${authTab === 'login' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'}`}
+                  >
+                    INICIAR SESIÓN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setAuthTab('register'); setErrorMsg(null); }}
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${authTab === 'register' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'}`}
+                  >
+                    REGISTRARME
+                  </button>
+                </div>
+
+                {errorMsg && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-xs text-red-700 font-bold">
+                    <span className="material-symbols-outlined text-red-600 text-[18px]">error</span>
+                    <span>{errorMsg}</span>
+                  </div>
+                )}
+
+                {/* Login Form */}
+                {authTab === 'login' ? (
+                  <form onSubmit={handleLogin} className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">WhatsApp / Celular</label>
+                      <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
+                        <span className="material-symbols-outlined pl-3 text-on-surface-variant text-[18px] shrink-0">call</span>
+                        <span className="pl-1.5 pr-1.5 text-on-surface font-semibold text-xs shrink-0 border-r border-outline-variant/20 mr-1.5">+54</span>
+                        <input
+                          required
+                          type="tel"
+                          placeholder="261 455 6677"
+                          value={phone.startsWith('+54') ? phone.substring(3) : (phone.startsWith('54') ? phone.substring(2) : phone)}
+                          onChange={e => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            setPhone(val ? '+54' + val : '');
+                          }}
+                          className="w-full bg-transparent py-2.5 pr-3 outline-none font-semibold text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Contraseña</label>
+                      <div className="relative">
+                        <input
+                          required
+                          type="password"
+                          placeholder="••••••••"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl pl-9 pr-3 py-2.5 outline-none focus:border-primary transition-all font-semibold text-xs"
+                        />
+                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">lock</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider mt-2 cursor-pointer"
+                    >
+                      INGRESAR
+                    </button>
+                  </form>
+                ) : (
+                  /* Registration Form */
+                  <form onSubmit={handleRegister} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Nombre *</label>
+                        <input
+                          required
+                          type="text"
+                          placeholder="Juan"
+                          value={name}
+                          onChange={e => setName(e.target.value)}
+                          className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-3 py-2.5 outline-none focus:border-primary font-semibold text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Apellido</label>
+                        <input
+                          type="text"
+                          placeholder="Pérez"
+                          value={lastName}
+                          onChange={e => setLastName(e.target.value)}
+                          className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-3 py-2.5 outline-none focus:border-primary font-semibold text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">WhatsApp / Celular *</label>
+                      <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
+                        <span className="material-symbols-outlined pl-3 text-on-surface-variant text-[18px] shrink-0">call</span>
+                        <span className="pl-1.5 pr-1.5 text-on-surface font-semibold text-xs shrink-0 border-r border-outline-variant/20 mr-1.5">+54</span>
+                        <input
+                          required
+                          type="tel"
+                          placeholder="261 455 6677"
+                          value={phone.startsWith('+54') ? phone.substring(3) : (phone.startsWith('54') ? phone.substring(2) : phone)}
+                          onChange={e => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            setPhone(val ? '+54' + val : '');
+                          }}
+                          className="w-full bg-transparent py-2.5 pr-3 outline-none font-semibold text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Email (Opcional)</label>
+                      <div className="relative">
+                        <input
+                          type="email"
+                          placeholder="juan@ejemplo.com"
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl pl-9 pr-3 py-2.5 outline-none focus:border-primary font-semibold text-xs"
+                        />
+                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">mail</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Contraseña *</label>
+                      <div className="relative">
+                        <input
+                          required
+                          type="password"
+                          placeholder="Mínimo 6 caracteres"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl pl-9 pr-3 py-2.5 outline-none focus:border-primary font-semibold text-xs"
+                        />
+                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">lock</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider mt-2 cursor-pointer"
+                    >
+                      REGISTRARME
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Historial de Pedidos */}
         <div className="md:col-span-2 space-y-6">
           <h2 className="text-xl font-bold text-on-background">Historial de Pedidos</h2>
 
-          {user?.orders && user.orders.length > 0 ? (
-            <div className="space-y-4">
-              {user.orders.map((order) => {
-                const isExpanded = expandedOrderId === order.id;
+          {(() => {
+            const rawOrders = user?.orders || [];
+            
+            const getOrderTimestamp = (o: any): number => {
+              if (o.timestamp && typeof o.timestamp === 'number') return o.timestamp;
+              if (o.created_at) {
+                const t = new Date(o.created_at).getTime();
+                if (!isNaN(t)) return t;
+              }
+              if (o.date) {
+                const parts = o.date.split(',')[0].trim().split('/');
+                if (parts.length === 3) {
+                  const day = parseInt(parts[0], 10);
+                  const month = parseInt(parts[1], 10) - 1;
+                  const year = parseInt(parts[2], 10);
+                  const d = new Date(year, month, day);
+                  if (!isNaN(d.getTime())) return d.getTime();
+                }
+                const t = new Date(o.date).getTime();
+                if (!isNaN(t)) return t;
+              }
+              return Date.now();
+            };
 
-                return (
-                  <div key={order.id} className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden transition-all duration-300">
-                    {/* Header del Pedido */}
-                    <div
-                      className={`p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer hover:bg-surface-container-lowest transition-colors ${isExpanded ? 'bg-surface-container-lowest border-b border-outline-variant/10' : ''}`}
-                      onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
-                    >
+            const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+            const now = Date.now();
+
+            // Si el usuario es invitado, filtramos para mostrar solo los últimos 5 días y no cancelados ni entregados
+            const visibleOrders = isCustomer
+              ? rawOrders
+              : rawOrders.filter(o => {
+                  if (o.status === 'Cancelado' || o.status === 'Entregado') return false;
+                  const orderTime = getOrderTimestamp(o);
+                  return (now - orderTime) <= FIVE_DAYS_MS;
+                });
+
+            if (visibleOrders.length === 0) {
+              return (
+                <div className="text-center py-16 bg-surface-container-low rounded-3xl border border-dashed border-outline-variant/30">
+                  <span className="material-symbols-outlined text-5xl text-on-surface-variant/20 mb-4">history</span>
+                  <p className="text-on-surface-variant">No tenés pedidos activos en los últimos 5 días.</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-4">
+                {visibleOrders.map((order) => {
+                  const isExpanded = expandedOrderId === order.id;
+
+                  return (
+                    <div key={order.id} className="bg-white rounded-2xl border border-outline-variant/20 shadow-sm overflow-hidden transition-all duration-300">
+                      {/* Header del Pedido */}
+                      <div
+                        className={`p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer hover:bg-surface-container-lowest transition-colors ${isExpanded ? 'bg-surface-container-lowest border-b border-outline-variant/10' : ''}`}
+                        onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
+                      >
                       <div className="flex items-center gap-4">
                         <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${isExpanded ? 'bg-primary text-white' : 'bg-primary-container/20 text-primary'}`}>
                           <span className="material-symbols-outlined">shopping_bag</span>
@@ -636,22 +687,30 @@ export const Profile: React.FC = () => {
                     {isExpanded && (
                       <div className="p-6 bg-surface-container-lowest/50 animate-in slide-in-from-top-2 duration-300">
                         <h4 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-4">Productos del pedido</h4>
-                        <div className="space-y-4">
-                          {order.items.map((item: any) => (
-                            <div key={item.id} className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-white rounded-lg p-1 border border-outline-variant/10">
-                                  <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain" />
+                        {(!order.items || order.items.length === 0) ? (
+                          <p className="text-xs text-on-surface-variant italic">Detalles de productos no disponibles</p>
+                        ) : (
+                          <div className="space-y-4">
+                            {order.items.map((item: any, idx: number) => (
+                              <div key={item.id || idx} className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-white rounded-lg p-1 border border-outline-variant/10 flex items-center justify-center overflow-hidden">
+                                    {item.image ? (
+                                      <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain" />
+                                    ) : (
+                                      <span className="material-symbols-outlined text-primary text-xl">shopping_bag</span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-bold">{item.name}</p>
+                                    <p className="text-[11px] text-on-surface-variant">{item.quantity} x ${(item.price ?? 0).toLocaleString('es-AR')}</p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <p className="text-sm font-bold">{item.name}</p>
-                                  <p className="text-[11px] text-on-surface-variant">{item.quantity} x ${(item.price ?? 0).toLocaleString('es-AR')}</p>
-                                </div>
+                                <p className="text-sm font-bold">${((item.price ?? 0) * (item.quantity ?? 1)).toLocaleString('es-AR')}</p>
                               </div>
-                              <p className="text-sm font-bold">${(item.price * item.quantity).toLocaleString('es-AR')}</p>
-                            </div>
-                          ))}
-                        </div>
+                            ))}
+                          </div>
+                        )}
 
                         <div className="mt-6 pt-6 border-t border-outline-variant/10 grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
@@ -687,27 +746,35 @@ export const Profile: React.FC = () => {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleRepeatOrder(order.items)}
-                          className="w-full mt-6 py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-all text-sm shadow-md flex items-center justify-center gap-2"
-                        >
-                          <span className="material-symbols-outlined text-[20px]">refresh</span>
-                          Repetir Pedido
-                        </button>
+                        <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                          {order.status !== 'En Camino' && order.status !== 'Entregado' && order.status !== 'Cancelado' && (
+                            <button
+                              type="button"
+                              onClick={() => setCancelOrderData(order)}
+                              className="flex-1 py-3 px-4 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200/80 font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                            >
+                              <span className="material-symbols-outlined text-[20px] text-red-600">cancel</span>
+                              Cancelar Pedido
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleRepeatOrder(order.items)}
+                            className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-all text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">refresh</span>
+                            Repetir Pedido
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
                 );
               })}
             </div>
-          ) : (
-            <div className="text-center py-16 bg-surface-container-low rounded-3xl border border-dashed border-outline-variant/30">
-              <span className="material-symbols-outlined text-5xl text-on-surface-variant/20 mb-4">history</span>
-              <p className="text-on-surface-variant">Todavía no has realizado ningún pedido.</p>
-            </div>
-          )}
-        </div>
+          );
+        })()}
       </div>
+    </div>
 
       {/* Modals para Cuenta Corriente */}
       {showCCModal && createPortal(
@@ -844,6 +911,49 @@ export const Profile: React.FC = () => {
         </div>,
         document.body
       )}
+      {/* Modal de Cancelación de Pedido */}
+      {cancelOrderData && createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setCancelOrderData(null)} />
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl relative z-10 p-8 text-center animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mx-auto mb-6">
+              <span className="material-symbols-outlined text-[40px]">cancel</span>
+            </div>
+            <h3 className="text-xl font-black text-on-background mb-2">¿Cancelar este pedido?</h3>
+            <p className="text-sm text-on-surface-variant mb-6 leading-relaxed">
+              ¿Estás seguro de que deseás cancelar el pedido <span className="font-bold text-on-background">#{cancelOrderData.id}</span> por un total de <span className="font-bold text-primary">${cancelOrderData.total.toLocaleString('es-AR')}</span>?
+              <br /><br />
+              <span className="text-xs text-on-surface-variant/80">Los artículos volverán a estar disponibles y el local será notificado.</span>
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  // Actualizar estado local (localStorage) para que se oculte inmediatamente en la vista de invitado
+                  updateLocalOrderStatus(cancelOrderData.id, 'Cancelado');
+
+                  // Ejecutar actualización general en contexto y base de datos (restaura stock, notifica al cliente y notifica al delivery una única vez)
+                  updateOrderStatus(cancelOrderData.id, 'Cancelado');
+
+                  setCancelOrderData(null);
+                }}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-red-600/20 transition-all active:scale-[0.98] cursor-pointer text-sm"
+              >
+                Sí, Cancelar Pedido
+              </button>
+              <button
+                type="button"
+                onClick={() => setCancelOrderData(null)}
+                className="w-full bg-surface-container-low hover:bg-surface-container-high text-on-surface font-bold py-3.5 rounded-2xl transition-all active:scale-[0.98] cursor-pointer text-sm"
+              >
+                No, mantener pedido
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Modal del Mapa de Dirección */}
       {isMapModalOpen && (
         <MapSelector

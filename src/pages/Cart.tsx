@@ -145,7 +145,25 @@ export const Cart: React.FC = () => {
                           {parseFloat(item.quantity.toFixed(2)).toString()}
                         </button>
                       ) : (
-                        <span className={`font-body-md text-xs sm:text-sm font-bold w-6 sm:w-8 flex-shrink-0 text-center ${isOverStock ? 'text-red-600' : ''}`}>{item.quantity}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max={stock > 0 ? stock : undefined}
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            if (!isNaN(val) && val >= 1) {
+                              updateQuantity(item.id, val);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            if (isNaN(val) || val < 1) {
+                              updateQuantity(item.id, 1);
+                            }
+                          }}
+                          className={`font-body-md text-xs sm:text-sm font-bold w-8 sm:w-10 text-center bg-transparent border-b border-transparent focus:border-primary focus:bg-white rounded px-0.5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${isOverStock ? 'text-red-600' : 'text-on-surface'}`}
+                        />
                       )}
 
                       <button

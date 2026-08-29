@@ -2,9 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import type { AdminCustomer, AdminOrder } from '../../context/AdminContext';
+import { whatsappMessageService } from '../../services/whatsapp-message.service';
 
 export const Customers: React.FC = () => {
-  const { customers, orders, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount, formatCurrency, addManualCustomer, deleteCustomer } = useAdmin();
+  const { customers, orders, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount, formatCurrency, addManualCustomer, deleteCustomer, blockPhone, unblockPhone, isPhoneBlocked } = useAdmin();
   const [headerPortal, setHeaderPortal] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setHeaderPortal(document.getElementById('admin-header-portal'));
@@ -21,6 +22,8 @@ export const Customers: React.FC = () => {
   const [editPhone, setEditPhone] = useState('');
   const [editDni, setEditDni] = useState('');
   const [editBirthday, setEditBirthday] = useState('');
+  const [isSendingReminder, setIsSendingReminder] = useState(false);
+  const [reminderStatus, setReminderStatus] = useState<string | null>(null);
 
   const { currentAccountConfig } = useAdmin();
   const [showLimitsForm, setShowLimitsForm] = useState(false);
@@ -42,8 +45,33 @@ export const Customers: React.FC = () => {
       setEditPhone('');
       setEditDni('');
       setEditBirthday('');
+      setReminderStatus(null);
     }
   }, [selectedCustomer?.phone, customers]);
+
+  const handleSendDebtReminder = async (customer: AdminCustomer) => {
+    if (!customer.phone || customer.currentDebt <= 0) return;
+    setIsSendingReminder(true);
+    setReminderStatus(null);
+    try {
+      const res = await whatsappMessageService.createDebtReminderMessage(
+        customer.phone,
+        customer.name,
+        customer.currentDebt,
+        customer.oldestDebtDays
+      );
+      if (res) {
+        setReminderStatus('¡Recordatorio de deuda enviado por WhatsApp!');
+        setTimeout(() => setReminderStatus(null), 4000);
+      } else {
+        setReminderStatus('Error: no se pudo encolar el recordatorio.');
+      }
+    } catch (err: any) {
+      setReminderStatus('Error al enviar: ' + (err.message || ''));
+    } finally {
+      setIsSendingReminder(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedCustomer) {
@@ -346,7 +374,17 @@ export const Customers: React.FC = () => {
                         <span className="font-bold text-on-background text-[14px] line-clamp-1">{c.name}</span>
                       </div>
                     </td>
-                    <td className="px-7 py-4 text-on-surface-variant font-medium whitespace-nowrap">{c.phone}</td>
+                    <td className="px-7 py-4 text-on-surface-variant font-medium whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <span>{c.phone}</span>
+                        {isPhoneBlocked(c.phone) && (
+                          <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold inline-flex items-center gap-0.5" title="Teléfono bloqueado">
+                            <span className="material-symbols-outlined text-[12px]">block</span>
+                            Bloqueado
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-10 py-4">
                       <span className="bg-surface-container-low px-2 py-1 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
                         {tier === 'Gold' ? 'Oro' : tier === 'Silver' ? 'Plata' : tier === 'Bronze' ? 'Bronce' : tier}
@@ -400,6 +438,12 @@ export const Customers: React.FC = () => {
                       NIVEL {(currentCustomer.tier === 'Gold' ? 'Oro' : currentCustomer.tier === 'Silver' ? 'Plata' : currentCustomer.tier === 'Bronze' ? 'Bronce' : currentCustomer.tier).toUpperCase()}
                     </span>
                     <span className="text-xs text-on-surface-variant font-bold">{currentCustomer.phone}</span>
+                    {isPhoneBlocked(currentCustomer.phone) && (
+                      <span className="bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-200 inline-flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[12px]">block</span>
+                        Bloqueado
+                      </span>
+                    )}
                   </div>
                 </div>
                 <button onClick={() => setSelectedCustomer(null)} className="ml-auto w-10 h-10 rounded-full flex items-center justify-center hover:bg-black/5">
@@ -555,13 +599,41 @@ export const Customers: React.FC = () => {
                           </div>
 
                           {currentCustomer.currentDebt > 0 ? (
-                            <button
-                              onClick={() => setSettleModalData({ phone: currentCustomer.phone, name: currentCustomer.name, debt: currentCustomer.currentDebt })}
-                              className="w-full bg-surface-container-high hover:bg-green-100 hover:text-green-700 text-on-surface font-bold py-3 rounded-xl transition-colors text-sm flex items-center justify-center gap-2"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">payments</span>
-                              Saldar Cuenta (${formatCurrency(currentCustomer.currentDebt)})
-                            </button>
+                            <div className="space-y-2.5">
+                              {reminderStatus && (
+                                <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in ${
+                                  reminderStatus.includes('Error') ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'
+                                }`}>
+                                  <span className="material-symbols-outlined text-[16px]">
+                                    {reminderStatus.includes('Error') ? 'error' : 'check_circle'}
+                                  </span>
+                                  {reminderStatus}
+                                </div>
+                              )}
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSendDebtReminder(currentCustomer)}
+                                  disabled={isSendingReminder}
+                                  className="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 font-bold py-3 rounded-xl transition-all text-xs flex items-center justify-center gap-1.5 active:scale-[0.98] disabled:opacity-50 shadow-sm"
+                                  title="Enviar recordatorio de saldo pendiente por WhatsApp"
+                                >
+                                  <span className="material-symbols-outlined text-[17px] text-amber-700">
+                                    {isSendingReminder ? 'sync' : 'notification_important'}
+                                  </span>
+                                  {isSendingReminder ? 'Enviando...' : 'Recordar Deuda por WhatsApp'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSettleModalData({ phone: currentCustomer.phone, name: currentCustomer.name, debt: currentCustomer.currentDebt })}
+                                  className="flex-1 bg-surface-container-high hover:bg-green-100 hover:text-green-700 text-on-surface font-bold py-3 rounded-xl transition-colors text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                                >
+                                  <span className="material-symbols-outlined text-[17px]">payments</span>
+                                  Saldar (${formatCurrency(currentCustomer.currentDebt)})
+                                </button>
+                              </div>
+                            </div>
                           ) : (
                             <p className="text-xs text-center text-on-surface-variant font-bold bg-surface-container-low py-3 rounded-xl">Al día</p>
                           )}
@@ -647,23 +719,57 @@ export const Customers: React.FC = () => {
 
               <div className="p-8 pt-0 flex gap-3 shrink-0 bg-white">
                 <button
-                  onClick={() => window.open(`https://wa.me/${currentCustomer.phone.replace(/\s+/g, '')}`, '_blank')}
-                  className="flex-1 bg-[#25D366] text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-green-500/20"
+                  onClick={() => {
+                    const cleanPhone = (currentCustomer.phone || '').replace(/\D/g, '');
+                    const targetPhone = cleanPhone.startsWith('54') ? cleanPhone : `54${cleanPhone}`;
+                    window.open(`https://wa.me/${targetPhone}`, '_blank');
+                  }}
+                  className="flex-1 bg-[#25D366] text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-green-500/20 text-sm"
                 >
-                  <span className="material-symbols-outlined">chat</span>
+                  <span className="material-symbols-outlined text-[20px]">chat</span>
                   WhatsApp
                 </button>
+
+                {currentCustomer.phone && (
+                  isPhoneBlocked(currentCustomer.phone) ? (
+                    <button
+                      type="button"
+                      onClick={() => unblockPhone(currentCustomer.phone)}
+                      className="bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 font-bold py-4 px-4 rounded-2xl flex items-center justify-center gap-1.5 transition-colors text-xs shrink-0"
+                      title="Desbloquear este número de teléfono"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                      Desbloquear
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`¿Bloquear al cliente ${currentCustomer.name} (${currentCustomer.phone}) para que no pueda realizar pedidos?`)) {
+                          blockPhone(currentCustomer.phone);
+                        }
+                      }}
+                      className="bg-red-50 text-red-600 hover:bg-red-500 hover:text-white border border-red-200/50 font-bold py-4 px-4 rounded-2xl flex items-center justify-center gap-1.5 transition-all text-xs shrink-0"
+                      title="Bloquear este número de teléfono"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">phone_disabled</span>
+                      Bloquear
+                    </button>
+                  )
+                )}
+
                 <button
                   onClick={() => {
                     setShowDeleteConfirm({ phone: currentCustomer.phone, name: currentCustomer.name });
                   }}
-                  className="bg-error/10 text-error font-bold py-4 px-6 rounded-2xl flex items-center justify-center gap-2 hover:bg-error/20 transition-colors"
+                  className="bg-error/10 text-error font-bold py-4 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-error/20 transition-colors"
+                  title="Eliminar perfil de cliente"
                 >
                   <span className="material-symbols-outlined text-[20px]">delete</span>
                 </button>
                 <button
                   onClick={() => setSelectedCustomer(null)}
-                  className="flex-1 bg-surface-container-high font-bold py-4 rounded-2xl"
+                  className="flex-1 bg-surface-container-high font-bold py-4 rounded-2xl text-sm"
                 >
                   Cerrar
                 </button>
@@ -767,13 +873,7 @@ export const Customers: React.FC = () => {
                     return;
                   }
 
-                  // Send WhatsApp notification
-                  const finalPaid = amount || settleModalData.debt;
-                  const remaining = settleModalData.debt - finalPaid;
-                  const message = `*Hola ${settleModalData.name}!* 👋\n\nConfirmamos que recibimos tu pago de *$${formatCurrency(finalPaid, true, true)}*.\n${remaining > 0 ? `Tu saldo restante es de *$${formatCurrency(remaining, true, true)}*.\n` : 'Tu cuenta ha sido saldada por completo! ✅\n'}\n¡Muchas gracias por tu pago! 🏪`;
-                  const encoded = encodeURIComponent(message);
-                  window.open(`https://wa.me/${settleModalData.phone.replace(/\D/g, '')}?text=${encoded}`, '_blank');
-
+                  // Notificación enviada automáticamente en segundo plano por el worker a través de settleCurrentAccount
                   settleCurrentAccount(settleModalData.phone, settleMethod, amount);
                   setSettleModalData(null);
                   setPartialAmount('');

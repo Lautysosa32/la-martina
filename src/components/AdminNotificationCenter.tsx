@@ -20,7 +20,7 @@ interface AppNotification {
 
 export const AdminNotificationCenter: React.FC = () => {
   const navigate = useNavigate();
-  const { orders, customers, isCashRegisterOpen, cashRegister } = useAdmin();
+  const { orders, customers, isCashRegisterOpen, cashRegister, currentAccountConfig } = useAdmin();
   const { employeeProfile, hasPermission } = useAuthStore();
   const { lowStockDashboardTotal: lowStockCount, fetchLowStockDashboardProducts } = useProductStore();
   const { reads, fetchReads, markAsRead, markAllAsRead } = useNotificationStore();
@@ -97,8 +97,42 @@ export const AdminNotificationCenter: React.FC = () => {
       });
     }
 
+    // 2.1 Pedidos (Cancelados en las últimas 24h)
+    const cancelledOrdersCount = orders.filter(o => {
+      if (o.status !== 'Cancelado') return false;
+      const ts = o.timestamp || ((o as any).created_at ? new Date((o as any).created_at).getTime() : 0);
+      return (Date.now() - ts) < 24 * 60 * 60 * 1000;
+    }).length;
+    if (canViewOrders && cancelledOrdersCount > 0) {
+      list.push({
+        id: 'orders_cancelled',
+        section: 'PEDIDOS',
+        icon: 'cancel',
+        title: `${cancelledOrdersCount.toLocaleString('es-AR')} pedido${cancelledOrdersCount > 1 ? 's' : ''} cancelado${cancelledOrdersCount > 1 ? 's' : ''}`,
+        description: 'Se cancelaron pedidos recientemente. Verificá para evitar despachos.',
+        priority: 'CRÍTICA',
+        actionPath: '/admin/orders',
+        value: cancelledOrdersCount,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     // 3. Clientes (Cuentas excedidas)
-    const overLimitCustomersCount = customers.filter(c => c.hasCurrentAccount && c.currentDebt > c.creditLimit).length;
+    const overLimitCustomersCount = customers.filter(c => {
+      if (!c.hasCurrentAccount) return false;
+      const effectiveAmountLimit = c.useCustomAccountLimits
+        ? (c.customDebtLimit ?? currentAccountConfig.maxDebtAmount)
+        : currentAccountConfig.maxDebtAmount;
+      const effectiveTimeLimit = c.useCustomAccountLimits
+        ? (c.customDebtDays ?? currentAccountConfig.maxDebtDays)
+        : currentAccountConfig.maxDebtDays;
+      const oldestDays = c.oldestDebtDays || 0;
+
+      const isOverAmount = currentAccountConfig.warnOnAmountLimit && (c.currentDebt > effectiveAmountLimit);
+      const isOverTime = currentAccountConfig.warnOnTimeLimit && (oldestDays > effectiveTimeLimit);
+
+      return isOverAmount || isOverTime;
+    }).length;
     if (canViewCustomers && overLimitCustomersCount > 0) {
       list.push({
         id: 'customers_over_limit',
@@ -134,7 +168,7 @@ export const AdminNotificationCenter: React.FC = () => {
     }
 
     return list;
-  }, [lowStockCount, orders, customers, isCashRegisterOpen, cashRegister.openedAt]);
+  }, [lowStockCount, orders, customers, isCashRegisterOpen, cashRegister.openedAt, currentAccountConfig]);
 
   // Determine unread status
   const notificationStates = useMemo(() => {

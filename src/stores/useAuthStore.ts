@@ -9,9 +9,10 @@ import { customersService, CustomerProfile } from '../services/customers.service
 export interface Order {
   id: string;
   date: string;
+  timestamp?: number;
   total: number;
   itemsCount: number;
-  status: 'Nuevo' | 'Preparando' | 'En Camino' | 'Entregado' | 'Cancelado' | 'Procesando';
+  status: 'Nuevo' | 'Preparando' | 'Listo' | 'En Camino' | 'Entregado' | 'Cancelado' | 'Procesando';
   address?: string;
   deliveryTime?: string;
   items: any[];
@@ -518,7 +519,7 @@ export const useAuth = () => {
 
         const { data, error } = await supabase
           .from('orders')
-          .select('*')
+          .select('*, order_items(*)')
           .eq('branch_id', 'main')
           .order('created_at', { ascending: false });
 
@@ -527,18 +528,33 @@ export const useAuth = () => {
 
         if (data) {
           const filtered = data
-            .filter(o => clean(o.phone || '') === targetClean)
+            .filter(o => {
+              const oClean = clean(o.phone || '');
+              if (!oClean || !targetClean) return false;
+              return oClean === targetClean ||
+                (targetClean.length >= 8 && oClean.endsWith(targetClean.slice(-8))) ||
+                (oClean.length >= 8 && targetClean.endsWith(oClean.slice(-8)));
+            })
             .map(o => ({
               id: o.id,
               date: o.date,
+              timestamp: o.timestamp || (o.created_at ? new Date(o.created_at).getTime() : undefined),
               total: o.total,
-              itemsCount: o.itemsCount || (o.items ? o.items.reduce((s: number, i: any) => s + (i.quantity || 1), 0) : 0),
+              itemsCount: o.itemsCount || (o.order_items ? o.order_items.reduce((s: number, i: any) => s + (i.quantity || 1), 0) : (o.items ? o.items.length : 0)),
               status: o.status,
               address: o.address,
-              deliveryTime: o.deliveryTime,
-              items: o.items || [],
+              deliveryTime: o.delivery_time || o.deliveryTime,
+              items: (o.order_items && o.order_items.length > 0)
+                ? o.order_items.map((item: any) => ({
+                    id: item.product_id || item.id,
+                    name: item.name,
+                    price: Number(item.price || 0),
+                    quantity: Number(item.quantity || 1),
+                    image: item.image
+                  }))
+                : (o.items || []),
               discount: o.discount,
-              discountLabel: o.discountLabel,
+              discountLabel: o.discount_label || o.discountLabel,
             }));
           setDbOrders(filtered);
         }
@@ -561,12 +577,35 @@ export const useAuth = () => {
     };
   }, [store.customerProfile, store.guestProfile.phone, isCustomer]);
 
-  // Retrieve matching storefront orders from the derived database (Supabase + filter by phone)
+  // Combine and deduplicate orders from localStorage (guestProfile.orders) and Supabase (dbOrders)
   const customerOrders = React.useMemo(() => {
-    const activePhone = isCustomer && store.customerProfile ? store.customerProfile.phone : store.guestProfile.phone;
-    if (!activePhone) return store.guestProfile.orders;
-    return dbOrders;
-  }, [dbOrders, store.guestProfile.orders, store.customerProfile, isCustomer]);
+    const localOrders = store.guestProfile.orders || [];
+    const map = new Map<string, Order>();
+
+    // First insert Supabase orders
+    dbOrders.forEach(o => map.set(o.id, o));
+
+    // Then merge with local orders (preserving items and details if local has richer data or recent offline state)
+    localOrders.forEach(o => {
+      const existing = map.get(o.id);
+      if (!existing) {
+        map.set(o.id, o);
+      } else {
+        const mergedItems = (existing.items && existing.items.length > 0)
+          ? existing.items
+          : (o.items && o.items.length > 0 ? o.items : []);
+        map.set(o.id, {
+          ...o,
+          ...existing,
+          items: mergedItems
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      return (b.id > a.id ? 1 : -1);
+    });
+  }, [dbOrders, store.guestProfile.orders]);
 
   // Memoizar el objeto "user" para evitar referencias nuevas en cada render que causen bucles infinitos en useEffect
   const derivedUser = React.useMemo(() => {

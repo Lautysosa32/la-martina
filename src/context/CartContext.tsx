@@ -70,11 +70,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return true;
     }
     const stock = getStock(productId);
-    if (quantity > stock) return false;
+    const targetQty = stock > 0 ? Math.min(quantity, stock) : quantity;
 
     setRawItems(prevItems =>
       prevItems.map(item =>
-        item.id === productId ? { ...item, quantity } : item
+        item.id === productId ? { ...item, quantity: targetQty } : item
       )
     );
     return true;

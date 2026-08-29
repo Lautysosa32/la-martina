@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { shouldShowCycleReminder } from '../utils/billing-cycle';
 
 export interface WhatsAppMessage {
   id?: string;
@@ -93,7 +94,7 @@ export const whatsappMessageService = {
    * Encola un mensaje de cambio de estado de pedido (Fase 4), evitando duplicar
    * el mismo estado consecutivamente para el mismo pedido.
    */
-  async createOrderStatusMessage(order: { id: string; customer: string; phone: string; status: string; total?: number }) {
+  async createOrderStatusMessage(order: { id: string; customer: string; phone: string; status: string; total?: number; method?: string }) {
     if (!order.phone) return null;
 
     // Verificar si ya existe un mensaje idéntico (pedido + estado)
@@ -114,35 +115,31 @@ export const whatsappMessageService = {
       console.error('Error verificando duplicado de mensaje de estado:', e);
     }
 
-    let statusText = '';
-    let emoji = '🛒';
+    let message = '';
 
     switch (order.status) {
       case 'Nuevo':
-        statusText = `por *${formatCurrency(order.total, true, true)}* se registró con éxito.`;
-        emoji = '👋';
+        message = `👋 *¡Hola ${order.customer}!* Recibimos tu pedido en *La Martina*.\n\nTu pedido *#${order.id}* por *${formatCurrency(order.total, true, true)}* se registró con éxito. ¡En breve comenzamos a prepararlo! 🛒`;
         break;
       case 'Preparando':
-        statusText = `está en preparación.`;
-        emoji = '📦';
+        message = `📦 *Actualización de Pedido #${order.id}*\n\n¡Ya estamos preparando tu pedido! Te avisaremos cuando esté listo.`;
+        break;
+      case 'Listo':
+        message = `🛍️ *Actualización de Pedido #${order.id}*\n\n¡Tu pedido ya está listo para ser retirado! Te esperamos en nuestro local.`;
         break;
       case 'En Camino':
-        statusText = `ya está en camino.`;
-        emoji = '🚚';
+        message = `🚚 *Actualización de Pedido #${order.id}*\n\n¡Tu pedido ya está en camino! Aguardalo en tu domicilio.`;
         break;
       case 'Entregado':
-        statusText = `fue entregado. \n\n¡Gracias por comprar en La Martina!`;
-        emoji = '✅';
+        const deliveryText = (order.method === 'Retiro' || order.method === 'Caja Fija') ? 'retirado' : 'entregado';
+        message = `✅ *Pedido #${order.id} ${deliveryText.charAt(0).toUpperCase() + deliveryText.slice(1)}*\n\nTu pedido fue ${deliveryText}.  Esperamos que lo disfrutes. \n\n ¡Muchas gracias por elegir La Martina!`;
         break;
       case 'Cancelado':
-        statusText = `ha sido cancelado.`;
-        emoji = '❌';
+        message = `❌ *Actualización de Pedido #${order.id}*\n\nLamentablemente tu pedido ha sido cancelado. Si tenés alguna duda, comunicate con nosotros.`;
         break;
       default:
-        statusText = `cambió a estado: ${order.status}.`;
+        message = `ℹ️ *Actualización de Pedido #${order.id}*\n\nEl estado de tu pedido cambió a: *${order.status}*.`;
     }
-
-    const message = `Hola ${order.customer} ${emoji}\nTu pedido *#${order.id}* ${statusText}`;
 
     return this.createWhatsAppMessage({
       phone: order.phone,
@@ -152,6 +149,25 @@ export const whatsappMessageService = {
       message,
       order_id: order.id,
       customer_phone: order.phone
+    });
+  },
+
+  /**
+   * Encola un código OTP de 4 dígitos para validar el número de teléfono del cliente
+   */
+  async createOtpMessage(phone: string, code: string, customerName?: string) {
+    const formattedPhone = cleanAndFormatPhone(phone);
+    if (!formattedPhone) return null;
+
+    const message = `🔐 *La Martina* - Código de Verificación:\n\nTu código es: *${code}*\n\nIngresalo en la pantalla para confirmar tu pedido. No compartas este código con nadie.`;
+
+    return this.createWhatsAppMessage({
+      phone: formattedPhone,
+      customer_name: customerName || 'Cliente',
+      type: 'otp_verification',
+      title: `OTP: ${code}`,
+      message,
+      customer_phone: formattedPhone
     });
   },
 
@@ -173,6 +189,49 @@ export const whatsappMessageService = {
       customer_name: 'Delivery',
       type: 'delivery_alert',
       title: `Alerta Delivery Pedido #${order.id}`,
+      message,
+      order_id: order.id,
+      status: deliveryPhone ? 'pending' : 'failed',
+      error_message: deliveryPhone ? null : 'NO_DELIVERY_ASSIGNED'
+    });
+  },
+
+  /**
+   * Encola una alerta para el personal de delivery/armado informando la cancelación de un pedido.
+   */
+  async createDeliveryCancellationAlertMessage(order: { id: string; customer: string; total?: number; method?: string }, deliveryPhone: string | null) {
+    const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
+    if (configData?.value?.suspendEmployeeNotifications) {
+      return false;
+    }
+
+    // Evitar duplicados consecutivos para el mismo pedido cancelado
+    try {
+      const { data: existing } = await supabase
+        .from('whatsapp_messages')
+        .select('id')
+        .eq('order_id', order.id)
+        .eq('title', `Cancelación Pedido #${order.id}`)
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        console.log(`ℹ️ Alerta de cancelación para personal/delivery del pedido #${order.id} ya encolada. Ignorando duplicado.`);
+        return null;
+      }
+    } catch (e) {
+      console.error('Error verificando duplicado de mensaje de cancelación al delivery:', e);
+    }
+
+    const formattedTotal = formatCurrency(order.total, true, true);
+    const isRetiro = order.method?.toLowerCase() === 'retiro' || (order as any).delivery_method === 'retiro';
+    const methodText = isRetiro ? 'Retiro en sucursal' : 'Envío a domicilio';
+    const message = `❌ *CANCELACIÓN: Pedido #${order.id}*\n\nEl cliente *${order.customer}* canceló el pedido (*${methodText}*) por *${formattedTotal}*.\n⚠️ *Por favor NO armar ni entregar este pedido.*`;
+
+    return this.createWhatsAppMessage({
+      phone: deliveryPhone || '0000000000',
+      customer_name: 'Personal / Delivery',
+      type: 'delivery_alert',
+      title: `Cancelación Pedido #${order.id}`,
       message,
       order_id: order.id,
       status: deliveryPhone ? 'pending' : 'failed',
@@ -283,18 +342,24 @@ export const whatsappMessageService = {
     detail: string,
     orderId?: string,
     deliveryMethod?: string,
-    itemsCount?: number
+    itemsCount?: number,
+    oldestDebtDate?: number | string | null
   ) {
     const formattedAmount = amount.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const formattedTotal = totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
+
+    const includeReminder = shouldShowCycleReminder(oldestDebtDate);
+    const reminderSuffix = includeReminder
+      ? '\n\nℹ️ _Recordatorio: El ciclo cierra a fin de mes y el vencimiento para abonar es el día 10 del mes siguiente._'
+      : '';
 
     let message = '';
     if (orderId) {
       const deliveryLine = deliveryMethod ? `\n📦 *Entrega:* ${deliveryMethod}` : '';
       const itemsSuffix = itemsCount ? ` (${itemsCount} ítems)` : '';
-      message = `Hola ${customerName} 👋\nTu pedido *#${orderId}* se registró con éxito y fue cargado a tu Cuenta Corriente.${deliveryLine}\n💰 *Importe del pedido:* $${formattedAmount}${itemsSuffix}\n💳 *Deuda total actual:* $${formattedTotal}\n\n¡Muchas gracias por tu compra en La Martina!`;
+      message = `Hola ${customerName} 👋\nTu pedido *#${orderId}* se registró con éxito y fue cargado a tu Cuenta Corriente.${deliveryLine}\n💰 *Importe del pedido:* $${formattedAmount}${itemsSuffix}\n💳 *Deuda total acumulada:* $${formattedTotal}${reminderSuffix}\n\n¡Muchas gracias por tu compra en La Martina! 🏪`;
     } else {
-      message = `Hola ${customerName} 👋\nSe agregó un cargo a tu cuenta corriente en La Martina.\n\n💰 *Importe:* $${formattedAmount}\n📝 *Detalle:* ${detail}\n💳 *Deuda total actual:* $${formattedTotal}\n\n¡Muchas gracias!`;
+      message = `Hola ${customerName} 👋\nSe agregó un cargo a tu cuenta corriente en La Martina.\n\n💰 *Importe:* $${formattedAmount}\n📝 *Detalle:* ${detail}\n💳 *Deuda total acumulada:* $${formattedTotal}${reminderSuffix}\n\n¡Muchas gracias! 🏪`;
     }
 
     return this.createWhatsAppMessage({
@@ -320,7 +385,7 @@ export const whatsappMessageService = {
     const formattedPayment = paymentAmount.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const formattedRemaining = remainingDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
 
-    const message = `Hola, ${customerName} 👋\nRegistramos un pago en tu cuenta corriente.\n\nPago recibido: *$${formattedPayment}*\nDeuda restante: *$${formattedRemaining}*\n\nGracias.`;
+    const message = `Hola, ${customerName} 👋\nRegistramos un pago en tu cuenta corriente.\n\n💰 *Pago recibido:* $${formattedPayment}\n💳 *Deuda restante:* $${formattedRemaining}\n\n¡Muchas gracias por tu pago en La Martina! 🏪`;
 
     return this.createWhatsAppMessage({
       phone: customerPhone,
@@ -344,13 +409,37 @@ export const whatsappMessageService = {
     const formattedDebt = totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const formattedLimit = limit.toLocaleString('es-AR', { minimumFractionDigits: 2 });
 
-    const message = `Hola ${customerName} 👋\nTu cuenta corriente superó el límite configurado.\n\nDeuda actual: *$${formattedDebt}*\nLímite: *$${formattedLimit}*`;
+    const message = `Hola ${customerName} 👋\nTu cuenta corriente superó el límite configurado.\n\n💳 *Deuda actual:* $${formattedDebt}\n🛑 *Límite asignado:* $${formattedLimit}\n\nPor favor acercate al local para regularizar tu saldo. ¡Muchas gracias!`;
 
     return this.createWhatsAppMessage({
       phone: customerPhone,
       customer_name: customerName,
       type: 'current_account_limit_exceeded',
       title: 'Límite Superado',
+      message,
+      customer_phone: customerPhone
+    });
+  },
+
+  /**
+   * Encola un recordatorio de pago / cuenta corriente para un cliente
+   */
+  async createDebtReminderMessage(
+    customerPhone: string,
+    customerName: string,
+    totalDebt: number,
+    oldestDays?: number
+  ) {
+    const formattedDebt = totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
+    const daysLine = oldestDays && oldestDays > 0 ? `\n⏳ *Antigüedad del saldo:* ${oldestDays} días` : '';
+
+    const message = `Hola ${customerName}! 👋 Te saludamos desde *La Martina*.\n\nTe enviamos este recordatorio sobre el estado de tu *Cuenta Corriente*:\n\n💳 *Saldo pendiente:* *$${formattedDebt}*${daysLine}\n\nℹ️ _Recordá que la fecha límite para regularizar tu cuenta es el día 10 del mes para mantener habilitadas tus compras a cuenta._\n\nTe solicitamos acercarte al local o contactarnos para poner al día tu saldo cuando te sea posible. ¡Muchas gracias! 🏪`;
+
+    return this.createWhatsAppMessage({
+      phone: customerPhone,
+      customer_name: customerName,
+      type: 'current_account_reminder',
+      title: `Recordatorio de Deuda ($${formattedDebt})`,
       message,
       customer_phone: customerPhone
     });

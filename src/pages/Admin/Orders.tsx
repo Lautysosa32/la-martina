@@ -7,7 +7,7 @@ import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
 
 export const AdminOrders: React.FC = () => {
-  const { orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp , formatCurrency} = useAdmin();
+  const { orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked } = useAdmin();
   const [activeStatus, setActiveStatus] = useState('todos');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelModalData, setCancelModalData] = useState<AdminOrder | null>(null);
@@ -66,6 +66,7 @@ export const AdminOrders: React.FC = () => {
     { key: 'todos', label: 'Todos', count: filteredByPeriod.length },
     { key: 'Nuevo', label: 'Nuevos', count: filteredByPeriod.filter(o => o.status === 'Nuevo').length },
     { key: 'Preparando', label: 'Preparando', count: filteredByPeriod.filter(o => o.status === 'Preparando').length },
+    { key: 'Listo', label: 'Listos', count: filteredByPeriod.filter(o => o.status === 'Listo').length },
     { key: 'En Camino', label: 'En Camino', count: filteredByPeriod.filter(o => o.status === 'En Camino').length },
     { key: 'Entregado', label: 'Entregados', count: filteredByPeriod.filter(o => o.status === 'Entregado').length },
   ];
@@ -79,9 +80,21 @@ export const AdminOrders: React.FC = () => {
     else { setSortField(field); setSortOrder('asc'); }
   };
 
-  const nextStatus = (current: AdminOrder['status']): AdminOrder['status'] => {
+  const getNextStatus = (current: AdminOrder['status'], method?: string): AdminOrder['status'] => {
+    if (method && method !== 'Envío') {
+      const flow: Record<string, AdminOrder['status']> = { 'Nuevo': 'Preparando', 'Preparando': 'Listo', 'Listo': 'Entregado' };
+      return flow[current] || current;
+    }
     const flow: Record<string, AdminOrder['status']> = { 'Nuevo': 'Preparando', 'Preparando': 'En Camino', 'En Camino': 'Entregado' };
     return flow[current] || current;
+  };
+
+  const handleContactCustomerViaWhatsApp = (order: AdminOrder) => {
+    if (!order.phone) return;
+    const cleanPhone = order.phone.replace(/\D/g, '');
+    const targetPhone = cleanPhone.startsWith('54') ? cleanPhone : `54${cleanPhone}`;
+    const msg = `*Hola ${order.customer}!* 👋 Te escribo del equipo de *La Martina* con respecto a tu pedido *#${order.id}*: `;
+    window.open(`https://wa.me/${targetPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   return (
@@ -130,23 +143,23 @@ export const AdminOrders: React.FC = () => {
             ))}
           </div>
 
-          {/* Mobile Filter Tabs (2 rows, no horizontal scrolling) */}
+          {/* Mobile Filter Tabs (2 rows of 3) */}
           <div className="flex md:hidden flex-col gap-1.5 bg-surface-container-low p-1.5 rounded-2xl w-full">
-            {/* Row 1: First 2 tabs (Todos, Nuevos) */}
-            <div className="grid grid-cols-2 gap-1.5">
-              {statusTabs.slice(0, 2).map(tab => (
+            {/* Row 1 */}
+            <div className="grid grid-cols-3 gap-1.5">
+              {statusTabs.slice(0, 3).map(tab => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveStatus(tab.key)}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${activeStatus === tab.key ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'}`}
+                  className={`px-1 py-2 rounded-xl text-[10px] font-bold transition-all whitespace-nowrap text-center ${activeStatus === tab.key ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant'}`}
                 >
                   {tab.label} ({tab.count})
                 </button>
               ))}
             </div>
-            {/* Row 2: Remaining 3 tabs (Preparando, En Camino, Entregados) */}
-            <div className="grid grid-cols-3 gap-1">
-              {statusTabs.slice(2).map(tab => (
+            {/* Row 2 */}
+            <div className="grid grid-cols-3 gap-1.5">
+              {statusTabs.slice(3).map(tab => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveStatus(tab.key)}
@@ -249,12 +262,9 @@ export const AdminOrders: React.FC = () => {
                             </button>
                             {order.phone && (
                               <button
-                                onClick={() => {
-                                   const msg = `*Hola ${order.customer}!* 👋 Te hablamos de *La Martina*.\n\nTu pedido *#${order.id}* por *$${formatCurrency(order.total, true, true)}* se registró con éxito. ¡Ya lo estamos preparando! 🏪`;
-                                   window.open(`https://wa.me/${order.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
-                                }}
+                                onClick={() => handleContactCustomerViaWhatsApp(order)}
                                 className="w-8 h-8 rounded-xl bg-green-50 text-green-600 flex items-center justify-center hover:bg-[#25D366] hover:text-white transition-all shadow-sm"
-                                title="Notificar por WhatsApp"
+                                title="Contactar al cliente por WhatsApp (Inconvenientes / Consultas)"
                               >
                                 <span className="material-symbols-outlined text-[18px]">chat</span>
                               </button>
@@ -263,9 +273,9 @@ export const AdminOrders: React.FC = () => {
                               <>
                                 <PermissionGuard permission="orders.update_status">
                                   <button
-                                    onClick={() => updateOrderStatus(order.id, nextStatus(order.status))}
+                                    onClick={() => updateOrderStatus(order.id, getNextStatus(order.status, order.method))}
                                     className="w-8 h-8 rounded-xl bg-primary/5 text-primary flex items-center justify-center hover:bg-primary hover:text-white transition-all shadow-sm"
-                                    title={`Avanzar a: ${nextStatus(order.status)}`}
+                                    title={`Avanzar a: ${getNextStatus(order.status, order.method)}`}
                                   >
                                     <span className="material-symbols-outlined text-[18px]">fast_forward</span>
                                   </button>
@@ -460,7 +470,9 @@ export const AdminOrders: React.FC = () => {
                                 <div>
                                   <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Cambiar Estado</h4>
                                   <div className="flex gap-2 flex-wrap">
-                                    {(['Nuevo', 'Preparando', 'En Camino', 'Entregado'] as const).map(s => (
+                                    {(['Nuevo', 'Preparando', 'Listo', 'En Camino', 'Entregado'] as const)
+                                      .filter(s => (s !== 'En Camino' || order.method === 'Envío') && (s !== 'Listo' || order.method !== 'Envío'))
+                                      .map(s => (
                                       <PermissionGuard permission="orders.update_status" key={s}>
                                         <button
                                           onClick={() => updateOrderStatus(order.id, s)}
@@ -477,14 +489,36 @@ export const AdminOrders: React.FC = () => {
                                 </div>
                                 {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
                                   <PermissionGuard permission="orders.cancel">
-                                    <div className="pt-2 border-t border-outline-variant/10">
+                                    <div className="pt-2 border-t border-outline-variant/10 flex gap-2">
                                       <button
                                         onClick={() => setCancelModalData(order)}
-                                        className="w-full py-2 rounded-xl text-xs font-bold bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 transition-all border border-red-200/30 flex items-center justify-center gap-1.5"
+                                        className="flex-1 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 transition-all border border-red-200/30 flex items-center justify-center gap-1.5"
                                       >
                                         <span className="material-symbols-outlined text-[16px]">cancel</span>
                                         Cancelar Pedido
                                       </button>
+                                      {order.phone && (
+                                        isPhoneBlocked(order.phone) ? (
+                                          <span className="px-3 py-2 bg-red-100 text-red-800 text-xs font-bold rounded-xl flex items-center gap-1">
+                                            <span className="material-symbols-outlined text-[14px]">block</span>
+                                            Bloqueado
+                                          </span>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (window.confirm(`¿Seguro que deseas bloquear el teléfono ${order.phone}? No podrá realizar más pedidos.`)) {
+                                                blockPhone(order.phone);
+                                              }
+                                            }}
+                                            className="px-3 py-2 rounded-xl text-xs font-bold bg-surface-container-high text-on-surface hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all border border-outline-variant/20 flex items-center gap-1"
+                                            title="Bloquear este número de teléfono"
+                                          >
+                                            <span className="material-symbols-outlined text-[15px] text-red-500">phone_disabled</span>
+                                            Bloquear Tel.
+                                          </button>
+                                        )
+                                      )}
                                     </div>
                                   </PermissionGuard>
                                 )}
@@ -600,12 +634,12 @@ export const AdminOrders: React.FC = () => {
                       {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
                         <PermissionGuard permission="orders.update_status">
                           <button
-                            onClick={() => updateOrderStatus(order.id, nextStatus(order.status))}
+                            onClick={() => updateOrderStatus(order.id, getNextStatus(order.status, order.method))}
                             className="flex-1 h-9 rounded-xl text-xs font-bold bg-primary text-white flex items-center justify-center gap-1 transition-all hover:bg-primary-dark shadow-sm"
-                            title={`Avanzar a: ${nextStatus(order.status)}`}
+                            title={`Avanzar a: ${getNextStatus(order.status, order.method)}`}
                           >
                             <span className="material-symbols-outlined text-[16px]">fast_forward</span>
-                            {order.status === 'Nuevo' ? 'Preparar' : order.status === 'Preparando' ? 'Enviar' : 'Entregar'}
+                            {order.status === 'Nuevo' ? 'Preparar' : order.status === 'Preparando' ? (order.method === 'Envío' ? 'Enviar' : 'Listo p/ retirar') : 'Entregar'}
                           </button>
                         </PermissionGuard>
                       )}
@@ -613,12 +647,9 @@ export const AdminOrders: React.FC = () => {
 
                       {order.phone && (
                         <button
-                          onClick={() => {
-                            const msg = `*Hola ${order.customer}!* 👋 Te hablamos de *La Martina*.\n\nTu pedido *#${order.id}* por *$${formatCurrency(order.total, true, true)}* se registró con éxito. ¡Ya lo estamos preparando! 🏪`;
-                            window.open(`https://wa.me/${order.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
-                          }}
+                          onClick={() => handleContactCustomerViaWhatsApp(order)}
                           className="w-10 h-9 rounded-xl bg-green-50 text-green-600 flex items-center justify-center hover:bg-[#25D366] hover:text-white transition-all border border-green-200/30 flex-shrink-0"
-                          title="Notificar por WhatsApp"
+                          title="Contactar al cliente por WhatsApp (Inconvenientes / Consultas)"
                         >
                           <span className="material-symbols-outlined text-[16px]">chat</span>
                         </button>
@@ -770,7 +801,9 @@ export const AdminOrders: React.FC = () => {
                         <div className="space-y-2">
                           <h4 className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider">Cambiar Estado</h4>
                           <div className="grid grid-cols-2 gap-1.5">
-                            {(['Nuevo', 'Preparando', 'En Camino', 'Entregado'] as const).map(s => (
+                            {(['Nuevo', 'Preparando', 'En Camino', 'Entregado'] as const)
+                              .filter(s => s !== 'En Camino' || order.method === 'Envío')
+                              .map(s => (
                               <PermissionGuard permission="orders.update_status" key={s}>
                                 <button
                                   onClick={() => updateOrderStatus(order.id, s)}
@@ -787,14 +820,36 @@ export const AdminOrders: React.FC = () => {
                           
                           {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
                             <PermissionGuard permission="orders.cancel">
-                              <div className="pt-2 border-t border-outline-variant/10">
+                              <div className="pt-2 border-t border-outline-variant/10 flex gap-2">
                                 <button
                                   onClick={() => setCancelModalData(order)}
-                                  className="w-full py-2 rounded-xl text-[10px] font-bold bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 transition-all border border-red-200/30 flex items-center justify-center gap-1.5"
+                                  className="flex-1 py-2 rounded-xl text-[10px] font-bold bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 transition-all border border-red-200/30 flex items-center justify-center gap-1.5"
                                 >
                                   <span className="material-symbols-outlined text-[14px]">cancel</span>
-                                  Cancelar Pedido
+                                  Cancelar
                                 </button>
+                                {order.phone && (
+                                  isPhoneBlocked(order.phone) ? (
+                                    <span className="px-2.5 py-2 bg-red-100 text-red-800 text-[10px] font-bold rounded-xl flex items-center gap-1">
+                                      <span className="material-symbols-outlined text-[12px]">block</span>
+                                      Bloqueado
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (window.confirm(`¿Bloquear ${order.phone}?`)) {
+                                          blockPhone(order.phone);
+                                        }
+                                      }}
+                                      className="px-2.5 py-2 rounded-xl text-[10px] font-bold bg-surface-container-high text-on-surface hover:bg-red-50 hover:text-red-600 transition-all border border-outline-variant/20 flex items-center gap-1"
+                                      title="Bloquear teléfono"
+                                    >
+                                      <span className="material-symbols-outlined text-[13px] text-red-500">phone_disabled</span>
+                                      Bloquear
+                                    </button>
+                                  )
+                                )}
                               </div>
                             </PermissionGuard>
                           )}

@@ -9,6 +9,7 @@ import { WeightInputModal } from '../../components/WeightInputModal';
 import type { CashWithdrawal, CashMovement } from '../../context/AdminContext';
 import { shoppingSessionService } from '../../services/shopping-session.service';
 import { whatsappMessageService, cleanAndFormatPhone } from '../../services/whatsapp-message.service';
+import { checkCustomerOverdueDebt } from '../../utils/billing-cycle';
 
 export const generateTicketWhatsAppText = (ticket: TicketData, storeName = 'La Martina', footerMsg = '¡Gracias por su compra!'): string => {
   const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -612,14 +613,19 @@ export const POS: React.FC = () => {
       setShowModal(true);
       setTimeout(() => inputRef.current?.focus(), 100);
     } else {
-      // Si hay un cierre anterior, mostrar primero el arqueo de apertura
-      const lastClose = cashCloses.find(c => c.period === 'diario');
+      // Si hay un cierre anterior, predeterminar con el saldo de cierre
+      const lastClose = cashCloses.find(c => c.period === 'diario') || cashCloses[0];
+      const previousClosingCash = lastClose && lastClose.openingControlExpected != null 
+        ? Math.max(0, lastClose.openingControlExpected) 
+        : 0;
+
       if (lastClose && lastClose.openingControlExpected != null) {
         setCashOpenStep('arqueo');
-        setArqueoContado('');
+        setArqueoContado(previousClosingCash > 0 ? String(previousClosingCash) : '');
         setArqueoNotes('');
       } else {
         setCashOpenStep('open');
+        setCashOpenAmount(previousClosingCash > 0 ? String(previousClosingCash) : '');
       }
       setShowCashOpenModal(true);
     }
@@ -693,8 +699,9 @@ export const POS: React.FC = () => {
         const potentialDebt = validatedCustomer.currentDebt + cartTotal;
         const oldestDays = validatedCustomer.oldestDebtDays || 0;
 
+        const overdueInfo = checkCustomerOverdueDebt(validatedCustomer.phone, orders);
         const isOverAmount = currentAccountConfig.warnOnAmountLimit && potentialDebt > effectiveAmountLimit;
-        const isOverTime = currentAccountConfig.warnOnTimeLimit && oldestDays > effectiveTimeLimit;
+        const isOverTime = (currentAccountConfig.warnOnTimeLimit && oldestDays > effectiveTimeLimit) || overdueInfo.isOverdue;
 
         if (isOverAmount || isOverTime) {
           setShowLimitWarning({
@@ -855,27 +862,6 @@ export const POS: React.FC = () => {
     } finally {
       setIsSendingWhatsAppTicket(false);
     }
-  };
-
-  const handleSendWhatsApp = (order: { orderId: string, customer: string, total: number, paymentMethod: string, phone: string }) => {
-    if (!order.phone) return;
-
-    const isCC = order.paymentMethod === 'cuenta_corriente';
-    const customerData = customers.find(c => c.phone === order.phone);
-    const currentDebt = customerData?.currentDebt || 0;
-
-    let message = `*Hola ${order.customer}!*\n\n`;
-    if (isCC) {
-      message += `Se registró una nueva compra en tu *Cuenta Corriente* por *$${formatCurrency(order.total, true, true)}*.\n`;
-      message += `Tu deuda actual es de *$${formatCurrency(currentDebt, true, true)}*.\n\n`;
-    } else {
-      message += `Tu compra por *$${formatCurrency(order.total, true, true)}* (${getPaymentMethodDisplay(order.paymentMethod)}) fue registrada con éxito.\n\n`;
-    }
-    message += `Número de operación: #${order.orderId}\n`;
-    message += `¡Gracias por elegir *La Martina*! 🏪`;
-
-    const encoded = encodeURIComponent(message);
-    window.open(`https://wa.me/${order.phone.replace(/\s+/g, '')}?text=${encoded}`, '_blank');
   };
 
   // Keyboard events logic
@@ -1588,7 +1574,11 @@ export const POS: React.FC = () => {
         };
 
         const handleSkipArqueo = () => {
-          // Sin arqueo: va al paso clásico de ingresar monto inicial
+          // Sin arqueo: va al paso de ingresar monto inicial precargado con el cierre anterior
+          const prevCash = lastDailyClose && lastDailyClose.openingControlExpected != null 
+            ? Math.max(0, lastDailyClose.openingControlExpected) 
+            : 0;
+          setCashOpenAmount(prevCash > 0 ? String(prevCash) : '');
           setCashOpenStep('open');
         };
 

@@ -5,23 +5,32 @@ import 'leaflet/dist/leaflet.css';
 interface MapSelectorProps {
   initialLat?: number;
   initialLng?: number;
+  storeLat?: number;
+  storeLng?: number;
+  deliveryRadiusKm?: number;
   onLocationSelected: (lat: number, lng: number, address: string) => void;
   onClose: () => void;
 }
 
 export const MapSelector: React.FC<MapSelectorProps> = ({
-  initialLat = -33.4588047,
-  initialLng = -67.5539972,
+  initialLat,
+  initialLng,
+  storeLat = -33.459009,
+  storeLng = -67.551826,
+  deliveryRadiusKm = 5,
   onLocationSelected,
   onClose
 }) => {
+  const defaultLat = initialLat ?? storeLat;
+  const defaultLng = initialLng ?? storeLng;
+
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
 
   const [coords, setCoords] = useState<{ lat: number; lng: number }>({
-    lat: initialLat,
-    lng: initialLng
+    lat: defaultLat,
+    lng: defaultLng
   });
   const [addressLabel, setAddressLabel] = useState<string>('Buscando dirección...');
   const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
@@ -92,13 +101,13 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
 
     // Initialize Leaflet Map
     const map = L.map(mapContainerRef.current, {
-      center: [initialLat, initialLng],
-      zoom: 16,
-      zoomControl: false // We will render our own custom styled zoom controls later or use default at a better position
+      center: [defaultLat, defaultLng],
+      zoom: 15,
+      zoomControl: false
     });
     mapRef.current = map;
 
-    // Add beautiful OpenStreetMap tile layer (Hot style or Standard)
+    // Add OpenStreetMap tile layer
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19
@@ -107,15 +116,42 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
     // Add standard zoom control at top right
     L.control.zoom({ position: 'topright' }).addTo(map);
 
+    // Render coverage radius circle if specified
+    if (deliveryRadiusKm && deliveryRadiusKm > 0) {
+      L.circle([storeLat, storeLng], {
+        radius: deliveryRadiusKm * 1000,
+        color: '#F24E1E',
+        fillColor: '#F24E1E',
+        fillOpacity: 0.07,
+        weight: 2,
+        dashArray: '6, 6'
+      }).addTo(map);
+
+      // Local store icon
+      const storePin = L.divIcon({
+        html: `
+          <div class="bg-primary text-white p-1 rounded-full shadow-md flex items-center justify-center w-6 h-6 border-2 border-white">
+            <span class="material-symbols-outlined text-[13px]">storefront</span>
+          </div>
+        `,
+        className: 'store-pin',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+      L.marker([storeLat, storeLng], { icon: storePin, interactive: false })
+        .bindTooltip('La Martina (Local)', { permanent: false, direction: 'top' })
+        .addTo(map);
+    }
+
     // Create marker at initial coordinates
-    const marker = L.marker([initialLat, initialLng], {
+    const marker = L.marker([defaultLat, defaultLng], {
       icon: customSvgIcon,
       draggable: true
     }).addTo(map);
     markerRef.current = marker;
 
     // Trigger initial geocoding
-    performReverseGeocoding(initialLat, initialLng);
+    performReverseGeocoding(defaultLat, defaultLng);
 
     // Marker drag events
     marker.on('dragend', () => {

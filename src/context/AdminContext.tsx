@@ -34,7 +34,7 @@ export interface AdminOrder {
   method: string;
   paymentMethod: string;
   paymentStatus: 'Pagado' | 'Pendiente' | 'Fallido';
-  status: 'Nuevo' | 'Preparando' | 'En Camino' | 'Entregado' | 'Cancelado';
+  status: 'Nuevo' | 'Preparando' | 'Listo' | 'En Camino' | 'Entregado' | 'Cancelado';
   total: number;
   paidAmount?: number; // Amount already paid for this order (useful for partial payments)
   items: { id: string; name: string; image: string; price: number; quantity: number; originalPrice?: number; offerId?: string; lineDiscount?: number; discountedQuantity?: number; saleType?: 'unit' | 'weight' }[];
@@ -114,6 +114,10 @@ export interface TicketConfig {
 
 export interface GeneralConfig {
   suspendEmployeeNotifications: boolean;
+  deliveryRadiusKm: number;
+  storeLat: number;
+  storeLng: number;
+  blockedPhones: string[];
 }
 
 export interface CashRegister {
@@ -347,6 +351,9 @@ export interface AdminContextType {
   // General Config
   generalConfig: GeneralConfig;
   updateGeneralConfig: (config: Partial<GeneralConfig>) => void;
+  blockPhone: (phone: string) => void;
+  unblockPhone: (phone: string) => void;
+  isPhoneBlocked: (phone: string) => boolean;
 
   // Cash Register
   cashRegister: CashRegister;
@@ -555,7 +562,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         lastOrder: '-',
         hasCurrentAccount: profile.hasCurrentAccount || false,
         currentDebt: 0,
-        creditLimit: profile.creditLimit || 50000,
+        creditLimit: profile.customDebtLimit || profile.creditLimit || currentAccountConfig.maxDebtAmount || 50000,
         birthday: profile.birthday || '',
         spent30: 0,
         tier: 'Regular',
@@ -579,7 +586,18 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     sortedOrders.forEach(o => {
       if (o.status === 'Cancelado') return;
 
-      const c = customerMap[o.phone];
+      const clean = (p?: string) => (p || '').replace(/\D/g, '');
+      const oClean = clean(o.phone);
+      if (!oClean) return;
+
+      const c = Object.values(customerMap).find(cust => {
+        const cClean = clean(cust.phone);
+        if (!cClean) return false;
+        return cClean === oClean ||
+          (cClean.length >= 8 && oClean.endsWith(cClean.slice(-8))) ||
+          (oClean.length >= 8 && cClean.endsWith(oClean.slice(-8)));
+      });
+
       if (!c) return; // Ignore orders from guest/unregistered clients
 
       c.totalOrders += 1;
@@ -615,7 +633,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     return Object.values(customerMap);
-  }, [orders, customerProfiles]);
+  }, [orders, customerProfiles, currentAccountConfig]);
 
   const toggleCurrentAccount = (phone: string) => {
     // Find debt from derived customers
@@ -694,11 +712,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let whatsappData: any = null;
     let ordersToUpdate: {id: string, updates: any}[] = [];
 
+    const clean = (p?: string) => (p || '').replace(/\D/g, '');
+    const targetPhone = clean(phone);
+
+    const matchesPhone = (oPhone?: string) => {
+      const op = clean(oPhone);
+      if (!op || !targetPhone) return false;
+      return op === targetPhone || (targetPhone.length >= 8 && op.endsWith(targetPhone.slice(-8))) || (op.length >= 8 && targetPhone.endsWith(op.slice(-8)));
+    };
+
     setOrders(prev => {
       const filteredPrev = prev.filter(o => !o.id.startsWith('PAGO-'));
 
       const unpaidOrders = filteredPrev
-        .filter(o => o.phone === phone && o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado' && o.status !== 'Cancelado')
+        .filter(o => matchesPhone(o.phone) && o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado' && o.status !== 'Cancelado')
         .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
       if (unpaidOrders.length === 0) return filteredPrev;
@@ -708,7 +735,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       let remainingToSettle = paymentAmount;
 
       const updatedOrders = filteredPrev.map(o => {
-        if (o.phone === phone && o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado' && o.status !== 'Cancelado') {
+        if (matchesPhone(o.phone) && o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado' && o.status !== 'Cancelado') {
           if (remainingToSettle <= 0) return o;
 
           const orderDebt = o.total - (o.paidAmount || 0);
@@ -829,7 +856,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting<string[]>('admin_tags', initialTags),
         fetchExpenses(),
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }),
-        fetchSetting<GeneralConfig>('general_config', { suspendEmployeeNotifications: false })
+        fetchSetting<GeneralConfig>('general_config', {
+          suspendEmployeeNotifications: false,
+          deliveryRadiusKm: 5,
+          storeLat: -33.459009,
+          storeLng: -67.551826,
+          blockedPhones: []
+        })
       ]);
 
       setOrders(_orders);
@@ -1055,6 +1088,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ─── General Config ───────────────────────────────────────
   const defaultGeneralConfig: GeneralConfig = {
     suspendEmployeeNotifications: false,
+    deliveryRadiusKm: 5,
+    storeLat: -33.459009,
+    storeLng: -67.551826,
+    blockedPhones: []
   };
   const [generalConfig, setGeneralConfig] = useState<GeneralConfig>(defaultGeneralConfig);
   const updateGeneralConfig = (updates: Partial<GeneralConfig>) => {
@@ -1063,6 +1100,36 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       saveSetting('general_config', next).catch(console.error);
       return next;
     });
+  };
+
+  const blockPhone = (phone: string) => {
+    const clean = phone.replace(/\D/g, '');
+    if (!clean) return;
+    setGeneralConfig(prev => {
+      const currentList = prev.blockedPhones || [];
+      if (currentList.includes(clean)) return prev;
+      const next = { ...prev, blockedPhones: [...currentList, clean] };
+      saveSetting('general_config', next).catch(console.error);
+      return next;
+    });
+  };
+
+  const unblockPhone = (phone: string) => {
+    const clean = phone.replace(/\D/g, '');
+    if (!clean) return;
+    setGeneralConfig(prev => {
+      const currentList = prev.blockedPhones || [];
+      const next = { ...prev, blockedPhones: currentList.filter(p => p !== clean) };
+      saveSetting('general_config', next).catch(console.error);
+      return next;
+    });
+  };
+
+  const isPhoneBlocked = (phone: string) => {
+    const clean = phone.replace(/\D/g, '');
+    if (!clean) return false;
+    const list = generalConfig.blockedPhones || [];
+    return list.some(p => clean.includes(p) || p.includes(clean));
   };
 
   // ─── Cash Register ────────────────────────────────────────
@@ -1321,7 +1388,23 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
     return { success: true, insufficientItems: [] };
   };
-  
+
+  const restoreStockForOrder = (orderItems: { id: string; quantity: number }[]) => {
+    setStockMap(prev => {
+      const next = { ...prev };
+      for (const item of orderItems) {
+        const currentStock = next[item.id] !== undefined ? next[item.id] : getStock(item.id);
+        const newStock = currentStock + item.quantity;
+        next[item.id] = newStock;
+
+        if (item.id !== 'PRODUCTO_COMUN' && !item.id.startsWith('GENERICO-')) {
+          useProductStore.getState().updateStock(item.id, newStock).catch(console.error);
+        }
+      }
+      return next;
+    });
+  };
+
   // Mantenemos array vacio para que no rompa la UI legacy que lo use directamente
   const lowStockProducts: any[] = [];
 
@@ -1424,7 +1507,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customer: o.customer,
         phone: o.phone,
         status: o.status || 'Nuevo',
-        total: o.total
+        total: o.total,
+        method: o.method
       });
     }
 
@@ -1458,6 +1542,18 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const itemsCount = o.items.reduce((acc, i) => acc + (i.quantity || 1), 0);
 
+      // Buscar la compra impaga más antigua previa a esta orden
+      const previousUnpaidCcOrders = orders.filter(ord => {
+        const ordPhone = (ord.phone || '').replace(/\D/g, '');
+        const targetClean = (o.phone || '').replace(/\D/g, '');
+        const isMatch = ordPhone === targetClean || (targetClean.length >= 8 && ordPhone.endsWith(targetClean.slice(-8)));
+        return isMatch && ord.paymentMethod === 'cuenta_corriente' && ord.paymentStatus !== 'Pagado' && ord.status !== 'Cancelado' && (ord.total - (ord.paidAmount || 0)) > 0;
+      });
+
+      const oldestDebtDate = previousUnpaidCcOrders.length > 0
+        ? Math.min(...previousUnpaidCcOrders.map(ord => ord.timestamp || (ord.date ? new Date(ord.date).getTime() : Date.now())))
+        : o.timestamp || Date.now();
+
       // Encolar mensaje unificado de confirmación + cuenta corriente
       whatsappMessageService.createCurrentAccountDebtMessage(
         o.phone,
@@ -1467,7 +1563,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         `${methodLabel} (#${o.id}) - ${itemsCount} ítems`,
         o.id,
         methodLabel,
-        itemsCount
+        itemsCount,
+        oldestDebtDate
       );
 
       // Alerta de límite superado
@@ -1520,14 +1617,40 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     updateOrderInDb(id, { status: s }).catch(console.error);
 
-    // Encolar mensaje si el estado cambió realmente
     if (targetOrder && prevStatus !== s) {
+      if (s === 'Cancelado' && prevStatus !== 'Cancelado') {
+        if (targetOrder.items && targetOrder.items.length > 0) {
+          restoreStockForOrder(targetOrder.items);
+        }
+
+        // Alertar al personal/repartidor de turno activo sobre la cancelación del pedido (tanto retiro como envío)
+        if (!generalConfig.suspendEmployeeNotifications) {
+          (async () => {
+            try {
+              const { employeesService } = await import('../services/employees.service');
+              const activeDelivery = await employeesService.getActiveDeliveryAssignment();
+              let deliveryPhone = null;
+              if (activeDelivery && activeDelivery.employee && activeDelivery.employee.phone) {
+                deliveryPhone = activeDelivery.employee.phone;
+              }
+              whatsappMessageService.createDeliveryCancellationAlertMessage(
+                { id: targetOrder.id, customer: targetOrder.customer, total: targetOrder.total, method: targetOrder.method },
+                deliveryPhone
+              );
+            } catch (err) {
+              console.error('Error enviando alerta de cancelación al personal:', err);
+            }
+          })();
+        }
+      }
+
       whatsappMessageService.createOrderStatusMessage({
         id: targetOrder.id,
         customer: targetOrder.customer,
         phone: targetOrder.phone,
         status: s,
-        total: targetOrder.total
+        total: targetOrder.total,
+        method: targetOrder.method
       });
     }
   };
@@ -2147,7 +2270,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       currentAccountConfig, updateCurrentAccountConfig,
       storeStatus, updateStoreStatus,
       autoCashCloseConfig, updateAutoCashCloseConfig,
-      generalConfig, updateGeneralConfig,
+      generalConfig, updateGeneralConfig, blockPhone, unblockPhone, isPhoneBlocked,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
       cashCloses, performCashClose, updateCashCloseOpeningControl,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,
