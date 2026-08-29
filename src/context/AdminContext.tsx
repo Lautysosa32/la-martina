@@ -1415,7 +1415,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     // Encolar mensaje de WhatsApp de confirmación/estado inicial del pedido si tiene teléfono
-    if (o.phone) {
+    // Si el pedido es a Cuenta Corriente, evitamos este mensaje genérico porque se enviará el mensaje unificado detallado.
+    const isCuentaCorriente = o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado';
+
+    if (o.phone && !isCuentaCorriente) {
       whatsappMessageService.createOrderStatusMessage({
         id: o.id,
         customer: o.customer,
@@ -1441,20 +1444,30 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // Fase 3: Integración con Cuenta Corriente cuando se agrega una compra
-    if (o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado') {
+    if (isCuentaCorriente && o.phone) {
       const activeCustomer = customers.find(c => c.phone === o.phone);
       const currentDebt = activeCustomer ? activeCustomer.currentDebt : 0;
       const debtAmount = o.total - (o.paidAmount || 0);
       const newDebt = currentDebt + debtAmount;
 
-      // Encolar mensaje de compra
+      const methodLabel = (o.method?.toLowerCase() === 'envío' || o.delivery_method === 'envio') 
+        ? 'Envío a domicilio' 
+        : (o.method?.toLowerCase() === 'retiro' || o.delivery_method === 'retiro')
+          ? 'Retiro en sucursal'
+          : 'Compra en local';
+
+      const itemsCount = o.items.reduce((acc, i) => acc + (i.quantity || 1), 0);
+
+      // Encolar mensaje unificado de confirmación + cuenta corriente
       whatsappMessageService.createCurrentAccountDebtMessage(
         o.phone,
         o.customer,
         debtAmount,
         newDebt,
-        `Compra en local (#${o.id}) - ${o.items.length} ítems`,
-        o.id
+        `${methodLabel} (#${o.id}) - ${itemsCount} ítems`,
+        o.id,
+        methodLabel,
+        itemsCount
       );
 
       // Alerta de límite superado

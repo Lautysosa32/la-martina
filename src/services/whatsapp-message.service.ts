@@ -273,7 +273,7 @@ export const whatsappMessageService = {
     }
   },
   /**
-   * Encola un mensaje de deuda agregada a cuenta corriente (Fase 3)
+   * Encola un mensaje de deuda agregada a cuenta corriente (Fase 3 / Unificado con Pedidos)
    */
   async createCurrentAccountDebtMessage(
     customerPhone: string,
@@ -281,18 +281,27 @@ export const whatsappMessageService = {
     amount: number,
     totalDebt: number,
     detail: string,
-    orderId?: string
+    orderId?: string,
+    deliveryMethod?: string,
+    itemsCount?: number
   ) {
     const formattedAmount = amount.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const formattedTotal = totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
 
-    const message = `Hola ${customerName} 👋\nSe agregó una compra a tu cuenta corriente en La Martina.\n\nImporte: *$${formattedAmount}*\nDetalle: ${detail}\nDeuda total actual: *$${formattedTotal}*\n\nGracias.`;
+    let message = '';
+    if (orderId) {
+      const deliveryLine = deliveryMethod ? `\n📦 *Entrega:* ${deliveryMethod}` : '';
+      const itemsSuffix = itemsCount ? ` (${itemsCount} ítems)` : '';
+      message = `Hola ${customerName} 👋\nTu pedido *#${orderId}* se registró con éxito y fue cargado a tu Cuenta Corriente.${deliveryLine}\n💰 *Importe del pedido:* $${formattedAmount}${itemsSuffix}\n💳 *Deuda total actual:* $${formattedTotal}\n\n¡Muchas gracias por tu compra en La Martina!`;
+    } else {
+      message = `Hola ${customerName} 👋\nSe agregó un cargo a tu cuenta corriente en La Martina.\n\n💰 *Importe:* $${formattedAmount}\n📝 *Detalle:* ${detail}\n💳 *Deuda total actual:* $${formattedTotal}\n\n¡Muchas gracias!`;
+    }
 
     return this.createWhatsAppMessage({
       phone: customerPhone,
       customer_name: customerName,
       type: 'current_account_debt_added',
-      title: 'Compra en Cuenta Corriente',
+      title: orderId ? `Pedido #${orderId} - Cuenta Corriente` : 'Compra en Cuenta Corriente',
       message,
       order_id: orderId || null,
       customer_phone: customerPhone
