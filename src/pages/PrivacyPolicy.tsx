@@ -11,7 +11,7 @@ export const PrivacyPolicy: React.FC = () => {
   const sections = [
     {
       title: '1. Responsable del Tratamiento de Datos',
-      content: `**Supermercado La Martina** (en adelante, "La Martina", "nosotros" o "el Responsable") es el responsable del tratamiento de los datos personales recolectados a través de este sitio web y sus servicios asociados.
+      content: `**Martina Supermercado** (en adelante, "Martina Supermercado", "nosotros" o "el Responsable") es el responsable del tratamiento de los datos personales recolectados a través de este sitio web y sus servicios asociados.
 
 Domicilio comercial: La Paz, Mendoza, Argentina
 Correo electrónico: martinasuper1327@gmail.com
@@ -27,7 +27,7 @@ WhatsApp: +54 9 261 713-9129`
 • **Ley 24.240** — Defensa del Consumidor (en lo relativo a la información al consumidor).
 • **Artículo 43 de la Constitución Nacional Argentina** — Habeas Data.
 
-La Martina se compromete a tratar los datos personales de los Usuarios con responsabilidad, transparencia y conforme a los principios de legalidad, finalidad, proporcionalidad y seguridad establecidos por la ley.`
+Martina Supermercado se compromete a tratar los datos personales de los Usuarios con responsabilidad, transparencia y conforme a los principios de legalidad, finalidad, proporcionalidad y seguridad establecidos por la ley.`
     },
     {
       title: '3. Datos Personales que Recopilamos',
@@ -53,7 +53,7 @@ La Martina se compromete a tratar los datos personales de los Usuarios con respo
 • Datos de cookies y tecnologías similares (ver sección 8)
 
 **Datos de pago:**
-• La Martina **NO almacena** datos de tarjetas de crédito o débito. Los pagos electrónicos son procesados exclusivamente por pasarelas de pago de terceros (Mercado Pago u otros proveedores autorizados) bajo sus propias políticas de seguridad.`
+• Martina Supermercado **NO almacena** datos de tarjetas de crédito o débito. Los pagos electrónicos son procesados exclusivamente por pasarelas de pago de terceros (Mercado Pago u otros proveedores autorizados) bajo sus propias políticas de seguridad.`
     },
     {
       title: '4. Finalidad del Tratamiento',
@@ -85,18 +85,18 @@ El Usuario puede revocar su consentimiento para las finalidades secundarias en c
     },
     {
       title: '6. Compartición de Datos con Terceros',
-      content: `La Martina podrá compartir datos personales del Usuario con las siguientes categorías de terceros, exclusivamente en la medida necesaria para las finalidades indicadas:
+      content: `Martina Supermercado podrá compartir datos personales del Usuario con las siguientes categorías de terceros, exclusivamente en la medida necesaria para las finalidades indicadas:
 
 • **Proveedores de servicios de pago**: Mercado Pago y/o procesadoras de tarjetas, para la gestión de transacciones electrónicas.
 • **Servicios de logística y delivery**: Para coordinar la entrega de pedidos a domicilio.
 • **Proveedores de tecnología**: Servicios de alojamiento web, bases de datos y herramientas de análisis (ej. Supabase, servicios de hosting).
 • **Autoridades públicas**: Cuando sea requerido por ley, orden judicial o requerimiento de autoridad competente.
 
-La Martina **NO vende, alquila ni cede** datos personales a terceros con fines comerciales propios. Los proveedores de servicios que accedan a datos personales están obligados contractualmente a mantener la confidencialidad y a tratar los datos exclusivamente para las finalidades autorizadas.`
+Martina Supermercado **NO vende, alquila ni cede** datos personales a terceros con fines comerciales propios. Los proveedores de servicios que accedan a datos personales están obligados contractualmente a mantener la confidencialidad y a tratar los datos exclusivamente para las finalidades autorizadas.`
     },
     {
       title: '7. Seguridad de los Datos',
-      content: `La Martina implementa medidas de seguridad técnicas y organizativas para proteger los datos personales contra acceso no autorizado, alteración, divulgación o destrucción, incluyendo:
+      content: `Martina Supermercado implementa medidas de seguridad técnicas y organizativas para proteger los datos personales contra acceso no autorizado, alteración, divulgación o destrucción, incluyendo:
 
 • **Encriptación**: Las contraseñas se almacenan con algoritmos de hash seguros. Las comunicaciones se realizan bajo protocolo HTTPS/TLS.
 • **Control de acceso**: Acceso restringido a datos personales solo al personal autorizado, con diferentes niveles de permisos.
@@ -104,7 +104,7 @@ La Martina **NO vende, alquila ni cede** datos personales a terceros con fines c
 • **Monitoreo**: Supervisión activa del sistema para detectar y prevenir accesos no autorizados.
 • **Actualización**: Revisión y actualización periódica de las medidas de seguridad conforme a las mejores prácticas del sector.
 
-No obstante, ningún sistema de seguridad es infalible. En caso de una brecha de seguridad que afecte datos personales, La Martina notificará a los Usuarios afectados y a la autoridad competente conforme a la normativa vigente.`
+No obstante, ningún sistema de seguridad es infalible. En caso de una brecha de seguridad que afecte datos personales, Martina Supermercado notificará a los Usuarios afectados y a la autoridad competente conforme a la normativa vigente.`
     },
     {
       title: '8. Cookies y Tecnologías Similares',
@@ -141,7 +141,7 @@ Para ejercer cualquiera de estos derechos, el Usuario deberá enviar una solicit
 • **WhatsApp**: +54 9 261 713-9129
 • **Dirección postal**: La Paz, Mendoza, Argentina
 
-La solicitud deberá incluir: nombre completo, datos de contacto y descripción del derecho que desea ejercer. La Martina responderá en un plazo máximo de **diez (10) días hábiles**.
+La solicitud deberá incluir: nombre completo, datos de contacto y descripción del derecho que desea ejercer. Martina Supermercado responderá en un plazo máximo de **diez (10) días hábiles**.
 
 **Derecho de Habeas Data**: De acuerdo al Artículo 43 de la Constitución Nacional y la Ley 25.326, el titular de los datos puede interponer la acción de habeas data para tomar conocimiento de los datos a él referidos y de su finalidad, que consten en registros o bases de datos públicos o privados.
 
@@ -160,21 +160,21 @@ Una vez vencidos los plazos de retención, los datos serán eliminados de forma 
     },
     {
       title: '11. Transferencia Internacional de Datos',
-      content: `Algunos de los servicios tecnológicos utilizados por La Martina (como servicios de alojamiento web y bases de datos) pueden operar desde servidores ubicados fuera de la República Argentina. En tales casos:
+      content: `Algunos de los servicios tecnológicos utilizados por Martina Supermercado (como servicios de alojamiento web y bases de datos) pueden operar desde servidores ubicados fuera de la República Argentina. En tales casos:
 
-• La Martina garantiza que los proveedores de servicios cumplen con estándares de protección de datos equivalentes a los establecidos por la legislación argentina.
+• Martina Supermercado garantiza que los proveedores de servicios cumplen con estándares de protección de datos equivalentes a los establecidos por la legislación argentina.
 • Las transferencias internacionales se realizan conforme a lo previsto en el Artículo 12 de la Ley 25.326, priorizando países con niveles adecuados de protección.
 • Se establecen cláusulas contractuales que aseguran la confidencialidad y seguridad de los datos transferidos.`
     },
     {
       title: '12. Protección de Datos de Menores',
-      content: `El Sitio no está dirigido a menores de **13 años**. La Martina no recopila intencionalmente datos personales de menores de 13 años. Si tomamos conocimiento de que hemos recopilado datos de un menor sin el consentimiento de su padre, madre o tutor legal, procederemos a eliminar dicha información de forma inmediata.
+      content: `El Sitio no está dirigido a menores de **13 años**. Martina Supermercado no recopila intencionalmente datos personales de menores de 13 años. Si tomamos conocimiento de que hemos recopilado datos de un menor sin el consentimiento de su padre, madre o tutor legal, procederemos a eliminar dicha información de forma inmediata.
 
 Los menores de entre 13 y 18 años podrán utilizar el Sitio únicamente con el consentimiento y supervisión de sus padres o representantes legales.`
     },
     {
       title: '13. Modificaciones a esta Política',
-      content: `La Martina se reserva el derecho de modificar la presente Política de Privacidad en cualquier momento para adaptarla a cambios legislativos, jurisprudenciales, del sector o de nuestras propias prácticas internas.
+      content: `Martina Supermercado se reserva el derecho de modificar la presente Política de Privacidad en cualquier momento para adaptarla a cambios legislativos, jurisprudenciales, del sector o de nuestras propias prácticas internas.
 
 Las modificaciones serán publicadas en el Sitio con indicación de la fecha de la última actualización. En caso de cambios sustanciales que afecten el tratamiento de datos personales, notificaremos a los Usuarios registrados a través de correo electrónico o notificación en el Sitio.
 
@@ -182,7 +182,7 @@ El uso continuado del Sitio después de la publicación de las modificaciones im
     },
     {
       title: '14. Contacto del Delegado de Protección de Datos',
-      content: `Para cualquier consulta, solicitud o reclamo relacionado con la protección de sus datos personales, el Usuario puede comunicarse con La Martina a través de los siguientes medios:
+      content: `Para cualquier consulta, solicitud o reclamo relacionado con la protección de sus datos personales, el Usuario puede comunicarse con Martina Supermercado a través de los siguientes medios:
 
 • **Email**: martinasuper1327@gmail.com (asunto: "Protección de Datos")
 • **WhatsApp**: +54 9 261 713-9129
@@ -218,7 +218,7 @@ Nos comprometemos a responder todas las solicitudes dentro de los plazos legales
           </div>
         </div>
         <p className="text-sm text-on-surface-variant leading-relaxed max-w-2xl">
-          En Supermercado La Martina valoramos y protegemos tu privacidad. Esta política describe cómo recopilamos, usamos, almacenamos y protegemos tus datos personales cuando utilizás nuestro sitio web y servicios.
+          En Martina Supermercado, valoramos y protegemos tu privacidad. Esta política describe cómo recopilamos, usamos, almacenamos y protegemos tus datos personales cuando utilizás nuestro sitio web y servicios.
         </p>
       </div>
 
