@@ -6,122 +6,147 @@ import { categories } from '../data/mockData';
 interface NavigationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenZones?: () => void;
 }
 
-export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onClose }) => {
+export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onClose, onOpenZones }) => {
   return (
     <>
       {/* Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-inverse-surface/50 z-40 transition-opacity"
-          style={{ top: '8%', height: '92%' }}
+          className="fixed inset-0 bg-black/50 z-50 transition-opacity backdrop-blur-xs"
           onClick={onClose}
         />
       )}
 
       {/* Drawer */}
-      <nav
+      <aside
         className={cn(
-          'flex flex-col w-[80%] sm:w-80 z-50 bg-white shadow-2xl fixed left-0 transition-transform duration-300 ease-in-out overflow-hidden',
+          'flex flex-col w-[85%] sm:w-80 max-w-sm z-50 bg-white shadow-2xl fixed left-0 top-0 bottom-0 transition-transform duration-300 ease-in-out',
           isOpen ? 'translate-x-0' : '-translate-x-full'
         )}
-        style={{ top: '8%', height: '92%' }}
       >
-        {/* Top Section: Categories */}
-        <div className="flex flex-col overflow-hidden" style={{ height: '70%' }}>
-          <div className="px-[6%] pb-[2%] shrink-0" style={{ height: '12%', display: 'flex', alignItems: 'center' }}>
-            <h2 className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider px-2">
-              Categorías
-            </h2>
+        {/* Drawer Header */}
+        <div className="bg-primary text-white p-4 flex items-center justify-between shrink-0 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[24px]">grid_view</span>
+            <span className="font-bold text-base tracking-tight">Categorías & Menú</span>
           </div>
-          <ul className="flex flex-col justify-around px-[5%] overflow-hidden" style={{ height: '70%' }}>
-            {categories.map((cat) => (
-              <li key={cat.id} style={{ height: '14%' }} className="flex items-center">
-                <NavLink
-                  to={`/category/${cat.id}`}
-                  onClick={onClose}
-                  className={({ isActive }) =>
-                    cn(
-                      'cursor-pointer group flex items-center justify-between w-full h-full px-[5%] transition-all duration-200 rounded-lg',
-                      isActive
-                        ? 'text-primary font-bold bg-primary-container/10 hover:bg-surface-container-high'
-                        : 'text-on-surface hover:bg-surface-container-high'
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      <div className="flex items-center gap-4 w-full">
-                        <span
-                          className={cn(
-                            'material-symbols-outlined shrink-0',
-                            isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary transition-colors'
-                          )}
-                          data-icon={getIconForCategory(cat.id)}
-                          aria-hidden="true"
-                          translate="no"
-                        >
-                          {getIconForCategory(cat.id)}
-                        </span>
-                        <span className="font-body-md text-sm sm:text-base truncate">{cat.title}</span>
-                      </div>
-                      <span
-                        className={cn(
-                          'material-symbols-outlined transition-colors shrink-0',
-                          isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary'
-                        )}
-                        aria-hidden="true"
-                        translate="no"
-                      >
-                        chevron_right
-                      </span>
-                    </>
-                  )}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/20 transition-colors cursor-pointer"
+            aria-label="Cerrar menú"
+          >
+            <span className="material-symbols-outlined text-[20px]">close</span>
+          </button>
         </div>
 
-        {/* Bottom Section: Información (Anclado al fondo relativo) */}
-        <div
-          className="border-t border-outline-variant/10 bg-surface-container-lowest flex flex-col justify-between overflow-hidden"
-          style={{ height: '30%', padding: '5%', paddingBottom: '8%' }}
-        >
-          <div className="px-2" style={{ height: '22%', display: 'flex', alignItems: 'center' }}>
-            <h3 className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
-              Información
-            </h3>
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div>
+            <h2 className="text-[11px] font-black text-on-surface-variant/70 uppercase tracking-wider px-3 mb-2">
+              Categorías
+            </h2>
+            <ul className="space-y-1">
+              {categories.map((cat) => (
+                <li key={cat.id}>
+                  <NavLink
+                    to={`/category/${cat.id}`}
+                    onClick={onClose}
+                    className={({ isActive }) =>
+                      cn(
+                        'cursor-pointer group flex items-center justify-between w-full px-3 py-2.5 transition-all duration-200 rounded-xl font-medium text-sm',
+                        isActive
+                          ? 'text-primary font-bold bg-primary/10'
+                          : 'text-on-surface hover:bg-surface-container-high'
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={cn(
+                              'material-symbols-outlined text-[20px] shrink-0',
+                              isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary transition-colors'
+                            )}
+                          >
+                            {getIconForCategory(cat.id)}
+                          </span>
+                          <span className="truncate">{cat.title}</span>
+                        </div>
+                        <span
+                          className={cn(
+                            'material-symbols-outlined text-[18px] transition-colors shrink-0',
+                            isActive ? 'text-primary' : 'text-on-surface-variant/40 group-hover:text-primary'
+                          )}
+                        >
+                          chevron_right
+                        </span>
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="flex flex-col justify-around" style={{ height: '70%' }}>
-            {[
-              { label: 'Más información', icon: 'info', path: '/about' },
-              { label: 'Preguntas Frecuentes', icon: 'help', path: '/faq' },
-            ].map((item, idx) => (
-              <li key={idx} style={{ height: '42%' }} className="flex items-center">
-                <NavLink
-                  to={item.path}
-                  onClick={onClose}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-4 w-full h-full px-[5%] rounded-lg transition-all text-xs font-semibold',
-                      isActive
-                        ? 'bg-primary/10 text-primary font-bold'
-                        : 'text-on-surface hover:bg-surface-container-high'
-                    )
-                  }
-                >
-                  <span className="material-symbols-outlined text-on-surface-variant shrink-0" aria-hidden="true" translate="no">
-                    {item.icon}
-                  </span>
-                  <span className="font-body-md text-xs sm:text-sm font-semibold truncate">{item.label}</span>
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+
+          <div className="border-t border-outline-variant/15 pt-3">
+            <h3 className="text-[11px] font-black text-on-surface-variant/70 uppercase tracking-wider px-3 mb-2">
+              Accesos Rápidos
+            </h3>
+            <ul className="space-y-1">
+              {onOpenZones && (
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => { onOpenZones(); onClose(); }}
+                    className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl transition-all text-xs font-semibold text-on-surface hover:bg-surface-container-high text-left cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[20px] text-primary shrink-0">
+                      share_location
+                    </span>
+                    <span className="truncate">Zonas de Cobertura de Envíos</span>
+                  </button>
+                </li>
+              )}
+              {[
+                { label: 'Calculadora en el Local', icon: 'calculate', path: '/calculadora-compras' },
+                { label: 'Métodos de Entrega', icon: 'local_shipping', path: '/delivery' },
+                { label: 'Sobre Nosotros', icon: 'storefront', path: '/about' },
+                { label: 'Preguntas Frecuentes', icon: 'help', path: '/faq' },
+              ].map((item, idx) => (
+                <li key={idx}>
+                  <NavLink
+                    to={item.path}
+                    onClick={onClose}
+                    className={({ isActive }) =>
+                      cn(
+                        'flex items-center gap-3 w-full px-3 py-2.5 rounded-xl transition-all text-xs font-semibold',
+                        isActive
+                          ? 'bg-primary/10 text-primary font-bold'
+                          : 'text-on-surface hover:bg-surface-container-high'
+                      )
+                    }
+                  >
+                    <span className="material-symbols-outlined text-[20px] text-on-surface-variant shrink-0">
+                      {item.icon}
+                    </span>
+                    <span className="truncate">{item.label}</span>
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
-      </nav>
+
+        {/* Bottom Drawer Footer */}
+        <div className="p-3 border-t border-outline-variant/15 bg-surface-container-low/50 text-xs text-on-surface-variant/70 text-center">
+          <p className="font-semibold text-on-surface">La Martina Supermercado</p>
+          <p className="text-[10px] mt-0.5">Calidad y frescura garantizada</p>
+        </div>
+      </aside>
     </>
   );
 };
@@ -137,3 +162,4 @@ function getIconForCategory(id: string) {
     default: return 'category';
   }
 }
+

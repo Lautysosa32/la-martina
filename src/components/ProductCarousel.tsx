@@ -84,14 +84,24 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
   };
 
   const scrollToPage = (pageIndex: number) => {
+    const clampedIndex = Math.max(0, Math.min(pageIndex, totalPages - 1));
     if (scrollRef.current) {
       const { scrollWidth, clientWidth } = scrollRef.current;
-      const scrollAmount = (pageIndex * (scrollWidth - clientWidth)) / (totalPages - 1);
+      const scrollAmount = (clampedIndex * (scrollWidth - clientWidth)) / (totalPages - 1 || 1);
       scrollRef.current.scrollTo({
         left: scrollAmount,
         behavior: 'smooth'
       });
+      setActiveIndex(clampedIndex);
     }
+  };
+
+  const handlePrev = () => {
+    scrollToPage(activeIndex - 1);
+  };
+
+  const handleNext = () => {
+    scrollToPage(activeIndex + 1);
   };
 
   // Inline style para el grid-template-columns del slide
@@ -100,12 +110,69 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
   };
 
   return (
-    <section className="mt-10">
-      <h2 className="font-headline-lg text-headline-lg text-[25px] text-on-background font-bold mb-4">
-        {title}
-      </h2>
+    <section className="mt-10 relative">
+      {/* Header with Title and Desktop Arrows */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-headline-lg text-headline-lg text-[22px] sm:text-[25px] text-on-background font-bold flex items-center gap-2">
+          <span>{title}</span>
+        </h2>
+
+        {/* Desktop Header Navigation Controls */}
+        {totalPages > 1 && (
+          <div className="hidden md:flex items-center gap-2">
+            <button
+              onClick={handlePrev}
+              disabled={activeIndex === 0}
+              aria-label="Página anterior"
+              className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                activeIndex === 0
+                  ? 'border-outline-variant/20 text-on-surface-variant/30 cursor-not-allowed bg-transparent'
+                  : 'border-outline-variant/40 bg-white text-on-surface hover:bg-primary hover:text-white hover:border-primary shadow-xs'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+            </button>
+            <span className="text-xs font-bold text-on-surface-variant px-1">
+              {activeIndex + 1} / {totalPages}
+            </span>
+            <button
+              onClick={handleNext}
+              disabled={activeIndex >= totalPages - 1}
+              aria-label="Página siguiente"
+              className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                activeIndex >= totalPages - 1
+                  ? 'border-outline-variant/20 text-on-surface-variant/30 cursor-not-allowed bg-transparent'
+                  : 'border-outline-variant/40 bg-white text-on-surface hover:bg-primary hover:text-white hover:border-primary shadow-xs'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="relative group">
+        {/* Floating Side Arrows (Desktop Hover) */}
+        {totalPages > 1 && activeIndex > 0 && (
+          <button
+            onClick={handlePrev}
+            aria-label="Slide anterior"
+            className="hidden lg:flex absolute -left-4 top-1/2 -translate-y-1/2 z-20 w-11 h-11 bg-white/95 text-on-surface rounded-full shadow-lg border border-outline-variant/20 items-center justify-center opacity-0 group-hover:opacity-100 hover:scale-110 hover:bg-primary hover:text-white transition-all cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[24px]">chevron_left</span>
+          </button>
+        )}
+
+        {totalPages > 1 && activeIndex < totalPages - 1 && (
+          <button
+            onClick={handleNext}
+            aria-label="Slide siguiente"
+            className="hidden lg:flex absolute -right-4 top-1/2 -translate-y-1/2 z-20 w-11 h-11 bg-white/95 text-on-surface rounded-full shadow-lg border border-outline-variant/20 items-center justify-center opacity-0 group-hover:opacity-100 hover:scale-110 hover:bg-primary hover:text-white transition-all cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[24px]">chevron_right</span>
+          </button>
+        )}
+
         <div
           ref={scrollRef}
           onScroll={handleScroll}
@@ -134,11 +201,12 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
             <button
               key={idx}
               onClick={() => scrollToPage(idx)}
-              className={`h-2 rounded-full transition-all duration-300 ${activeIndex === idx
-                ? 'w-6 bg-primary opacity-100'
-                : 'w-2 bg-primary opacity-30 hover:opacity-50'
-                }`}
-              aria-label={`Go to page ${idx + 1}`}
+              className={`h-2 rounded-full transition-all duration-300 cursor-pointer ${
+                activeIndex === idx
+                  ? 'w-6 bg-primary opacity-100'
+                  : 'w-2 bg-primary opacity-30 hover:opacity-50'
+              }`}
+              aria-label={`Ir a página ${idx + 1}`}
             />
           ))}
         </div>
@@ -146,3 +214,4 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
     </section>
   );
 };
+

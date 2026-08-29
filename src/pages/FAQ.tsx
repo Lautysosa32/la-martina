@@ -24,17 +24,17 @@ export const FAQ: React.FC = () => {
     {
       category: 'Pagos',
       question: '¿Qué métodos de pago aceptan?',
-      answer: 'Aceptamos efectivo al momento de la entrega, tarjetas de débito y crédito (Visa, Mastercard, American Express) y pagos a través de Mercado Pago.'
+      answer: 'Aceptamos efectivo al momento de la entrega, tarjetas de débito y crédito (Visa, Mastercard, etc) y pagos a través de Mercado Pago.'
     },
     {
       category: 'Pedidos',
-      question: '¿Puedo modificar un pedido ya realizado?',
-      answer: 'Si el pedido aún no ha salido de nuestro local, podés modificarlo comunicándote directamente a nuestro número de atención al cliente: 0810 222 5316.'
+      question: '¿Puedo cancelar un pedido ya realizado?',
+      answer: 'Si el pedido aún no ha salido de nuestro local, podés cancelarlo desde tu perfil o ingresando como invitado desde el dispositivo en el que se realizó el pedido.'
     },
     {
       category: 'Productos',
       question: '¿Qué pasa si un producto llega en mal estado?',
-      answer: 'En La Martina garantizamos la frescura total. Si algún producto no cumple con tus expectativas, podés solicitar el cambio o la devolución inmediata al momento de recibirlo.'
+      answer: 'En Martina Supermercado garantizamos la frescura total. Si algún producto no cumple con tus expectativas, podés solicitar el cambio o la devolución inmediata al momento de recibirlo.'
     },
     {
       category: 'Cuenta',
@@ -43,7 +43,7 @@ export const FAQ: React.FC = () => {
     }
   ];
 
-  const filteredFaqs = faqs.filter(faq => 
+  const filteredFaqs = faqs.filter(faq =>
     faq.question.toLowerCase().includes(searchTerm.toLowerCase()) ||
     faq.category.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -58,9 +58,9 @@ export const FAQ: React.FC = () => {
       {/* Buscador Mock */}
       <div className="relative mb-12">
         <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-        <input 
-          type="text" 
-          placeholder="Buscá tu duda (ej: envíos, pagos...)" 
+        <input
+          type="text"
+          placeholder="Buscá tu duda (ej: envíos, pagos...)"
           className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white border border-outline-variant/30 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -71,11 +71,11 @@ export const FAQ: React.FC = () => {
       <div className="space-y-4">
         {filteredFaqs.length > 0 ? (
           filteredFaqs.map((faq, index) => (
-            <div 
-              key={index} 
+            <div
+              key={index}
               className="bg-white rounded-2xl border border-outline-variant/20 overflow-hidden transition-all duration-300 hover:shadow-md"
             >
-              <button 
+              <button
                 onClick={() => setOpenIndex(openIndex === index ? null : index)}
                 className="w-full px-6 py-5 flex items-center justify-between text-left group"
               >
@@ -87,7 +87,7 @@ export const FAQ: React.FC = () => {
                   expand_more
                 </span>
               </button>
-              
+
               <div className={`transition-all duration-300 ease-in-out ${openIndex === index ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
                 <div className="px-6 pb-6 text-on-surface-variant leading-relaxed border-t border-outline-variant/10 pt-4">
                   {faq.answer}

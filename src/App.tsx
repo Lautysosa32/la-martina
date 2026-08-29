@@ -20,6 +20,8 @@ import { FAQ } from './pages/FAQ';
 import { Checkout } from './pages/Checkout';
 import { Search } from './pages/Search';
 import { Favorites } from './pages/Favorites';
+import { TermsAndConditions } from './pages/TermsAndConditions';
+import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { AdminLayout } from './pages/Admin/AdminLayout';
 import { Dashboard } from './pages/Admin/Dashboard';
 import { Inventory } from './pages/Admin/Inventory';
@@ -49,17 +51,19 @@ export default function App() {
     <div className="flex flex-col min-h-screen">
       <Routes>
         {/* Rutas de la Tienda */}
-        <Route path="/" element={<><Header /><main className="flex-grow pt-[64px]"><Home /></main><Footer /></>} />
-        <Route path="/category/:id" element={<><Header /><main className="flex-grow pt-[64px]"><Category /></main><Footer /></>} />
-        <Route path="/cart" element={<><Header /><main className="flex-grow pt-[64px]"><Cart /></main><Footer /></>} />
-        <Route path="/profile" element={<><Header /><main className="flex-grow pt-[64px]"><Profile /></main><Footer /></>} />
-        <Route path="/about" element={<><Header /><main className="flex-grow pt-[64px]"><About /></main><Footer /></>} />
-        <Route path="/faq" element={<><Header /><main className="flex-grow pt-[64px]"><FAQ /></main><Footer /></>} />
-        <Route path="/checkout" element={<><Header /><main className="flex-grow pt-[64px]"><Checkout /></main><Footer /></>} />
-        <Route path="/search" element={<><Header /><main className="flex-grow pt-[64px]"><Search /></main><Footer /></>} />
-        <Route path="/favorites" element={<><Header /><main className="flex-grow pt-[64px]"><Favorites /></main><Footer /></>} />
-        <Route path="/delivery" element={<><Header /><main className="flex-grow pt-[64px]"><Delivery /></main><Footer /></>} />
-        <Route path="/calculadora-compras" element={<><Header /><main className="flex-grow pt-[64px]"><ShoppingCalculator /></main><Footer /></>} />
+        <Route path="/" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Home /></main><Footer /></>} />
+        <Route path="/category/:id" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Category /></main><Footer /></>} />
+        <Route path="/cart" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Cart /></main><Footer /></>} />
+        <Route path="/profile" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Profile /></main><Footer /></>} />
+        <Route path="/about" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><About /></main><Footer /></>} />
+        <Route path="/faq" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><FAQ /></main><Footer /></>} />
+        <Route path="/checkout" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Checkout /></main><Footer /></>} />
+        <Route path="/search" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Search /></main><Footer /></>} />
+        <Route path="/favorites" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Favorites /></main><Footer /></>} />
+        <Route path="/delivery" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Delivery /></main><Footer /></>} />
+        <Route path="/calculadora-compras" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><ShoppingCalculator /></main><Footer /></>} />
+        <Route path="/terms" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><TermsAndConditions /></main><Footer /></>} />
+        <Route path="/privacy" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><PrivacyPolicy /></main><Footer /></>} />
 
         {/* Rutas Administrativas */}
         <Route path="/admin/login" element={<AdminLogin />} />
