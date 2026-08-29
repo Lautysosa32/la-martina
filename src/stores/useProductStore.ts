@@ -18,6 +18,8 @@ interface ProductState {
   lowStockDashboardProducts: Product[];
   lowStockDashboardTotal: number;
   lowStockDashboardLoading: boolean;
+  outOfStockTotal: number;
+  lowStockTotal: number;
   fetchLowStockDashboardProducts: (params: { page: number; limit: number }) => Promise<void>;
 
   addProduct: (product: CreateProductInput) => Promise<Product | null>;
@@ -48,6 +50,8 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
   lowStockDashboardProducts: [],
   lowStockDashboardTotal: 0,
+  outOfStockTotal: 0,
+  lowStockTotal: 0,
   lowStockDashboardLoading: false,
 
   fetchProducts: async () => {
@@ -77,8 +81,14 @@ export const useProductStore = create<ProductState>((set, get) => ({
   fetchLowStockDashboardProducts: async (params) => {
     set({ lowStockDashboardLoading: true, error: null });
     try {
-      const { data, total } = await productsService.getLowStockProductsPaginated(params);
-      set({ lowStockDashboardProducts: data, lowStockDashboardTotal: total, lowStockDashboardLoading: false });
+      const { data, total, outOfStockTotal, lowStockTotal } = await productsService.getLowStockProductsPaginated(params);
+      set({ 
+        lowStockDashboardProducts: data, 
+        lowStockDashboardTotal: total, 
+        outOfStockTotal,
+        lowStockTotal,
+        lowStockDashboardLoading: false 
+      });
     } catch (err: any) {
       console.error('❌ Error fetching low stock products:', err);
       set({ error: getErrorMessage(err, 'Error al obtener alertas de stock'), lowStockDashboardLoading: false });
@@ -207,10 +217,30 @@ export const useProductStore = create<ProductState>((set, get) => ({
     const previousLowStock = get().lowStockDashboardProducts;
     const previousLowStockTotal = get().lowStockDashboardTotal;
 
+    // Find product to check previous stock
+    const product = previousProducts.find(p => p.id === id) || previousInventory.find(p => p.id === id);
+    const prevStock = product ? product.stock : null;
+    const productName = product ? product.name : 'Producto Desconocido';
+    const minStock = product?.minStock ?? 15;
+    
+    let crossedLowStock = false;
+    let crossedOutOfStock = false;
+
+    if (prevStock !== null) {
+      if (prevStock > minStock && stock <= minStock && stock > 0) {
+        crossedLowStock = true;
+      }
+      if (prevStock > 0 && stock === 0) {
+        crossedOutOfStock = true;
+      }
+    }
+
+    let nextLowStockTotal = get().lowStockTotal;
+    let nextOutOfStockTotal = get().outOfStockTotal;
+
     // Optimistic update
     set(state => {
       const item = state.lowStockDashboardProducts.find(p => p.id === id);
-      const minStock = item?.minStock ?? 15;
       const isLow = stock <= minStock;
 
       let newLowStock = state.lowStockDashboardProducts;
@@ -221,9 +251,25 @@ export const useProductStore = create<ProductState>((set, get) => ({
           // If stock is replenished above threshold, remove immediately from list
           newLowStock = state.lowStockDashboardProducts.filter(p => p.id !== id);
           newLowStockTotal = Math.max(0, state.lowStockDashboardTotal - 1);
+          // If it was at 0, reduce outOfStock
+          if (item.stock === 0 && stock > 0) nextOutOfStockTotal = Math.max(0, nextOutOfStockTotal - 1);
+          if (item.stock > 0 && item.stock <= minStock && stock > minStock) nextLowStockTotal = Math.max(0, nextLowStockTotal - 1);
         } else {
           newLowStock = state.lowStockDashboardProducts.map(p => p.id === id ? { ...p, stock } : p);
+          // Adjust detailed counts if going from low -> 0 or 0 -> low
+          if (item.stock > 0 && stock === 0) {
+            nextLowStockTotal = Math.max(0, nextLowStockTotal - 1);
+            nextOutOfStockTotal++;
+          } else if (item.stock === 0 && stock > 0) {
+            nextOutOfStockTotal = Math.max(0, nextOutOfStockTotal - 1);
+            nextLowStockTotal++;
+          }
         }
+      } else if (isLow) {
+        // If it wasn't in the dashboard but now is low
+        newLowStockTotal++;
+        if (stock === 0) nextOutOfStockTotal++;
+        else nextLowStockTotal++;
       }
 
       return {
@@ -231,9 +277,22 @@ export const useProductStore = create<ProductState>((set, get) => ({
         inventoryProducts: state.inventoryProducts.map(p => p.id === id ? { ...p, stock } : p),
         lowStockDashboardProducts: newLowStock,
         lowStockDashboardTotal: newLowStockTotal,
+        lowStockTotal: nextLowStockTotal,
+        outOfStockTotal: nextOutOfStockTotal,
         error: null
       };
     });
+
+    if (crossedLowStock || crossedOutOfStock) {
+      import('../services/whatsapp-message.service').then(({ whatsappMessageService }) => {
+        whatsappMessageService.createLowStockAlertMessage(
+          productName,
+          stock,
+          nextOutOfStockTotal,
+          nextLowStockTotal
+        ).catch(console.error);
+      });
+    }
 
     try {
       await productsService.updateStock(id, stock);

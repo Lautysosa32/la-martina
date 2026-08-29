@@ -156,6 +156,123 @@ export const whatsappMessageService = {
   },
 
   /**
+   * Encola una alerta para el personal de delivery por un nuevo pedido.
+   * Si no hay teléfono especificado (porque no hay delivery activo), se guarda con estado 'pending_delivery_assignment'.
+   */
+  async createDeliveryAlertMessage(order: { id: string; customer: string; itemsCount: number; total: number }, deliveryPhone: string | null) {
+    const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
+    if (configData?.value?.suspendEmployeeNotifications) {
+      return false;
+    }
+
+    const formattedTotal = formatCurrency(order.total, true, true);
+    const message = `🚨 *Nuevo Pedido # ${order.id}*\n\nCliente: *${order.customer}*\nProductos: *${order.itemsCount}*\nTotal: *${formattedTotal}*`;
+
+    return this.createWhatsAppMessage({
+      phone: deliveryPhone || '0000000000', // Teléfono dummy si no hay delivery, luego se actualiza
+      customer_name: 'Delivery',
+      type: 'delivery_alert',
+      title: `Alerta Delivery Pedido #${order.id}`,
+      message,
+      order_id: order.id,
+      status: deliveryPhone ? 'pending' : 'failed',
+      error_message: deliveryPhone ? null : 'NO_DELIVERY_ASSIGNED'
+    });
+  },
+
+  /**
+   * Despacha las alertas que estaban pausadas ('pending_delivery_assignment' -> failed por el constraint) al nuevo delivery asignado.
+   */
+  async dispatchPendingDeliveryAlerts(employeePhone: string) {
+    const formattedPhone = cleanAndFormatPhone(employeePhone);
+    if (!formattedPhone) return false;
+
+    try {
+      const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
+      if (configData?.value?.suspendEmployeeNotifications) {
+        return false;
+      }
+
+      const { error } = await supabase
+        .from('whatsapp_messages')
+        .update({
+          phone: formattedPhone,
+          status: 'pending',
+          error_message: null,
+          attempts: 0
+        })
+        .eq('type', 'delivery_alert')
+        .eq('status', 'failed')
+        .eq('error_message', 'NO_DELIVERY_ASSIGNED');
+
+      if (error) {
+        console.error('Error despachando alertas al delivery:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Excepción despachando alertas al delivery:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Encola una alerta de stock bajo/cero para todos los dueños del sistema.
+   */
+  async createLowStockAlertMessage(
+    productName: string,
+    quantity: number,
+    outOfStockTotal: number,
+    lowStockTotal: number
+  ) {
+    try {
+      // 0. Check global config to see if notifications are suspended
+      const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
+      if (configData?.value?.suspendEmployeeNotifications) {
+        return false;
+      }
+
+      // 1. Obtener empleados con rol 'owner', activos y con teléfono
+      const { data: owners, error } = await supabase
+        .from('employees')
+        .select('name, phone')
+        .eq('role', 'owner')
+        .eq('active', true)
+        .not('phone', 'is', null)
+        .not('phone', 'eq', '');
+
+      if (error) {
+        console.error('Error obteniendo dueños para alerta de stock:', error.message);
+        return false;
+      }
+
+      if (!owners || owners.length === 0) {
+        console.log('No hay dueños configurados con número de teléfono para recibir alertas de stock.');
+        return false;
+      }
+
+      const message = `🚨 *Nuevo faltante*\n\n*${productName}* (${quantity} unidades)\n\n*Productos con bajo stock:* ${lowStockTotal}\n*Productos sin stock:* ${outOfStockTotal}`;
+
+      // 2. Encolar un mensaje para cada dueño
+      const promises = owners.map(owner =>
+        this.createWhatsAppMessage({
+          phone: owner.phone,
+          customer_name: owner.name,
+          type: 'low_stock_alert',
+          title: `Alerta de Stock: ${productName}`,
+          message,
+          status: 'pending'
+        })
+      );
+
+      await Promise.all(promises);
+      return true;
+    } catch (err) {
+      console.error('Excepción al enviar alerta de stock a dueños:', err);
+      return false;
+    }
+  },
+  /**
    * Encola un mensaje de deuda agregada a cuenta corriente (Fase 3)
    */
   async createCurrentAccountDebtMessage(

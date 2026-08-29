@@ -112,6 +112,10 @@ export interface TicketConfig {
   showLogo: boolean;
 }
 
+export interface GeneralConfig {
+  suspendEmployeeNotifications: boolean;
+}
+
 export interface CashRegister {
   isOpen: boolean;
   initialAmount: number;
@@ -339,6 +343,10 @@ export interface AdminContextType {
   // Ticket Config
   ticketConfig: TicketConfig;
   updateTicketConfig: (config: Partial<TicketConfig>) => void;
+
+  // General Config
+  generalConfig: GeneralConfig;
+  updateGeneralConfig: (config: Partial<GeneralConfig>) => void;
 
   // Cash Register
   cashRegister: CashRegister;
@@ -805,7 +813,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     // 1. Fetch initial data from Supabase
     const loadAllData = async () => {
-    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags, _expenses, _autoCashClose] = await Promise.all([
+    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags, _expenses, _autoCashClose, _generalCfg] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
         fetchCashCloses(),
@@ -820,7 +828,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchCategories(),
         fetchSetting<string[]>('admin_tags', initialTags),
         fetchExpenses(),
-        fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' })
+        fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }),
+        fetchSetting<GeneralConfig>('general_config', { suspendEmployeeNotifications: false })
       ]);
 
       setOrders(_orders);
@@ -837,6 +846,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setAdminTags(_tags);
       setExpenses(_expenses);
       setAutoCashCloseConfig(_autoCashClose);
+      setGeneralConfig(_generalCfg);
 
       // Seed categories if empty
       let finalCategories = _categories;
@@ -1038,6 +1048,19 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTicketConfig(prev => {
       const next = { ...prev, ...updates };
       saveSetting('ticket_config', next).catch(console.error);
+      return next;
+    });
+  };
+
+  // ─── General Config ───────────────────────────────────────
+  const defaultGeneralConfig: GeneralConfig = {
+    suspendEmployeeNotifications: false,
+  };
+  const [generalConfig, setGeneralConfig] = useState<GeneralConfig>(defaultGeneralConfig);
+  const updateGeneralConfig = (updates: Partial<GeneralConfig>) => {
+    setGeneralConfig(prev => {
+      const next = { ...prev, ...updates };
+      saveSetting('general_config', next).catch(console.error);
       return next;
     });
   };
@@ -1400,6 +1423,21 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         status: o.status || 'Nuevo',
         total: o.total
       });
+    }
+
+    // Encolar mensaje para el delivery si es envío (o.method === 'Envío' o 'envio')
+    if ((o.method?.toLowerCase() === 'envío' || o.method?.toLowerCase() === 'envio') && !generalConfig.suspendEmployeeNotifications) {
+      const { employeesService } = await import('../services/employees.service');
+      const activeDelivery = await employeesService.getActiveDeliveryAssignment();
+      let deliveryPhone = null;
+      if (activeDelivery && activeDelivery.employee && activeDelivery.employee.phone) {
+        deliveryPhone = activeDelivery.employee.phone;
+      }
+      const itemsCount = o.items.reduce((acc, i) => acc + (i.quantity || 1), 0);
+      whatsappMessageService.createDeliveryAlertMessage(
+        { id: o.id, customer: o.customer, itemsCount, total: o.total },
+        deliveryPhone
+      );
     }
 
     // Fase 3: Integración con Cuenta Corriente cuando se agrega una compra
@@ -2096,6 +2134,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       currentAccountConfig, updateCurrentAccountConfig,
       storeStatus, updateStoreStatus,
       autoCashCloseConfig, updateAutoCashCloseConfig,
+      generalConfig, updateGeneralConfig,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
       cashCloses, performCashClose, updateCashCloseOpeningControl,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,

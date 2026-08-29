@@ -65,11 +65,20 @@ export interface Employee {
   email: string;
   name: string;
   role: UserRole;
+  phone?: string | null;
   branch_id: string | null;
   active: boolean;
   permissions_override: PermissionsOverride;
   created_at: string;
   updated_at: string;
+}
+
+export interface DailyDeliveryAssignment {
+  id: string;
+  date: string;
+  employee_id: string;
+  status: 'active' | 'paused';
+  created_at: string;
 }
 
 export type EmployeePreset = 'encargado' | 'repositor_delivery' | 'cajero';

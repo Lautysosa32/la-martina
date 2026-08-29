@@ -13,6 +13,7 @@ export const Employees: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeDeliveryId, setActiveDeliveryId] = useState<string | null>(null);
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
@@ -35,25 +36,55 @@ export const Employees: React.FC = () => {
     email: '',
     name: '',
     role: 'employee',
+    phone: '',
     active: true,
     password: ''
   });
   const [isSaving, setIsSaving] = useState(false);
 
-  const fetchEmployees = async () => {
+  const fetchData = async () => {
     try {
-      const data = await employeesService.getAllEmployees();
-      setEmployees(data || []);
+      setLoading(true);
+      const [empData, deliveryData] = await Promise.all([
+        employeesService.getAllEmployees(),
+        employeesService.getActiveDeliveryAssignment()
+      ]);
+      setEmployees(empData || []);
+      if (deliveryData) {
+        setActiveDeliveryId(deliveryData.employee_id);
+      } else {
+        setActiveDeliveryId(null);
+      }
     } catch (err: any) {
-      setError('Error al cargar empleados: ' + err.message);
+      setError('Error al cargar datos: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchEmployees();
+    fetchData();
   }, []);
+
+  const handleToggleDelivery = async (employeeId: string, isCurrentlyActive: boolean) => {
+    try {
+      if (isCurrentlyActive) {
+        await employeesService.pauseDailyDelivery();
+        setActiveDeliveryId(null);
+      } else {
+        await employeesService.assignDailyDelivery(employeeId);
+        setActiveDeliveryId(employeeId);
+        // Despachar los mensajes pendientes (Llamamos a whatsappService)
+        const { whatsappMessageService } = await import('../../services/whatsapp-message.service');
+        const emp = employees.find(e => e.id === employeeId);
+        if (emp && emp.phone) {
+          await whatsappMessageService.dispatchPendingDeliveryAlerts(emp.phone);
+        }
+      }
+    } catch (err: any) {
+      alert('Error al actualizar delivery: ' + err.message);
+    }
+  };
 
   // Summary Stats calculations
   const stats = useMemo(() => {
@@ -274,9 +305,27 @@ export const Employees: React.FC = () => {
                       </div>
                     </td>
                     <td className="p-6">
-                      <span className="px-3 py-1 bg-surface-container-low text-on-surface text-xs font-bold rounded-lg uppercase tracking-wider">
-                        {emp.role === 'admin' ? 'Administrador' : emp.role === 'owner' ? 'Dueño' : emp.role === 'employee' ? 'Empleado' : emp.role === 'super_admin' ? 'Super Admin' : emp.role}
-                      </span>
+                      <div className="flex flex-col gap-2 items-start">
+                        <span className="px-3 py-1 bg-surface-container-low text-on-surface text-xs font-bold rounded-lg uppercase tracking-wider">
+                          {emp.role === 'admin' ? 'Administrador' : emp.role === 'owner' ? 'Dueño' : emp.role === 'employee' ? 'Empleado' : emp.role === 'super_admin' ? 'Super Admin' : emp.role}
+                        </span>
+                        {emp.active && (!activeDeliveryId || activeDeliveryId === emp.id) && (
+                          <button
+                            onClick={() => handleToggleDelivery(emp.id, activeDeliveryId === emp.id)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                              activeDeliveryId === emp.id 
+                                ? 'bg-primary text-white shadow-sm' 
+                                : 'bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-highest/80'
+                            }`}
+                            title={activeDeliveryId === emp.id ? 'Pausar Delivery' : 'Asignar como Delivery'}
+                          >
+                            <span className="material-symbols-outlined text-[14px]">
+                              {activeDeliveryId === emp.id ? 'local_shipping' : 'directions_bike'}
+                            </span>
+                            {activeDeliveryId === emp.id ? 'Delivery Activo' : 'Asignar Delivery'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="p-6">
                       {emp.active ? (
@@ -357,7 +406,7 @@ export const Employees: React.FC = () => {
                   // Al crear usamos la Edge Function
                   await employeesService.createEmployeeThroughFunction(formData);
                 }
-                await fetchEmployees();
+                await fetchData();
                 setShowModal(false);
               } catch (err: any) {
                 // Parse Axios error message
@@ -390,6 +439,17 @@ export const Employees: React.FC = () => {
                   disabled={!!editingEmployee}
                 />
                 {editingEmployee && <p className="text-[10px] text-on-surface-variant mt-1 ml-1">El email no se puede cambiar luego de creado.</p>}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-on-surface-variant uppercase mb-1 ml-1">Teléfono (WhatsApp)</label>
+                <input 
+                  type="text" 
+                  value={formData.phone || ''}
+                  onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                  className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl py-3 px-4 text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all font-medium"
+                  placeholder="Ej: 5491123456789"
+                />
               </div>
 
               {!editingEmployee && (

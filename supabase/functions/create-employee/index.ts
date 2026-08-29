@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4"
 
@@ -76,7 +77,7 @@ serve(async (req) => {
 
     // 3. Recibir los datos del nuevo empleado
     const body = await req.json()
-    const { email, password, name, role, branch_id, permissions_override, active } = body
+    const { email, password, name, role, phone, branch_id, permissions_override, active } = body
     console.log(`Intentando crear empleado: ${email} con rol: ${role}`);
 
     if (!email || !password || !name || !role) {
@@ -106,6 +107,7 @@ serve(async (req) => {
       email,
       name,
       role,
+      phone: phone || null,
       branch_id: branch_id || null,
       permissions_override: permissions_override || {},
       active: active !== undefined ? active : true

@@ -116,5 +116,81 @@ export const employeesService = {
     }
 
     return Array.from(basePermissions) as PermissionKey[];
+  },
+
+  // ==========================================
+  // DELIVERY ASSIGNMENT
+  // ==========================================
+
+  // Obtiene la asignación de delivery activa para el día actual
+  async getActiveDeliveryAssignment() {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data, error } = await supabase
+        .from('daily_delivery_assignments')
+        .select('*, employee:employees(*)')
+        .eq('date', today)
+        .eq('status', 'active')
+        .single();
+      
+      if (error && error.code !== 'PGRST116') {
+        console.error("Error obteniendo asignación de delivery:", error);
+      }
+      return data || null;
+    } catch (error) {
+      console.error("Excepción obteniendo asignación de delivery:", error);
+      return null;
+    }
+  },
+
+  // Asigna a un empleado como delivery, pausando o sobreescribiendo el anterior
+  async assignDailyDelivery(employeeId: string, employeePhone?: string | null) {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // 1. Pausar todas las asignaciones activas de hoy
+      await supabase
+        .from('daily_delivery_assignments')
+        .update({ status: 'paused' })
+        .eq('date', today)
+        .eq('status', 'active');
+
+      // 2. Crear nueva asignación activa
+      const { data, error } = await supabase
+        .from('daily_delivery_assignments')
+        .insert({
+          date: today,
+          employee_id: employeeId,
+          status: 'active'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // 3. (Opcional) Acá deberíamos llamar al servicio de WhatsApp para liberar los mensajes
+      // pending_delivery_assignment. Lo haremos en la capa superior o usando el servicio de WhatsApp.
+      
+      return data;
+    } catch (error) {
+      console.error("Error asignando delivery diario:", error);
+      throw error;
+    }
+  },
+
+  // Pausa el delivery actual
+  async pauseDailyDelivery() {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      await supabase
+        .from('daily_delivery_assignments')
+        .update({ status: 'paused' })
+        .eq('date', today)
+        .eq('status', 'active');
+      return true;
+    } catch (error) {
+      console.error("Error pausando delivery:", error);
+      return false;
+    }
   }
 };

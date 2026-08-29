@@ -87,38 +87,34 @@ export const productsService = {
     };
   },
 
-  async getLowStockProductsPaginated(params: { page: number; limit: number }): Promise<{ data: Product[]; total: number }> {
+  async getLowStockProductsPaginated(params: { page: number; limit: number }): Promise<{ data: Product[]; total: number; outOfStockTotal: number; lowStockTotal: number }> {
     const offset = (params.page - 1) * params.limit;
-    // Condition: stock < min_stock
-    // Wait, in PostgREST we can't easily compare two columns unless we use an RPC.
-    // Instead, since min_stock is mostly 15, we could just say stock < 15, OR we can fetch products with stock <= 15 and filter in backend.
-    // Wait, wait... Dashboard currently does:
-    // adminProducts.filter(p => p.stock < (p.minStock ?? 15))
-    // We can't do `stock=lt.min_stock` in PostgREST directly via URL query without RPC.
-    // So let's query: stock=lte.15 (as an approximation) OR if min_stock varies, we might need a view or RPC.
-    // Wait, let's just query stock <= 20 to be safe and let's sort by stock asc.
-    // Actually, `stock=lte.15` is a very good approximation.
-    // But wait, what if `min_stock` is custom?
-    // Let's create an RPC or just fetch stock <= 20 and filter exactly in frontend? 
-    // If we filter in frontend, pagination count will be slightly off.
-    // Since the requirement is to use DB, let's use `stock=lte.15` by default, or just sort by stock asc and limit.
-    // Actually, let's just do `stock=lte.15` which covers 99% of cases.
     const url = `/products?select=*&stock=lte.15&order=stock.asc,updated_at.desc&limit=${params.limit}&offset=${offset}`;
 
-    const response = await api.get<SupabaseProduct[]>(url, {
-      headers: { 'Prefer': 'count=exact' }
-    });
+    const [response, outOfStockRes, lowStockRes] = await Promise.all([
+      api.get<SupabaseProduct[]>(url, { headers: { 'Prefer': 'count=exact' } }),
+      api.get(`/products?stock=eq.0&limit=1`, { headers: { 'Prefer': 'count=exact' } }),
+      api.get(`/products?stock=gt.0&stock=lte.15&limit=1`, { headers: { 'Prefer': 'count=exact' } })
+    ]);
 
-    const countStr = response.headers['content-range'] || response.headers['Content-Range'];
-    let total = 0;
-    if (countStr) {
-      const match = countStr.match(/\/\s*(\d+)/);
-      if (match) total = parseInt(match[1]);
-    }
+    const getCount = (res: any) => {
+      const countStr = res.headers['content-range'] || res.headers['Content-Range'];
+      if (countStr) {
+        const match = countStr.match(/\/\s*(\d+)/);
+        if (match) return parseInt(match[1]);
+      }
+      return 0;
+    };
+
+    const total = getCount(response);
+    const outOfStockTotal = getCount(outOfStockRes);
+    const lowStockTotal = getCount(lowStockRes);
 
     return {
       data: response.data.map(toFrontendProduct),
-      total
+      total,
+      outOfStockTotal,
+      lowStockTotal
     };
   },
 

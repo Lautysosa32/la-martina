@@ -981,10 +981,16 @@ export const POS: React.FC = () => {
           <p className="text-sm font-medium text-on-surface-variant">Total</p>
           <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.currentBox)}</p>
         </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm">
+        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm relative">
           <div className="w-12 h-12 bg-surface-container-highest rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-on-surface-variant">payments</span></div>
           <p className="text-sm font-medium text-on-surface-variant">Efectivo</p>
           <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.cash)}</p>
+          {isCashRegisterOpen && (
+            <div className="absolute top-5 right-6 text-right flex flex-col gap-0.5">
+              <p className="text-[12px] font-bold text-on-surface-variant uppercase tracking-wider">Inicio: ${formatCurrency(cashRegister.initialAmount, true, true)}</p>
+              <p className="text-[12px] font-bold text-green-600 uppercase tracking-wider">Ventas: ${formatCurrency(stats.cash - cashRegister.initialAmount, true, true)}</p>
+            </div>
+          )}
         </div>
         <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm">
           <div className="w-12 h-12 bg-surface-container-highest rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-on-surface-variant">account_balance</span></div>

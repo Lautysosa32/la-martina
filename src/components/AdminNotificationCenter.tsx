@@ -57,11 +57,22 @@ export const AdminNotificationCenter: React.FC = () => {
 
     // 1. Inventario (Stock Crítico)
     if (canViewProducts && lowStockCount > 0) {
+      const { lowStockTotal, outOfStockTotal } = useProductStore.getState();
+      
+      let titleStr = '';
+      if (lowStockTotal > 0 && outOfStockTotal > 0) {
+        titleStr = `${lowStockTotal.toLocaleString('es-AR')} con stock bajo y ${outOfStockTotal.toLocaleString('es-AR')} sin stock`;
+      } else if (outOfStockTotal > 0) {
+        titleStr = `${outOfStockTotal.toLocaleString('es-AR')} productos sin stock`;
+      } else {
+        titleStr = `${lowStockTotal.toLocaleString('es-AR')} productos con stock bajo`;
+      }
+
       list.push({
         id: 'inventory_low_stock',
         section: 'INVENTARIO',
         icon: 'inventory_2',
-        title: `${lowStockCount.toLocaleString('es-AR')} productos con stock bajo`,
+        title: titleStr,
         description: 'Hay productos que requieren reposición o tienen stock crítico.',
         priority: lowStockCount > 10 ? 'CRÍTICA' : 'IMPORTANTE',
         actionPath: '/admin/inventory', 

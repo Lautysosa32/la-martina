@@ -129,7 +129,7 @@ export const AdminLayout: React.FC = () => {
     <div className="min-h-screen bg-[#f8f9fa] flex font-body-md overflow-x-hidden w-full">
 
       {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
-      <aside className="hidden lg:flex w-[180px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
+      <aside className="hidden lg:flex w-[190px] bg-white border-r border-outline-variant/10 flex-col fixed h-full z-30">
         <div className="p-4">
           <div className="flex items-center justify-between">
             <Link to="/" className="flex flex-col">
@@ -148,7 +148,7 @@ export const AdminLayout: React.FC = () => {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
           {/* Skeleton mientras el auth se inicializa */}
           {!authReady ? (
             <div className="space-y-1 animate-pulse">
@@ -163,11 +163,10 @@ export const AdminLayout: React.FC = () => {
                 <Link
                   key={item.id}
                   to={item.path}
-                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all font-bold text-xs relative ${
-                    isActive
-                      ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
-                      : 'text-on-surface-variant hover:bg-surface-container-low'
-                  }`}
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all font-bold text-sm relative ${isActive
+                    ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
+                    : 'text-on-surface-variant hover:bg-surface-container-low'
+                    }`}
                 >
                   <span className="material-symbols-outlined text-[20px]" aria-hidden="true" translate="no">{item.icon}</span>
                   <span className="truncate">{item.label}</span>
@@ -215,9 +214,8 @@ export const AdminLayout: React.FC = () => {
 
       {/* ── MOBILE DRAWER PANEL ── */}
       <aside
-        className={`lg:hidden fixed top-0 left-0 h-full w-[280px] bg-white z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out ${
-          isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className={`lg:hidden fixed top-0 left-0 h-full w-[280px] bg-white z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
       >
         <div className="p-6 border-b border-outline-variant/10">
           <div className="flex items-center justify-between">
@@ -241,8 +239,8 @@ export const AdminLayout: React.FC = () => {
               <p className="text-xs font-bold leading-none truncate">{employeeProfile?.name || 'Administrador'}</p>
               <p className="text-[10px] text-on-surface-variant font-medium capitalize mt-0.5">
                 {employeeProfile?.role === 'super_admin' ? 'Super Admin' :
-                 employeeProfile?.role === 'owner' ? 'Dueño' :
-                 employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
+                  employeeProfile?.role === 'owner' ? 'Dueño' :
+                    employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
               </p>
             </div>
           </div>
@@ -255,11 +253,10 @@ export const AdminLayout: React.FC = () => {
               <Link
                 key={item.id}
                 to={item.path}
-                className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-bold text-sm relative ${
-                  isActive
-                    ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
-                    : 'text-on-surface-variant hover:bg-surface-container-low'
-                }`}
+                className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all font-bold text-sm relative ${isActive
+                  ? (item.id === 'pos' ? 'bg-[#e3001b] text-white shadow-lg shadow-red-500/20' : 'bg-primary text-white shadow-lg shadow-primary/20')
+                  : 'text-on-surface-variant hover:bg-surface-container-low'
+                  }`}
               >
                 <span className="material-symbols-outlined text-[22px]">{item.icon}</span>
                 {item.label}
@@ -411,8 +408,8 @@ export const AdminLayout: React.FC = () => {
                 <p className="text-xs font-bold leading-none">{employeeProfile?.name || 'Administrador'}</p>
                 <p className="text-[10px] text-on-surface-variant font-medium capitalize">
                   {employeeProfile?.role === 'super_admin' ? 'Super Admin' :
-                   employeeProfile?.role === 'owner' ? 'Dueño' :
-                   employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
+                    employeeProfile?.role === 'owner' ? 'Dueño' :
+                      employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
                 </p>
               </div>
             </div>
@@ -437,9 +434,8 @@ export const AdminLayout: React.FC = () => {
             <Link
               key={item.id}
               to={item.path}
-              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-xl transition-all relative ${
-                isActive ? 'text-primary' : 'text-on-surface-variant'
-              }`}
+              className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-2 rounded-xl transition-all relative ${isActive ? 'text-primary' : 'text-on-surface-variant'
+                }`}
             >
               <span className={`material-symbols-outlined text-[24px] transition-all ${isActive ? 'text-primary' : ''}`} aria-hidden="true" translate="no">
                 {item.icon}
