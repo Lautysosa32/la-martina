@@ -7,7 +7,7 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
 import { supabase } from '../lib/supabase';
 import { 
-  fetchOrders, insertOrder, updateOrderInDb, 
+  fetchOrders, insertOrder, updateOrderInDb, updateOrderItemsInDb,
   fetchCashMovements, insertCashMovement, 
   fetchCashCloses, insertCashClose, 
   fetchOffers, insertOffer, updateOfferInDb, deleteOfferInDb,
@@ -36,8 +36,22 @@ export interface AdminOrder {
   paymentStatus: 'Pagado' | 'Pendiente' | 'Fallido';
   status: 'Nuevo' | 'Preparando' | 'Listo' | 'En Camino' | 'Entregado' | 'Cancelado';
   total: number;
+  estimatedTotal?: number; // Total original estimado antes de pesar
+  weightAdjusted?: boolean; // Flag si fue ajustado por balanza
   paidAmount?: number; // Amount already paid for this order (useful for partial payments)
-  items: { id: string; name: string; image: string; price: number; quantity: number; originalPrice?: number; offerId?: string; lineDiscount?: number; discountedQuantity?: number; saleType?: 'unit' | 'weight' }[];
+  items: { 
+    id: string; 
+    name: string; 
+    image: string; 
+    price: number; 
+    quantity: number; 
+    originalQuantity?: number; // Cantidad pedida originalmente
+    originalPrice?: number; 
+    offerId?: string; 
+    lineDiscount?: number; 
+    discountedQuantity?: number; 
+    saleType?: 'unit' | 'weight' 
+  }[];
   source?: 'pos' | 'whatsapp' | 'web';
   discount?: number;
   discountLabel?: string;
@@ -197,6 +211,19 @@ export interface Offer {
   limit_strategy?: 'discount_only' | 'block_sale' | 'hide_offer';
 }
 
+export interface HeroBanner {
+  id: string;
+  imageUrl: string;
+  title?: string;
+  subtitle?: string;
+  badge?: string;
+  linkUrl?: string;
+  linkLabel?: string;
+  linkExternal?: boolean;
+  active: boolean;
+  order: number;
+}
+
 export interface StoreStatus {
   onlineSalesPaused: boolean;
   pauseReason: string;
@@ -296,6 +323,7 @@ export interface AdminContextType {
   updateOrderStatus: (orderId: string, status: AdminOrder['status']) => void;
   updateOrderMethod: (orderId: string, method: string) => void;
   updateOrderPaymentMethod: (orderId: string, paymentMethod: string) => void;
+  updateOrderWeightItems: (orderId: string, updatedItems: AdminOrder['items']) => void;
 
   // Customers
   customers: AdminCustomer[];
@@ -386,6 +414,14 @@ export interface AdminContextType {
   cancelExpense: (id: string) => void;
   payExpense: (id: string, method: 'cash' | 'card' | 'transfer') => void;
 
+  // Hero Banners (Home Carousel)
+  heroBanners: HeroBanner[];
+  addHeroBanner: (banner: Omit<HeroBanner, 'id' | 'order'>) => void;
+  updateHeroBanner: (id: string, updates: Partial<HeroBanner>) => void;
+  deleteHeroBanner: (id: string) => void;
+  reorderHeroBanners: (banners: HeroBanner[]) => void;
+  toggleHeroBannerActive: (id: string) => void;
+
   // Privacy Mode
   privacyMode: boolean;
   togglePrivacyMode: () => void;
@@ -405,6 +441,45 @@ function generateInitialStock(prods: Product[]): Record<string, number> {
 }
 
 const initialTags = ['Oferta', 'Nuevo', 'Orgánico', '3x2', 'Local', 'Premium'];
+
+export const defaultHeroBanners: HeroBanner[] = [
+  {
+    id: 'banner-1',
+    imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=1600',
+    badge: 'Calidad y Frescura Garantizada',
+    title: 'Tu Supermercado de Confianza',
+    subtitle: 'Cortes seleccionados, lácteos, bebidas y las mejores marcas a precios directos en tu mesa.',
+    linkUrl: '/category/almacen',
+    linkLabel: 'Comprar Ahora',
+    linkExternal: false,
+    active: true,
+    order: 0,
+  },
+  {
+    id: 'banner-2',
+    imageUrl: 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&q=80&w=1600',
+    badge: '🔥 Ofertas Especiales',
+    title: 'Carnes y Cortes Seleccionados',
+    subtitle: 'La mejor calidad al mejor precio de la zona para tus asados y comidas diarias.',
+    linkUrl: '/category/carnes',
+    linkLabel: 'Ver Cortes',
+    linkExternal: false,
+    active: true,
+    order: 1,
+  },
+  {
+    id: 'banner-3',
+    imageUrl: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&q=80&w=1600',
+    badge: '🚚 Envíos a Domicilio',
+    title: 'Hacé tu Pedido Online',
+    subtitle: 'Te llevamos tu compra directo a tu puerta con entrega rápida y segura.',
+    linkUrl: '/delivery',
+    linkLabel: 'Conocer Zonas',
+    linkExternal: false,
+    active: true,
+    order: 2,
+  },
+];
 
 const parseDiscount = (d: any): number | null => {
   if (d === undefined || d === null || d === '') return null;
@@ -843,7 +918,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     // 1. Fetch initial data from Supabase
     const loadAllData = async () => {
-    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags, _expenses, _autoCashClose, _generalCfg] = await Promise.all([
+    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags, _expenses, _autoCashClose, _generalCfg, _heroBanners] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
         fetchCashCloses(),
@@ -868,7 +943,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           shippingBaseCost: 1000,
           shippingCostPerKm: 400,
           freeShippingMinAmount: 0
-        })
+        }),
+        fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners)
       ]);
 
       setOrders(_orders);
@@ -891,6 +967,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         shippingCostPerKm: _generalCfg.shippingCostPerKm ?? 400,
         freeShippingMinAmount: _generalCfg.freeShippingMinAmount ?? 0
       });
+      setHeroBanners(_heroBanners || defaultHeroBanners);
 
       // Seed categories if empty
       let finalCategories = _categories;
@@ -967,6 +1044,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('last_pos_close_timestamp', 0).then(setLastPOSCloseTimestamp);
         fetchSetting<string[]>('admin_tags', initialTags).then(setAdminTags);
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }).then(setAutoCashCloseConfig);
+        fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners).then(setHeroBanners);
       })
       .subscribe();
 
@@ -1144,6 +1222,54 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!clean) return false;
     const list = generalConfig.blockedPhones || [];
     return list.some(p => clean.includes(p) || p.includes(clean));
+  };
+
+  // ─── Hero Banners (Home Carousel) ─────────────────────────
+  const [heroBanners, setHeroBanners] = useState<HeroBanner[]>(defaultHeroBanners);
+
+  const addHeroBanner = (banner: Omit<HeroBanner, 'id' | 'order'>) => {
+    setHeroBanners(prev => {
+      const newBanner: HeroBanner = {
+        ...banner,
+        id: `banner-${Date.now()}`,
+        order: prev.length,
+      };
+      const next = [...prev, newBanner];
+      saveSetting('hero_banners', next).catch(console.error);
+      return next;
+    });
+  };
+
+  const updateHeroBanner = (id: string, updates: Partial<HeroBanner>) => {
+    setHeroBanners(prev => {
+      const next = prev.map(b => (b.id === id ? { ...b, ...updates } : b));
+      saveSetting('hero_banners', next).catch(console.error);
+      return next;
+    });
+  };
+
+  const deleteHeroBanner = (id: string) => {
+    setHeroBanners(prev => {
+      const next = prev
+        .filter(b => b.id !== id)
+        .map((b, idx) => ({ ...b, order: idx }));
+      saveSetting('hero_banners', next).catch(console.error);
+      return next;
+    });
+  };
+
+  const reorderHeroBanners = (banners: HeroBanner[]) => {
+    const next = banners.map((b, idx) => ({ ...b, order: idx }));
+    setHeroBanners(next);
+    saveSetting('hero_banners', next).catch(console.error);
+  };
+
+  const toggleHeroBannerActive = (id: string) => {
+    setHeroBanners(prev => {
+      const next = prev.map(b => (b.id === id ? { ...b, active: !b.active } : b));
+      saveSetting('hero_banners', next).catch(console.error);
+      return next;
+    });
   };
 
   // ─── Cash Register ────────────────────────────────────────
@@ -1664,6 +1790,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         phone: targetOrder.phone,
         status: s,
         total: targetOrder.total,
+        estimatedTotal: targetOrder.estimatedTotal,
+        weightAdjusted: targetOrder.weightAdjusted,
         method: targetOrder.method
       });
     }
@@ -1675,6 +1803,50 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateOrderPaymentMethod = (id: string, paymentMethod: string) => {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, paymentMethod } : o));
     updateOrderInDb(id, { paymentMethod }).catch(console.error);
+  };
+
+  const updateOrderWeightItems = (orderId: string, updatedItems: AdminOrder['items']) => {
+    const target = orders.find(o => o.id === orderId);
+    if (!target) return;
+
+    const initialEstimated = target.estimatedTotal || target.total;
+
+    // Calcular el nuevo subtotal de los ítems
+    const itemsSubtotal = updatedItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const newTotal = Math.max(0, itemsSubtotal - (target.discount || 0));
+
+    // Ajustar diferencias de stock si la orden no está cancelada
+    if (target.status !== 'Cancelado') {
+      updatedItems.forEach(newItem => {
+        const oldItem = target.items.find(i => i.id === newItem.id);
+        if (oldItem && oldItem.quantity !== newItem.quantity) {
+          const diff = newItem.quantity - oldItem.quantity;
+          setStockMap(prev => {
+            const currentStock = prev[newItem.id] !== undefined ? prev[newItem.id] : getStock(newItem.id);
+            const newStock = Math.max(0, parseFloat((currentStock - diff).toFixed(3)));
+            if (newItem.id !== 'PRODUCTO_COMUN' && !newItem.id.startsWith('GENERICO-')) {
+              useProductStore.getState().updateStock(newItem.id, newStock).catch(console.error);
+            }
+            return { ...prev, [newItem.id]: newStock };
+          });
+        }
+      });
+    }
+
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return {
+          ...o,
+          items: updatedItems,
+          total: newTotal,
+          estimatedTotal: initialEstimated,
+          weightAdjusted: true
+        };
+      }
+      return o;
+    }));
+
+    updateOrderItemsInDb(orderId, updatedItems, newTotal).catch(console.error);
   };
 
   const ordersRevenue = orders
@@ -2273,7 +2445,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       adminCategories, addCategory, updateCategory, deleteCategory,
       adminTags, addTag, updateTag, deleteTag,
       stockMap, updateStock, getStock, deductStockForOrder, lowStockProducts, findProductByBarcode, searchProductExternal,
-      orders, addAdminOrder, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp,
+      orders, addAdminOrder, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, updateOrderWeightItems, getOrderTimestamp,
       customers, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount,
       addManualCustomer, deleteCustomer,
       totalRevenue,
@@ -2294,6 +2466,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       billingCustomers, addBillingCustomer, updateBillingCustomer, deleteBillingCustomer,
       getTopSellingProducts, getRevenueByCategory, getRevenueByDay,
       expenses, addExpense, updateExpense, cancelExpense, payExpense,
+      heroBanners, addHeroBanner, updateHeroBanner, deleteHeroBanner, reorderHeroBanners, toggleHeroBannerActive,
       privacyMode, togglePrivacyMode: () => setPrivacyMode(p => !p),
       formatCurrency: (val: number, isCurrency = true, forceShow = false) => {
         if (val === undefined || val === null) return '0';

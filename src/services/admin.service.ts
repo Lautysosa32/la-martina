@@ -209,7 +209,19 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
     const { error: itemsError } = await supabase.from('order_items').insert(dbOrderItems);
     if (itemsError) {
       console.error('Error inserting order items:', itemsError);
-      alert(`Error guardando ítems: ${itemsError.message}`);
+      // Si la columna en Supabase es integer, reintentar con enteros redondeados para no interrumpir la venta
+      if (itemsError.message?.includes('integer')) {
+        const fallbackItems = dbOrderItems.map(i => ({
+          ...i,
+          quantity: Math.max(1, Math.round(i.quantity))
+        }));
+        const { error: retryErr } = await supabase.from('order_items').insert(fallbackItems);
+        if (retryErr) {
+          console.error('Error inserting fallback order items:', retryErr);
+        }
+      } else {
+        alert(`Error guardando ítems: ${itemsError.message}`);
+      }
     }
   }
 };
@@ -238,6 +250,58 @@ export const updateOrderInDb = async (id: string, updates: Partial<AdminOrder>):
 
   const { error } = await supabase.from('orders').update(dbUpdates).eq('id', id).eq('branch_id', BRANCH_ID);
   if (error) console.error('Error updating order:', error);
+};
+
+export const updateOrderItemsInDb = async (
+  orderId: string, 
+  items: any[], 
+  newTotal: number
+): Promise<void> => {
+  // 1. Actualizar total en la orden
+  const { error: orderErr } = await supabase
+    .from('orders')
+    .update({ total: newTotal })
+    .eq('id', orderId)
+    .eq('branch_id', BRANCH_ID);
+  
+  if (orderErr) {
+    console.error('Error updating order total in db:', orderErr);
+  }
+
+  // 2. Reemplazar items en order_items
+  const { error: delErr } = await supabase
+    .from('order_items')
+    .delete()
+    .eq('order_id', orderId);
+
+  if (delErr) {
+    console.error('Error removing old order_items in db:', delErr);
+  }
+
+  if (items && items.length > 0) {
+    const dbOrderItems = items.map(i => ({
+      order_id: orderId,
+      product_id: i.id,
+      quantity: i.quantity,
+      price: i.price,
+      name: i.name
+    }));
+
+    const { error: insErr } = await supabase
+      .from('order_items')
+      .insert(dbOrderItems);
+
+    if (insErr) {
+      console.error('Error inserting updated order_items:', insErr);
+      if (insErr.message?.includes('integer')) {
+        const fallbackItems = dbOrderItems.map(i => ({
+          ...i,
+          quantity: Math.max(1, Math.round(i.quantity))
+        }));
+        await supabase.from('order_items').insert(fallbackItems);
+      }
+    }
+  }
 };
 
 // ─── CASH MOVEMENTS ─────────────────────────────────────────────────────

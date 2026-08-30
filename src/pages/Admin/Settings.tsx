@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useAdmin } from '../../context/AdminContext';
+import { useAdmin, HeroBanner, defaultHeroBanners } from '../../context/AdminContext';
 import type { AutoCashCloseConfig } from '../../context/AdminContext';
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -10,9 +10,31 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 export const Settings: React.FC = () => {
-  const { ticketConfig, updateTicketConfig, currentAccountConfig, updateCurrentAccountConfig, storeStatus, updateStoreStatus, autoCashCloseConfig, updateAutoCashCloseConfig, generalConfig, updateGeneralConfig } = useAdmin();
+  const {
+    ticketConfig, updateTicketConfig,
+    currentAccountConfig, updateCurrentAccountConfig,
+    storeStatus, updateStoreStatus,
+    autoCashCloseConfig, updateAutoCashCloseConfig,
+    generalConfig, updateGeneralConfig,
+    heroBanners, addHeroBanner, updateHeroBanner, deleteHeroBanner, reorderHeroBanners, toggleHeroBannerActive
+  } = useAdmin();
   const [saved, setSaved] = useState(false);
-  const [activeSection, setActiveSection] = useState<'ticket' | 'general'>('general');
+  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'banners'>('general');
+
+  // Hero Banners management state
+  const [isBannerModalOpen, setIsBannerModalOpen] = useState(false);
+  const [editingBannerId, setEditingBannerId] = useState<string | null>(null);
+  const [bannerForm, setBannerForm] = useState<Omit<HeroBanner, 'id' | 'order'>>({
+    imageUrl: '',
+    title: '',
+    subtitle: '',
+    badge: '',
+    linkUrl: '',
+    linkLabel: '',
+    linkExternal: false,
+    active: true
+  });
+  const [bannerNotice, setBannerNotice] = useState<string | null>(null);
 
   // Local state mirrors config for form editing
   const [form, setForm] = useState({ ...ticketConfig });
@@ -139,6 +161,103 @@ export const Settings: React.FC = () => {
 
   const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  const handleOpenCreateBanner = () => {
+    setEditingBannerId(null);
+    setBannerForm({
+      imageUrl: '',
+      title: '',
+      subtitle: '',
+      badge: '',
+      linkUrl: '',
+      linkLabel: '',
+      linkExternal: false,
+      active: true
+    });
+    setIsBannerModalOpen(true);
+  };
+
+  const handleOpenEditBanner = (banner: HeroBanner) => {
+    setEditingBannerId(banner.id);
+    setBannerForm({
+      imageUrl: banner.imageUrl,
+      title: banner.title || '',
+      subtitle: banner.subtitle || '',
+      badge: banner.badge || '',
+      linkUrl: banner.linkUrl || '',
+      linkLabel: banner.linkLabel || '',
+      linkExternal: Boolean(banner.linkExternal),
+      active: banner.active
+    });
+    setIsBannerModalOpen(true);
+  };
+
+  const handleSaveBanner = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bannerForm.imageUrl.trim()) {
+      alert('Por favor ingresá la URL de la imagen para el banner.');
+      return;
+    }
+
+    if (editingBannerId) {
+      updateHeroBanner(editingBannerId, {
+        imageUrl: bannerForm.imageUrl.trim(),
+        title: bannerForm.title?.trim() || undefined,
+        subtitle: bannerForm.subtitle?.trim() || undefined,
+        badge: bannerForm.badge?.trim() || undefined,
+        linkUrl: bannerForm.linkUrl?.trim() || undefined,
+        linkLabel: bannerForm.linkLabel?.trim() || undefined,
+        linkExternal: bannerForm.linkExternal,
+        active: bannerForm.active
+      });
+      setBannerNotice('Banner actualizado con éxito');
+    } else {
+      addHeroBanner({
+        imageUrl: bannerForm.imageUrl.trim(),
+        title: bannerForm.title?.trim() || undefined,
+        subtitle: bannerForm.subtitle?.trim() || undefined,
+        badge: bannerForm.badge?.trim() || undefined,
+        linkUrl: bannerForm.linkUrl?.trim() || undefined,
+        linkLabel: bannerForm.linkLabel?.trim() || undefined,
+        linkExternal: bannerForm.linkExternal,
+        active: bannerForm.active
+      });
+      setBannerNotice('Nuevo banner agregado con éxito');
+    }
+
+    setIsBannerModalOpen(false);
+    setTimeout(() => setBannerNotice(null), 3000);
+  };
+
+  const handleDeleteBanner = (id: string) => {
+    if (window.confirm('¿Estás seguro de eliminar este banner del carrusel?')) {
+      deleteHeroBanner(id);
+      setBannerNotice('Banner eliminado');
+      setTimeout(() => setBannerNotice(null), 3000);
+    }
+  };
+
+  const handleMoveBanner = (index: number, direction: 'up' | 'down') => {
+    const list = [...(heroBanners && heroBanners.length > 0 ? heroBanners : defaultHeroBanners)];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= list.length) return;
+
+    const temp = list[index];
+    list[index] = list[targetIndex];
+    list[targetIndex] = temp;
+
+    reorderHeroBanners(list);
+    setBannerNotice('Orden de banners actualizado');
+    setTimeout(() => setBannerNotice(null), 2500);
+  };
+
+  const handleResetBanners = () => {
+    if (window.confirm('¿Deseas restaurar los banners a su configuración predeterminada?')) {
+      reorderHeroBanners(defaultHeroBanners);
+      setBannerNotice('Banners restablecidos por defecto');
+      setTimeout(() => setBannerNotice(null), 2500);
+    }
+  };
+
   // Mock ticket for preview
   const mockItems = [
     { name: 'Aceite Oliva Extra Virgen 500ml', quantity: 1, price: 8500, finalPrice: 8500 },
@@ -158,10 +277,16 @@ export const Settings: React.FC = () => {
             <p className="font-bold text-sm">Configuración guardada correctamente</p>
           </div>
         )}
+        {bannerNotice && (
+          <div className="bg-primary/10 border border-primary/20 text-primary px-6 py-3 rounded-2xl flex items-center gap-2 animate-in slide-in-from-top duration-300 shadow-sm">
+            <span className="material-symbols-outlined text-primary">info</span>
+            <p className="font-bold text-sm">{bannerNotice}</p>
+          </div>
+        )}
       </div>
 
       {/* Section Tabs */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setActiveSection('general')}
           className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 ${activeSection === 'general' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-on-surface-variant border border-outline-variant/10 hover:bg-surface-container-lowest'
@@ -177,6 +302,14 @@ export const Settings: React.FC = () => {
         >
           <span className="material-symbols-outlined text-[20px]">receipt_long</span>
           Personalizar Ticket
+        </button>
+        <button
+          onClick={() => setActiveSection('banners')}
+          className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 ${activeSection === 'banners' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-on-surface-variant border border-outline-variant/10 hover:bg-surface-container-lowest'
+            }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">view_carousel</span>
+          Banners del Home
         </button>
       </div>
 
@@ -1112,6 +1245,526 @@ export const Settings: React.FC = () => {
                 </div>
                 <h5 className="font-black text-blue-900 mb-2">Cierre Automático</h5>
                 <p className="text-sm text-blue-800">Requiere que el panel de administración esté abierto en el navegador a la hora configurada. El proceso utiliza la misma lógica que el cierre manual, y generará su reporte y ticket correspondiente.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= BANNERS DEL HOME SECTION ================= */}
+      {activeSection === 'banners' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          {/* Header de Banners */}
+          <div className="bg-white rounded-[2rem] p-6 sm:p-8 border border-outline-variant/10 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-1">
+                <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary text-[22px]">view_carousel</span>
+                </div>
+                <h3 className="font-black text-xl text-on-surface">Carrusel de Banners del Home</h3>
+              </div>
+              <p className="text-xs sm:text-sm text-on-surface-variant max-w-2xl">
+                Personalizá los carteles y promociones que ven los clientes al ingresar a la tienda online. Podés definir imágenes, textos y enlaces directos a categorías o secciones.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+              <button
+                type="button"
+                onClick={handleResetBanners}
+                className="px-4 py-2.5 rounded-xl border border-outline-variant/20 hover:bg-surface-container text-on-surface-variant font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Restablecer banners predeterminados de La Martina"
+              >
+                <span className="material-symbols-outlined text-[18px]">restart_alt</span>
+                Banners por Defecto
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenCreateBanner}
+                className="bg-primary text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-xl hover:bg-primary/90 shadow-md shadow-primary/20 flex items-center gap-2 transition-all hover:scale-105 active:scale-95 cursor-pointer ml-auto md:ml-0"
+              >
+                <span className="material-symbols-outlined text-[20px]">add_photo_alternate</span>
+                + Nuevo Banner
+              </button>
+            </div>
+          </div>
+
+          {/* Listado de Banners Actuales */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h4 className="font-black text-base text-on-surface flex items-center gap-2">
+                <span>Banners Configurados</span>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-bold">
+                  {(heroBanners && heroBanners.length > 0 ? heroBanners : defaultHeroBanners).length}
+                </span>
+              </h4>
+              <span className="text-xs text-on-surface-variant font-medium">
+                Los banners se muestran en el carrusel en este orden
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              {(heroBanners && heroBanners.length > 0 ? heroBanners : defaultHeroBanners)
+                .sort((a, b) => a.order - b.order)
+                .map((banner, index, arr) => {
+                  return (
+                    <div
+                      key={banner.id}
+                      className={`bg-white rounded-2xl sm:rounded-3xl border transition-all p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xs hover:shadow-md ${
+                        banner.active
+                          ? 'border-outline-variant/15'
+                          : 'border-outline-variant/10 opacity-60 bg-surface-container-lowest/50'
+                      }`}
+                    >
+                      {/* Miniatura y Detalles */}
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full md:w-auto">
+                        {/* Preview miniatura */}
+                        <div className="relative w-full sm:w-48 h-28 sm:h-28 rounded-2xl overflow-hidden bg-surface-container shrink-0 border border-outline-variant/20 shadow-inner group">
+                          <img
+                            src={banner.imageUrl}
+                            alt={banner.title || 'Banner'}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src =
+                                'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=600';
+                            }}
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent flex items-end p-2">
+                            <span className="text-[10px] font-black text-white px-2 py-0.5 rounded-full bg-black/40 backdrop-blur-xs">
+                              Slide #{index + 1}
+                            </span>
+                          </div>
+                          {banner.badge && (
+                            <span className="absolute top-2 left-2 text-[9px] font-black text-white px-2 py-0.5 rounded-full bg-primary/90 backdrop-blur-xs">
+                              {banner.badge}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Textos y metadata */}
+                        <div className="space-y-1.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h5 className="font-black text-base text-on-surface truncate">
+                              {banner.title || <span className="italic text-on-surface-variant font-normal">Sin título (solo imagen)</span>}
+                            </h5>
+                            {banner.active ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-green-700 bg-green-100/80 px-2.5 py-0.5 rounded-full">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse" />
+                                Visible
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full">
+                                Oculto
+                              </span>
+                            )}
+                          </div>
+
+                          {banner.subtitle && (
+                            <p className="text-xs text-on-surface-variant line-clamp-1 max-w-lg">
+                              {banner.subtitle}
+                            </p>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-on-surface-variant/80 pt-1">
+                            {banner.linkUrl ? (
+                              <span className="flex items-center gap-1 font-mono text-[11px] bg-surface-container-high px-2 py-0.5 rounded-md text-primary font-bold">
+                                <span className="material-symbols-outlined text-[14px]">link</span>
+                                {banner.linkUrl}
+                                {banner.linkExternal && ' ↗'}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-on-surface-variant/60">
+                                Sin redirección (solo informativo)
+                              </span>
+                            )}
+
+                            {banner.linkLabel && (
+                              <span className="text-[11px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-md">
+                                Botón: "{banner.linkLabel}"
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Botones de Control */}
+                      <div className="flex items-center gap-2 w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-outline-variant/10">
+                        {/* Toggle activo */}
+                        <button
+                          type="button"
+                          onClick={() => toggleHeroBannerActive(banner.id)}
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
+                            banner.active
+                              ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                          }`}
+                          title={banner.active ? 'Ocultar del Home' : 'Mostrar en el Home'}
+                        >
+                          <span className="material-symbols-outlined text-[18px]">
+                            {banner.active ? 'visibility' : 'visibility_off'}
+                          </span>
+                          <span className="hidden sm:inline">{banner.active ? 'Activo' : 'Oculto'}</span>
+                        </button>
+
+                        {/* Mover orden */}
+                        <div className="flex items-center rounded-xl border border-outline-variant/20 bg-surface-container-lowest overflow-hidden">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => handleMoveBanner(index, 'up')}
+                            className="p-2 hover:bg-surface-container text-on-surface-variant disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer disabled:cursor-not-allowed transition-colors"
+                            title="Subir posición"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">arrow_upward</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === arr.length - 1}
+                            onClick={() => handleMoveBanner(index, 'down')}
+                            className="p-2 hover:bg-surface-container text-on-surface-variant disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer disabled:cursor-not-allowed transition-colors border-l border-outline-variant/20"
+                            title="Bajar posición"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">arrow_downward</span>
+                          </button>
+                        </div>
+
+                        {/* Editar */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditBanner(banner)}
+                          className="p-2.5 rounded-xl border border-outline-variant/20 hover:bg-primary/10 hover:border-primary/30 hover:text-primary text-on-surface font-bold text-xs flex items-center gap-1 transition-all cursor-pointer"
+                          title="Editar banner"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">edit</span>
+                          <span className="hidden sm:inline">Editar</span>
+                        </button>
+
+                        {/* Eliminar */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBanner(banner.id)}
+                          className="p-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer"
+                          title="Eliminar banner"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">delete</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+
+          {/* Modal / Formulario de Creación y Edición */}
+          {isBannerModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+              <div className="bg-white rounded-[2.5rem] max-w-3xl w-full border border-outline-variant/20 shadow-2xl overflow-hidden my-8 animate-in zoom-in-95 duration-200">
+                {/* Modal Header */}
+                <div className="p-6 sm:p-7 border-b border-outline-variant/10 bg-surface-container-lowest flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 bg-primary/10 text-primary rounded-2xl flex items-center justify-center">
+                      <span className="material-symbols-outlined text-[24px]">
+                        {editingBannerId ? 'edit_note' : 'add_photo_alternate'}
+                      </span>
+                    </div>
+                    <div>
+                      <h3 className="font-black text-xl text-on-surface">
+                        {editingBannerId ? 'Editar Banner del Home' : 'Crear Nuevo Banner'}
+                      </h3>
+                      <p className="text-xs text-on-surface-variant">
+                        Completá los datos del banner. Los textos y el enlace son totalmente opcionales.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsBannerModalOpen(false)}
+                    className="w-9 h-9 rounded-full bg-surface-container hover:bg-surface-container-high text-on-surface-variant flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">close</span>
+                  </button>
+                </div>
+
+                {/* Formulario */}
+                <form onSubmit={handleSaveBanner} className="p-6 sm:p-7 space-y-6">
+                  {/* Vista Previa en Vivo */}
+                  <div>
+                    <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-2 flex items-center justify-between">
+                      <span>Vista previa en vivo</span>
+                      <span className="text-[10px] text-primary lowercase font-normal">Así se verá en la tienda</span>
+                    </label>
+
+                    <div className="relative w-full h-[180px] sm:h-[220px] rounded-2xl overflow-hidden shadow-md bg-surface-variant border border-outline-variant/20 flex items-center">
+                      {bannerForm.imageUrl ? (
+                        <img
+                          src={bannerForm.imageUrl}
+                          alt="Preview"
+                          className="absolute inset-0 w-full h-full object-cover z-0"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src =
+                              'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=1200';
+                          }}
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-on-surface-variant/40 bg-surface-container-high">
+                          <span className="material-symbols-outlined text-4xl mb-1">image</span>
+                          <span className="text-xs font-bold">Ingresá una URL de imagen abajo para ver la vista previa</span>
+                        </div>
+                      )}
+
+                      {/* Overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/50 to-transparent z-10" />
+
+                      {/* Content preview */}
+                      <div className="relative z-20 px-6 sm:px-8 max-w-xl text-white">
+                        {bannerForm.badge && (
+                          <span className="inline-flex items-center gap-1 bg-secondary-container text-on-secondary-container font-label-sm px-2.5 py-0.5 rounded-full mb-2 font-extrabold tracking-wider uppercase text-[10px] shadow-xs">
+                            <span className="material-symbols-outlined text-[12px]">verified</span>
+                            {bannerForm.badge}
+                          </span>
+                        )}
+                        {bannerForm.title && (
+                          <h4 className="font-display-xl text-lg sm:text-2xl font-black leading-tight mb-1 text-white line-clamp-1">
+                            {bannerForm.title}
+                          </h4>
+                        )}
+                        {bannerForm.subtitle && (
+                          <p className="font-body-md text-xs sm:text-sm mb-3 opacity-90 text-white/90 line-clamp-2 max-w-md">
+                            {bannerForm.subtitle}
+                          </p>
+                        )}
+                        {bannerForm.linkLabel && (
+                          <div className="inline-flex items-center gap-1.5 bg-primary text-white text-xs font-bold px-4 py-1.5 rounded-full shadow-sm">
+                            <span>{bannerForm.linkLabel}</span>
+                            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Campo URL de Imagen */}
+                  <div>
+                    <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                      URL de la Imagen <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="url"
+                      required
+                      value={bannerForm.imageUrl}
+                      onChange={(e) => setBannerForm((p) => ({ ...p, imageUrl: e.target.value }))}
+                      className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-medium text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all font-mono"
+                      placeholder="https://images.unsplash.com/..."
+                    />
+
+                    {/* Presets rápidos de imágenes recomendadas */}
+                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] text-on-surface-variant font-bold mr-1">Fotos sugeridas:</span>
+                      {[
+                        { label: 'Supermercado', url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=1600' },
+                        { label: 'Carnicería', url: 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&q=80&w=1600' },
+                        { label: 'Verdulería', url: 'https://images.unsplash.com/photo-1610348725531-843dff563e2c?auto=format&fit=crop&q=80&w=1600' },
+                        { label: 'Bebidas', url: 'https://images.unsplash.com/photo-1527661591475-527312dd65f5?auto=format&fit=crop&q=80&w=1600' },
+                        { label: 'Delivery', url: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&q=80&w=1600' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => setBannerForm((p) => ({ ...p, imageUrl: preset.url }))}
+                          className="text-[10px] font-bold bg-surface-container px-2.5 py-1 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors cursor-pointer"
+                        >
+                          + {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Título y Subtítulo (Opcionales) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                        Título Principal <span className="text-on-surface-variant/60 font-normal lowercase">(opcional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={bannerForm.title || ''}
+                        onChange={(e) => setBannerForm((p) => ({ ...p, title: e.target.value }))}
+                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                        placeholder="Ej: Ofertas de Fin de Semana"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                        Badge / Etiqueta <span className="text-on-surface-variant/60 font-normal lowercase">(opcional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={bannerForm.badge || ''}
+                        onChange={(e) => setBannerForm((p) => ({ ...p, badge: e.target.value }))}
+                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-medium text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                        placeholder="Ej: 🔥 20% OFF o NUEVO"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                      Subtítulo Descriptivo <span className="text-on-surface-variant/60 font-normal lowercase">(opcional)</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={bannerForm.subtitle || ''}
+                      onChange={(e) => setBannerForm((p) => ({ ...p, subtitle: e.target.value }))}
+                      className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-2.5 font-medium text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all resize-none"
+                      placeholder="Ej: Aprovechá los mejores cortes con hasta 20% de descuento en efectivo."
+                    />
+                  </div>
+
+                  {/* Redirección / Link y Botón CTA */}
+                  <div className="p-5 rounded-2xl bg-surface-container-lowest border border-outline-variant/15 space-y-4">
+                    <h5 className="font-black text-sm text-on-surface flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-[18px]">navigation</span>
+                      Acción y Redirección al Hacer Click
+                    </h5>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                          URL o Ruta de Destino <span className="text-on-surface-variant/60 font-normal lowercase">(opcional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={bannerForm.linkUrl || ''}
+                          onChange={(e) => setBannerForm((p) => ({ ...p, linkUrl: e.target.value }))}
+                          className="w-full bg-white border border-outline-variant/20 rounded-xl px-4 py-2.5 font-mono text-xs outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                          placeholder="/category/carnes o https://instagram.com/..."
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">
+                          Texto del Botón CTA <span className="text-on-surface-variant/60 font-normal lowercase">(opcional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={bannerForm.linkLabel || ''}
+                          onChange={(e) => setBannerForm((p) => ({ ...p, linkLabel: e.target.value }))}
+                          className="w-full bg-white border border-outline-variant/20 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                          placeholder="Ej: Comprar Ahora o Ver Más"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Accesos rápidos de rutas */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[10px] font-bold text-on-surface-variant">Rutas rápidas:</span>
+                      {[
+                        { label: 'Almacén', path: '/category/almacen' },
+                        { label: 'Bebidas', path: '/category/bebidas' },
+                        { label: 'Carnes', path: '/category/carnes' },
+                        { label: 'Lácteos', path: '/category/lacteos' },
+                        { label: 'Limpieza', path: '/category/limpieza' },
+                        { label: 'Perfumería', path: '/category/perfumeria' },
+                        { label: 'Envíos / Delivery', path: '/delivery' },
+                        { label: 'Calculadora en Local', path: '/calculadora-compras' },
+                      ].map((item) => (
+                        <button
+                          key={item.path}
+                          type="button"
+                          onClick={() => setBannerForm((p) => ({ ...p, linkUrl: item.path }))}
+                          className="text-[10px] font-mono bg-white border border-outline-variant/20 px-2 py-0.5 rounded-md hover:border-primary hover:text-primary transition-colors cursor-pointer"
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <input
+                        type="checkbox"
+                        id="linkExternal"
+                        checked={bannerForm.linkExternal || false}
+                        onChange={(e) => setBannerForm((p) => ({ ...p, linkExternal: e.target.checked }))}
+                        className="w-4 h-4 rounded text-primary focus:ring-primary/20 cursor-pointer"
+                      />
+                      <label htmlFor="linkExternal" className="text-xs font-bold text-on-surface cursor-pointer select-none">
+                        Abrir enlace en una nueva pestaña (recomendado para links externos como redes sociales)
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Switch Activo / Visible */}
+                  <div className="flex items-center justify-between p-4 rounded-2xl bg-surface-container-lowest border border-outline-variant/15">
+                    <div>
+                      <p className="font-bold text-sm text-on-surface">Activo y visible en la tienda</p>
+                      <p className="text-xs text-on-surface-variant">
+                        Si está desactivado, el banner quedará guardado pero no se mostrará a los clientes.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={bannerForm.active}
+                        onChange={(e) => setBannerForm((p) => ({ ...p, active: e.target.checked }))}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+
+                  {/* Botones de Acción */}
+                  <div className="flex items-center justify-end gap-3 pt-4 border-t border-outline-variant/10">
+                    <button
+                      type="button"
+                      onClick={() => setIsBannerModalOpen(false)}
+                      className="px-5 py-2.5 rounded-xl border border-outline-variant/20 hover:bg-surface-container font-bold text-sm text-on-surface-variant transition-colors cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="bg-primary text-white font-bold text-sm px-6 py-2.5 rounded-xl hover:bg-primary/90 shadow-md shadow-primary/20 flex items-center gap-2 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">check</span>
+                      {editingBannerId ? 'Guardar Cambios' : 'Crear Banner'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Tips y Recomendaciones */}
+          <div className="bg-blue-50/50 rounded-[2rem] border border-blue-100 p-6 sm:p-8">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="material-symbols-outlined text-blue-600 text-2xl">tips_and_updates</span>
+              <div>
+                <h4 className="font-black text-blue-900 text-base">Recomendaciones para los Banners</h4>
+                <p className="text-xs text-blue-800/70">Consejos para que el carrusel de tu tienda se vea profesional</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs text-blue-900/90">
+              <div className="bg-white/60 p-4 rounded-xl border border-blue-100/60">
+                <p className="font-bold mb-1">📐 Proporción y Tamaño</p>
+                <p className="text-blue-800">
+                  Usá imágenes horizontales (aprox. 1600x600 px o proporción 16:9). El sistema las adaptará automáticamente en teléfonos y computadoras.
+                </p>
+              </div>
+
+              <div className="bg-white/60 p-4 rounded-xl border border-blue-100/60">
+                <p className="font-bold mb-1">🔗 Enlaces a Categorías</p>
+                <p className="text-blue-800">
+                  Vinculá tus banners con las categorías correspondientes (ej: <code className="bg-blue-100/80 px-1 py-0.5 rounded font-mono">/category/carnes</code>) para que los clientes compren con un solo click.
+                </p>
+              </div>
+
+              <div className="bg-white/60 p-4 rounded-xl border border-blue-100/60">
+                <p className="font-bold mb-1">🖼️ Banners con o sin Texto</p>
+                <p className="text-blue-800">
+                  Si tu imagen ya tiene el diseño y los textos incluidos, podés dejar los campos de título y subtítulo vacíos. La imagen se verá completa sin superposiciones.
+                </p>
               </div>
             </div>
           </div>

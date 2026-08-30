@@ -10,6 +10,7 @@ import type { CashWithdrawal, CashMovement } from '../../context/AdminContext';
 import { shoppingSessionService } from '../../services/shopping-session.service';
 import { whatsappMessageService, cleanAndFormatPhone } from '../../services/whatsapp-message.service';
 import { checkCustomerOverdueDebt } from '../../utils/billing-cycle';
+import { parseScaleBarcode } from '../../utils/scale-barcode';
 
 export const generateTicketWhatsAppText = (ticket: TicketData, storeName = 'La Martina', footerMsg = '¡Gracias por su compra!'): string => {
   const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -494,6 +495,7 @@ export const POS: React.FC = () => {
     let price: number;
     let image: string;
     let saleType: 'unit' | 'weight' = 'unit';
+    let itemQuantity = searchQty;
 
     if (typeof productOrCode !== 'string') {
       productId = productOrCode.id;
@@ -505,33 +507,47 @@ export const POS: React.FC = () => {
     } else {
       const cleanCode = productOrCode.trim();
       if (!cleanCode) return;
-      const cleanLower = cleanCode.toLowerCase();
-      const exactMatch = adminProducts.find(p => {
-        const barcodeStr = p.barcode ? String(p.barcode).trim().toLowerCase() : '';
-        const idStr = p.id ? String(p.id).trim().toLowerCase() : '';
-        return (barcodeStr && barcodeStr === cleanLower) || (idStr && idStr === cleanLower);
-      });
-      if (exactMatch) {
-        productId = exactMatch.id;
-        productCode = exactMatch.barcode || exactMatch.id;
-        name = exactMatch.name;
-        price = exactMatch.price;
-        image = exactMatch.image;
-        saleType = exactMatch.saleType || 'unit';
-      } else if (filteredProducts.length > 0) {
-        const firstSug = filteredProducts[0];
-        productId = firstSug.id;
-        productCode = firstSug.barcode || firstSug.id;
-        name = firstSug.name;
-        price = firstSug.price;
-        image = firstSug.image;
-        saleType = firstSug.saleType || 'unit';
+
+      // 1. Detectar si es un código de balanza comercial (EAN-13 balanza prefijo 20/21/22)
+      const scaleResult = parseScaleBarcode(cleanCode, adminProducts);
+      if (scaleResult.isScaleBarcode && scaleResult.product) {
+        const sp = scaleResult.product;
+        productId = sp.id;
+        productCode = sp.barcode || sp.id;
+        name = sp.name;
+        price = sp.price;
+        image = sp.image;
+        saleType = 'weight';
+        itemQuantity = scaleResult.weightKg || 1;
       } else {
-        productId = 'GENERIC';
-        productCode = cleanCode.toUpperCase();
-        name = cleanCode.toUpperCase();
-        price = 0;
-        image = '';
+        const cleanLower = cleanCode.toLowerCase();
+        const exactMatch = adminProducts.find(p => {
+          const barcodeStr = p.barcode ? String(p.barcode).trim().toLowerCase() : '';
+          const idStr = p.id ? String(p.id).trim().toLowerCase() : '';
+          return (barcodeStr && barcodeStr === cleanLower) || (idStr && idStr === cleanLower);
+        });
+        if (exactMatch) {
+          productId = exactMatch.id;
+          productCode = exactMatch.barcode || exactMatch.id;
+          name = exactMatch.name;
+          price = exactMatch.price;
+          image = exactMatch.image;
+          saleType = exactMatch.saleType || 'unit';
+        } else if (filteredProducts.length > 0) {
+          const firstSug = filteredProducts[0];
+          productId = firstSug.id;
+          productCode = firstSug.barcode || firstSug.id;
+          name = firstSug.name;
+          price = firstSug.price;
+          image = firstSug.image;
+          saleType = firstSug.saleType || 'unit';
+        } else {
+          productId = 'GENERIC';
+          productCode = cleanCode.toUpperCase();
+          name = cleanCode.toUpperCase();
+          price = 0;
+          image = '';
+        }
       }
     }
 
@@ -541,8 +557,8 @@ export const POS: React.FC = () => {
       const existingQty = existingItem ? existingItem.quantity : 0;
       // Si no hay stock, se permite agregar igual (sin descontar) pero con aviso visual
       // El descuento de stock en addAdminOrder solo aplica si hay stock > 0
-      if (availableStock > 0 && existingQty + searchQty > availableStock) {
-        alert(`Stock insuficiente. Solo quedan ${availableStock} unidades disponibles de este producto.`);
+      if (availableStock > 0 && existingQty + itemQuantity > availableStock) {
+        alert(`Stock insuficiente. Solo quedan ${availableStock} unidades/kg disponibles de este producto.`);
         return;
       }
     }
@@ -551,10 +567,13 @@ export const POS: React.FC = () => {
       const existingIdx = prev.findIndex(item => item.productCode === productCode);
       if (existingIdx !== -1) {
         const newCart = [...prev];
-        newCart[existingIdx] = { ...newCart[existingIdx], quantity: newCart[existingIdx].quantity + searchQty };
+        newCart[existingIdx] = { 
+          ...newCart[existingIdx], 
+          quantity: parseFloat((newCart[existingIdx].quantity + itemQuantity).toFixed(3)) 
+        };
         return newCart;
       }
-      return [{ id: Date.now().toString() + Math.random(), productId, productCode, name, price, quantity: searchQty, image, saleType }, ...prev];
+      return [{ id: Date.now().toString() + Math.random(), productId, productCode, name, price, quantity: itemQuantity, image, saleType }, ...prev];
     });
 
     setSearchCode('');

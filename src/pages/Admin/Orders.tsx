@@ -6,18 +6,52 @@ import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPerio
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { calculateDistanceKm } from '../../utils/shipping';
+import { WeightInputModal } from '../../components/WeightInputModal';
 
 export const AdminOrders: React.FC = () => {
-  const { orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked, generalConfig } = useAdmin();
+  const { 
+    orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, 
+    updateOrderWeightItems, adminProducts,
+    getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked, generalConfig 
+  } = useAdmin();
   const [activeStatus, setActiveStatus] = useState('todos');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelModalData, setCancelModalData] = useState<AdminOrder | null>(null);
+  const [weightModalData, setWeightModalData] = useState<{
+    orderId: string;
+    itemIndex: number;
+    item: AdminOrder['items'][0];
+  } | null>(null);
 
   const { hasPermission, employeeProfile } = useAuthStore();
   const canViewRevenue = employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || hasPermission('orders.view_revenue');
 
   const [period, setPeriod] = useState('Últimos 30 días');
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
+
+  const isWeightProduct = (item: AdminOrder['items'][0]) => {
+    if (item.saleType === 'weight') return true;
+    const prod = adminProducts.find(p => p.id === item.id);
+    return prod?.saleType === 'weight';
+  };
+
+  const handleConfirmWeight = (newWeightKg: number) => {
+    if (!weightModalData) return;
+    const targetOrder = orders.find(o => o.id === weightModalData.orderId);
+    if (!targetOrder) return;
+
+    const newItems = [...targetOrder.items];
+    const currentItem = newItems[weightModalData.itemIndex];
+    newItems[weightModalData.itemIndex] = {
+      ...currentItem,
+      saleType: 'weight',
+      originalQuantity: currentItem.originalQuantity || currentItem.quantity,
+      quantity: newWeightKg
+    };
+
+    updateOrderWeightItems(weightModalData.orderId, newItems);
+    setWeightModalData(null);
+  };
 
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -302,22 +336,64 @@ export const AdminOrders: React.FC = () => {
                               <div>
                                 <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-3">Productos</h4>
                                 <div className="space-y-3">
-                                  {order.items.map((item) => (
-                                    <div key={item.id} className="flex items-center justify-between border-b border-outline-variant/5 pb-2 last:border-0">
-                                      <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-surface-container-low rounded-xl overflow-hidden p-1">
-                                          <img src={item.image} alt="" className="w-full h-full object-contain" />
+                                  {order.items.map((item, idx) => {
+                                    const isWeight = isWeightProduct(item);
+                                    const hasWeightDiff = isWeight && item.originalQuantity && Math.abs(item.originalQuantity - item.quantity) > 0.001;
+                                    const canEdit = order.status !== 'Entregado' && order.status !== 'Cancelado';
+
+                                    return (
+                                      <div key={item.id} className="flex items-center justify-between border-b border-outline-variant/5 pb-2 last:border-0">
+                                        <div className="flex items-center gap-3">
+                                          <div className="w-10 h-10 bg-surface-container-low rounded-xl overflow-hidden p-1 flex items-center justify-center">
+                                            <img src={item.image} alt="" className="w-full h-full object-contain" />
+                                          </div>
+                                          <div>
+                                            <div className="flex items-center gap-2">
+                                              <p className="text-sm font-bold leading-tight">{item.name}</p>
+                                              {isWeight && (
+                                                <span className="bg-primary/10 text-primary text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-0.5">
+                                                  <span className="material-symbols-outlined text-[12px]">scale</span>
+                                                  Peso
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                              {isWeight ? (
+                                                <div className="flex items-center gap-1.5 text-xs">
+                                                  {hasWeightDiff && (
+                                                    <span className="text-[10px] text-on-surface-variant line-through font-medium">
+                                                      Ped: {item.originalQuantity} kg
+                                                    </span>
+                                                  )}
+                                                  <span className="font-bold text-primary bg-primary/5 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                    {item.quantity} kg × ${formatCurrency(item.price)}/kg
+                                                  </span>
+                                                </div>
+                                              ) : (
+                                                <p className="text-[10px] text-on-surface-variant font-medium">
+                                                  {item.quantity}x ${formatCurrency(item.price)}
+                                                </p>
+                                              )}
+                                            </div>
+                                          </div>
                                         </div>
-                                        <div>
-                                          <p className="text-sm font-bold leading-tight">{item.name}</p>
-                                          <p className="text-[10px] text-on-surface-variant font-medium">
-                                            {item.quantity}x ${formatCurrency(item.price)}
-                                          </p>
+                                        <div className="flex items-center gap-2.5">
+                                          <p className="text-xs font-bold">${formatCurrency(item.price * item.quantity)}</p>
+                                          {isWeight && canEdit && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setWeightModalData({ orderId: order.id, itemIndex: idx, item })}
+                                              className="px-2.5 py-1 rounded-lg bg-surface-container-high hover:bg-primary hover:text-white text-primary text-[10px] font-bold transition-colors flex items-center gap-1 border border-outline-variant/20 shadow-2xs cursor-pointer"
+                                              title="Pesar en balanza o ingresar peso real"
+                                            >
+                                              <span className="material-symbols-outlined text-[14px]">scale</span>
+                                              Pesar
+                                            </button>
+                                          )}
                                         </div>
                                       </div>
-                                      <p className="text-xs font-bold">${formatCurrency(item.price * item.quantity)}</p>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                               <div className="space-y-4">
@@ -469,19 +545,31 @@ export const AdminOrders: React.FC = () => {
                                         </span>
                                       </div>
                                     )}
-                                    <div className="mt-3 p-3 bg-surface-container-low rounded-xl border border-outline-variant/10 text-xs">
-                                      <div className="flex justify-between mb-1 font-bold">
+                                    <div className="mt-3 p-3 bg-surface-container-low rounded-xl border border-outline-variant/10 text-xs space-y-1">
+                                      {order.estimatedTotal && order.weightAdjusted && Math.abs(order.estimatedTotal - order.total) > 0.01 && (
+                                        <div className="flex justify-between font-bold text-on-surface-variant/80 pb-1 border-b border-outline-variant/10">
+                                          <span className="flex items-center gap-1">
+                                            <span className="material-symbols-outlined text-[13px]">shopping_bag</span>
+                                            Total estimado:
+                                          </span>
+                                          <span className="line-through">~${formatCurrency(order.estimatedTotal)}</span>
+                                        </div>
+                                      )}
+                                      <div className="flex justify-between font-bold">
                                         <span className="text-on-surface-variant">Subtotal</span>
                                         <span className="text-on-background">${formatCurrency(order.total + (order.discount || 0))}</span>
                                       </div>
                                       {order.discount !== undefined && order.discount > 0 && (
-                                        <div className="flex justify-between mb-1 font-bold text-error">
+                                        <div className="flex justify-between font-bold text-error">
                                           <span>Descuento ({order.discountLabel || 'Oferta'})</span>
                                           <span>-${formatCurrency(order.discount)}</span>
                                         </div>
                                       )}
                                       <div className="border-t border-outline-variant/20 my-1 pt-1 flex justify-between font-black text-primary">
-                                        <span>Total</span>
+                                        <span className="flex items-center gap-1">
+                                          {order.weightAdjusted && <span className="material-symbols-outlined text-[14px]">scale</span>}
+                                          Total {order.weightAdjusted ? 'Final Balanza' : ''}
+                                        </span>
                                         <span>${formatCurrency(order.total)}</span>
                                       </div>
                                     </div>
@@ -696,22 +784,64 @@ export const AdminOrders: React.FC = () => {
                         <div>
                           <h4 className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider mb-2">Productos</h4>
                           <div className="space-y-2.5">
-                            {order.items.map((item) => (
-                              <div key={item.id} className="flex items-center justify-between border-b border-outline-variant/5 pb-2 last:border-0 last:pb-0">
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <div className="w-9 h-9 bg-surface-container-low rounded-lg overflow-hidden p-0.5 border border-outline-variant/10 flex-shrink-0 flex items-center justify-center">
-                                    <img src={item.image} alt="" className="w-full h-full object-contain" />
+                            {order.items.map((item, idx) => {
+                              const isWeight = isWeightProduct(item);
+                              const hasWeightDiff = isWeight && item.originalQuantity && Math.abs(item.originalQuantity - item.quantity) > 0.001;
+                              const canEdit = order.status !== 'Entregado' && order.status !== 'Cancelado';
+
+                              return (
+                                <div key={item.id} className="flex items-center justify-between border-b border-outline-variant/5 pb-2.5 last:border-0 last:pb-0">
+                                  <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
+                                    <div className="w-9 h-9 bg-surface-container-low rounded-lg overflow-hidden p-0.5 border border-outline-variant/10 flex-shrink-0 flex items-center justify-center">
+                                      <img src={item.image} alt="" className="w-full h-full object-contain" />
+                                    </div>
+                                    <div className="leading-tight min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <p className="text-xs font-bold text-on-background truncate">{item.name}</p>
+                                        {isWeight && (
+                                          <span className="bg-primary/10 text-primary text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                            Balanza
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                        {isWeight ? (
+                                          <div className="flex items-center gap-1.5 text-[10px]">
+                                            {hasWeightDiff && (
+                                              <span className="text-[9px] text-on-surface-variant line-through">
+                                                Ped: {item.originalQuantity} kg
+                                              </span>
+                                            )}
+                                            <span className="font-bold text-primary bg-primary/5 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                              <span className="material-symbols-outlined text-[11px]">scale</span>
+                                              {item.quantity} kg × ${formatCurrency(item.price)}/kg
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <p className="text-[9px] text-on-surface-variant font-semibold">
+                                            {item.quantity}x ${formatCurrency(item.price)}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="leading-tight min-w-0">
-                                    <p className="text-xs font-bold text-on-background truncate">{item.name}</p>
-                                    <p className="text-[9px] text-on-surface-variant font-semibold">
-                                      {item.quantity}x ${formatCurrency(item.price)}
-                                    </p>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    <p className="text-xs font-bold text-on-background">${formatCurrency(item.price * item.quantity)}</p>
+                                    {isWeight && canEdit && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setWeightModalData({ orderId: order.id, itemIndex: idx, item })}
+                                        className="px-2 py-1 rounded-lg bg-surface-container-high hover:bg-primary hover:text-white text-primary text-[9px] font-bold transition-colors flex items-center gap-0.5 border border-outline-variant/20 cursor-pointer"
+                                        title="Pesar en balanza"
+                                      >
+                                        <span className="material-symbols-outlined text-[13px]">scale</span>
+                                        Pesar
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
-                                <p className="text-xs font-bold text-on-background flex-shrink-0">${formatCurrency(item.price * item.quantity)}</p>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
 
@@ -827,6 +957,15 @@ export const AdminOrders: React.FC = () => {
 
                         {/* Price Breakdown */}
                         <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/10 text-xs space-y-1.5">
+                          {order.estimatedTotal && order.weightAdjusted && Math.abs(order.estimatedTotal - order.total) > 0.01 && (
+                            <div className="flex justify-between font-bold text-on-surface-variant/80 pb-1 border-b border-outline-variant/10">
+                              <span className="flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[13px]">shopping_bag</span>
+                                Total estimado:
+                              </span>
+                              <span className="line-through">~${formatCurrency(order.estimatedTotal)}</span>
+                            </div>
+                          )}
                           <div className="flex justify-between font-bold">
                             <span className="text-on-surface-variant">Subtotal</span>
                             <span className="text-on-background">${formatCurrency(order.total + (order.discount || 0))}</span>
@@ -838,7 +977,10 @@ export const AdminOrders: React.FC = () => {
                             </div>
                           )}
                           <div className="border-t border-outline-variant/20 my-1 pt-1 flex justify-between font-black text-primary">
-                            <span>Total</span>
+                            <span className="flex items-center gap-1">
+                              {order.weightAdjusted && <span className="material-symbols-outlined text-[14px]">scale</span>}
+                              Total {order.weightAdjusted ? 'Final Balanza' : ''}
+                            </span>
                             <span>${formatCurrency(order.total)}</span>
                           </div>
 
@@ -960,6 +1102,20 @@ export const AdminOrders: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal de Pesaje en Balanza para Preparación de Pedidos */}
+      {weightModalData && (
+        <WeightInputModal
+          isOpen={true}
+          onClose={() => setWeightModalData(null)}
+          onConfirm={handleConfirmWeight}
+          initialValue={weightModalData.item.quantity}
+          requestedWeight={weightModalData.item.originalQuantity || weightModalData.item.quantity}
+          productName={weightModalData.item.name}
+          pricePerKg={weightModalData.item.price}
+          subtitle={`Pedido #${weightModalData.orderId} • Podés tipear o escanear el código de balanza`}
+        />
       )}
     </div>
   );

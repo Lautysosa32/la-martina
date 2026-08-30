@@ -94,7 +94,16 @@ export const whatsappMessageService = {
    * Encola un mensaje de cambio de estado de pedido (Fase 4), evitando duplicar
    * el mismo estado consecutivamente para el mismo pedido.
    */
-  async createOrderStatusMessage(order: { id: string; customer: string; phone: string; status: string; total?: number; method?: string }) {
+  async createOrderStatusMessage(order: { 
+    id: string; 
+    customer: string; 
+    phone: string; 
+    status: string; 
+    total?: number; 
+    estimatedTotal?: number;
+    weightAdjusted?: boolean;
+    method?: string 
+  }) {
     if (!order.phone) return null;
 
     // Verificar si ya existe un mensaje idéntico (pedido + estado)
@@ -125,14 +134,26 @@ export const whatsappMessageService = {
         message = `📦 *Actualización de Pedido #${order.id}*\n\n¡Ya estamos preparando tu pedido! Te avisaremos cuando esté listo.`;
         break;
       case 'Listo':
-        message = `🛍️ *Actualización de Pedido #${order.id}*\n\n¡Tu pedido ya está listo para ser retirado! Te esperamos en nuestro local.`;
+        let listoWeightNote = '';
+        if (order.weightAdjusted && order.estimatedTotal && order.total && Math.abs(order.estimatedTotal - order.total) > 0.01) {
+          listoWeightNote = `\n\n⚖️ *Ajuste por peso real:* Tus productos fueron pesados en balanza. Total final: *${formatCurrency(order.total, true, true)}* _(estimado inicial: ${formatCurrency(order.estimatedTotal, true, true)})_.`;
+        } else if (order.total) {
+          listoWeightNote = `\n\nTotal a abonar: *${formatCurrency(order.total, true, true)}*.`;
+        }
+        message = `🛍️ *Actualización de Pedido #${order.id}*\n\n¡Tu pedido ya está listo para ser retirado! Te esperamos en nuestro local.${listoWeightNote}`;
         break;
       case 'En Camino':
-        message = `🚚 *Actualización de Pedido #${order.id}*\n\n¡Tu pedido ya está en camino! Aguardalo en tu domicilio.`;
+        let enCaminoWeightNote = '';
+        if (order.weightAdjusted && order.estimatedTotal && order.total && Math.abs(order.estimatedTotal - order.total) > 0.01) {
+          enCaminoWeightNote = `\n\n⚖️ *Ajuste por peso real:* Tus productos fueron pesados en balanza. Total final a abonar: *${formatCurrency(order.total, true, true)}* _(estimado inicial: ${formatCurrency(order.estimatedTotal, true, true)})_.`;
+        } else if (order.total) {
+          enCaminoWeightNote = `\n\nTotal a abonar: *${formatCurrency(order.total, true, true)}*.`;
+        }
+        message = `🚚 *Actualización de Pedido #${order.id}*\n\n¡Tu pedido ya está en camino! Aguardalo en tu domicilio.${enCaminoWeightNote}`;
         break;
       case 'Entregado':
         const deliveryText = (order.method === 'Retiro' || order.method === 'Caja Fija') ? 'retirado' : 'entregado';
-        message = `✅ *Pedido #${order.id} ${deliveryText.charAt(0).toUpperCase() + deliveryText.slice(1)}*\n\nTu pedido fue ${deliveryText}.  Esperamos que lo disfrutes. \n\n ¡Muchas gracias por elegir La Martina!`;
+        message = `✅ *Pedido #${order.id} ${deliveryText.charAt(0).toUpperCase() + deliveryText.slice(1)}*\n\nTu pedido fue ${deliveryText}. Esperamos que lo disfrutes.\n\n¡Muchas gracias por elegir La Martina!`;
         break;
       case 'Cancelado':
         message = `❌ *Actualización de Pedido #${order.id}*\n\nLamentablemente tu pedido ha sido cancelado. Si tenés alguna duda, comunicate con nosotros.`;

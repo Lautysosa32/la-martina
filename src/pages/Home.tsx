@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAdmin } from '../context/AdminContext';
 import { ProductCarousel } from '../components/ProductCarousel';
 import { ProductCard } from '../components/ProductCard';
+import { HeroCarousel } from '../components/HeroCarousel';
 
 export const Home: React.FC = () => {
   const { adminProducts: products, applyOffersToCartItem, getTopSellingProducts, getStock } = useAdmin();
@@ -108,47 +109,8 @@ export const Home: React.FC = () => {
         </Link>
       </section>
 
-      {/* Hero Banner */}
-      <section>
-        <div className="relative w-full h-[220px] sm:h-[320px] md:h-[380px] lg:h-[420px] rounded-3xl overflow-hidden shadow-md flex items-center bg-surface-variant">
-          <img
-            src="https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=1600"
-            alt="La Martina Supermercado"
-            aria-hidden="true"
-            className="absolute inset-0 w-full h-full object-cover z-0"
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/50 to-transparent z-10" />
-
-          <div className="relative z-20 px-6 sm:px-10 md:px-14 max-w-2xl text-white">
-            <span className="inline-flex items-center gap-1.5 bg-secondary-container text-on-secondary-container font-label-sm px-3 py-1 rounded-full mb-3 font-extrabold tracking-wider uppercase text-[10px] sm:text-xs shadow-xs">
-              <span className="material-symbols-outlined text-[14px]">verified</span>
-              Calidad y Frescura Garantizada
-            </span>
-            <h1 className="font-display-xl text-2xl sm:text-4xl md:text-5xl font-black leading-tight mb-3 text-white">
-              Tu Supermercado de Confianza
-            </h1>
-            <p className="font-body-md text-xs sm:text-base md:text-lg mb-6 opacity-90 text-white/90 leading-snug hidden sm:block max-w-xl">
-              Cortes seleccionados, lácteos, bebidas y las mejores marcas a precios directos en tu mesa.
-            </p>
-            <div className="flex items-center gap-3">
-              <Link
-                to="/category/almacen"
-                className="bg-primary text-white font-label-sm px-6 py-2.5 sm:px-7 sm:py-3 rounded-full hover:bg-primary/90 transition-all flex items-center space-x-2 text-xs sm:text-sm font-bold shadow-md hover:scale-105"
-              >
-                <span>Comprar Ahora</span>
-                <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">arrow_forward</span>
-              </Link>
-              <Link
-                to="/delivery"
-                className="bg-white/20 backdrop-blur-xs text-white border border-white/30 font-label-sm px-5 py-2.5 sm:px-6 sm:py-3 rounded-full hover:bg-white hover:text-on-surface transition-all flex items-center space-x-1.5 text-xs sm:text-sm font-bold"
-              >
-                <span className="material-symbols-outlined text-[18px]">local_shipping</span>
-                <span>Envíos</span>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Hero Banner Carousel */}
+      <HeroCarousel />
 
       {/* Explorar Categorías */}
       <section className="mt-4">

@@ -8,7 +8,7 @@ export const Category: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const category = categories.find(c => c.id === id) || { title: id?.toUpperCase() || 'CATEGORÍA', description: 'Productos seleccionados', id: id || 'cat' };
   
-  const { adminProducts, getStock } = useAdmin();
+  const { adminProducts, getStock, applyOffersToCartItem } = useAdmin();
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
   const [priceRange, setPriceRange] = React.useState<[number, number]>([0, 50000]);
   const [selectedBrands, setSelectedBrands] = React.useState<string[]>([]);
@@ -41,9 +41,26 @@ export const Category: React.FC = () => {
     setCurrentPage(1);
   }, [id, priceRange, selectedBrands, sortBy]);
 
-  const baseProducts = adminProducts.filter(p => p.categoryId === id);
+  // Solo productos con stock disponible para esta categoría y con ofertas aplicadas
+  const baseProducts = React.useMemo(() => {
+    return adminProducts
+      .filter(p => p.categoryId === id && getStock(p.id) > 0)
+      .map(p => {
+        const calc = applyOffersToCartItem({ productId: p.id, categoryId: p.categoryId, price: p.price, quantity: 1 });
+        if (calc.discountAmount > 0) {
+          return {
+            ...p,
+            originalPrice: p.originalPrice || p.price,
+            price: calc.finalPrice,
+            discount: p.discount || `-$${calc.discountAmount.toLocaleString('es-AR')}`,
+            badge: p.badge || calc.offerLabel || 'Oferta'
+          };
+        }
+        return p;
+      });
+  }, [adminProducts, id, getStock, applyOffersToCartItem]);
   
-  // Obtener marcas únicas de esta categoría con conteo
+  // Obtener marcas únicas de esta categoría con conteo (solo productos con stock)
   const brandCounts = React.useMemo(() => {
     const counts: Record<string, number> = {};
     baseProducts.forEach(p => {
@@ -56,22 +73,35 @@ export const Category: React.FC = () => {
 
   const brands = Object.keys(brandCounts);
 
+  // Helper para verificar si un producto cuenta con etiquetas, promociones o novedades
+  const hasBadgeOrPromo = (p: any) => {
+    return Boolean(
+      (p.badge && String(p.badge).trim() !== '') ||
+      p.discount ||
+      p.isNew ||
+      (p.originalPrice && p.originalPrice > p.price)
+    );
+  };
+
   const filteredProducts = React.useMemo(() => {
     return baseProducts
       .filter(p => p.price >= priceRange[0] && p.price <= priceRange[1])
       .filter(p => selectedBrands.length === 0 || selectedBrands.includes(p.brand))
       .sort((a, b) => {
-        // Always push out-of-stock items to the end
-        const stockA = getStock(a.id);
-        const stockB = getStock(b.id);
-        if (stockA <= 0 && stockB > 0) return 1;
-        if (stockA > 0 && stockB <= 0) return -1;
-        // Then apply user sort
+        // Orden por precio si el usuario lo solicita
         if (sortBy === 'price_asc') return a.price - b.price;
         if (sortBy === 'price_desc') return b.price - a.price;
+
+        // Orden por defecto (Destacados): Primero productos con etiquetas / ofertas
+        const promoA = hasBadgeOrPromo(a) ? 1 : 0;
+        const promoB = hasBadgeOrPromo(b) ? 1 : 0;
+        if (promoA !== promoB) {
+          return promoB - promoA; // 1 (con etiquetas) antes que 0 (sin etiquetas)
+        }
+
         return 0;
       });
-  }, [baseProducts, priceRange, selectedBrands, sortBy, getStock]);
+  }, [baseProducts, priceRange, selectedBrands, sortBy]);
 
   const totalPages = Math.ceil(filteredProducts.length / itemsPerPage) || 1;
   const startIndex = (currentPage - 1) * itemsPerPage;
