@@ -12,6 +12,7 @@ export interface Product {
   badge?: string | null; // like 'Local', 'Orgánico', '3x2'
   minStock?: number;
   barcode?: string | null; // EAN-13, EAN-8, UPC
+  subcategoryId?: string | null;
   // DB-sourced fields (from product.types.Product via Supabase)
   stock?: number;
   branchId?: string | null;
@@ -25,6 +26,17 @@ export interface Category {
   title: string;
   description: string;
 }
+
+export interface Subcategory {
+  id: string;
+  categoryId: string;
+  title: string;
+  description?: string;
+  sortOrder?: number;
+  createdAt?: string;
+}
+
+export const subcategories: Subcategory[] = [];
 
 export const categories: Category[] = [
   { id: 'almacen', title: 'Almacén', description: 'Productos esenciales para tu despensa.' },

@@ -3,8 +3,24 @@ import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import type { Offer, CashClose, CashMovement } from '../../context/AdminContext';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
+import { TicketPrinter, TicketData } from '../../components/TicketPrinter';
 import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
+
+const PAYMENT_LABELS: Record<string, string> = {
+  cash: 'Efectivo',
+  card: 'Tarjeta',
+  transfer: 'Transferencia',
+  cuenta_corriente: 'Cuenta Corriente',
+};
+
+const PAYMENT_BADGE_STYLES: Record<string, string> = {
+  cash: 'bg-green-100 text-green-700',
+  card: 'bg-blue-100 text-blue-700',
+  transfer: 'bg-purple-100 text-purple-700',
+  cuenta_corriente: 'bg-orange-100 text-orange-700',
+};
+
 const CATEGORY_COLORS: Record<string, string> = {
   carnes: "#DC2626",      // rojo fuerte
   lacteos: "#06B6D4",     // celeste/cyan
@@ -63,8 +79,10 @@ export const Analytics: React.FC = () => {
   });
   const [closeSortOrder, setCloseSortOrder] = useState<'date-desc' | 'date-asc' | 'revenue-desc' | 'revenue-asc'>('date-desc');
 
-  // Movement detail within cash close
-  const [selectedCloseMovement, setSelectedCloseMovement] = useState<CashMovement | null>(null);
+  // Cash close modal activity state (default to 'todos', separated into 'local' and 'pedidos')
+  const [closeActivityTab, setCloseActivityTab] = useState<'todos' | 'local' | 'pedidos' | 'otros'>('todos');
+  const [closeExpandedRowId, setCloseExpandedRowId] = useState<string | null>(null);
+  const [activeCloseTicket, setActiveCloseTicket] = useState<TicketData | null>(null);
 
   const analyticsParams = useMemo(() => {
     return getPeriodRange(period, customRange);
@@ -79,8 +97,152 @@ export const Analytics: React.FC = () => {
     return orders.filter(o => {
       const t = getOrderTimestamp(o);
       return t >= analyticsParams.from && t <= analyticsParams.to;
-    }).filter(o => o.status !== 'Cancelado');
+    });
   }, [orders, analyticsParams, getOrderTimestamp]);
+
+  // Datos completos de ventas y movimientos del cierre actualmente abierto
+  const closePeriodData = useMemo(() => {
+    if (!showCloseResult) {
+      return { 
+        allUnifiedItems: [],
+        periodOrders: [],
+        localOrders: [],
+        pedidoOrders: [],
+        otherMovements: [], 
+        hasOtherMovements: false, 
+        totalSalesSum: 0,
+        totalLocalSales: 0,
+        totalPedidoSales: 0,
+        totalOtherMovements: 0
+      };
+    }
+
+    const closeTs = new Date(showCloseResult.closedAt).getTime();
+    const prevClose = cashCloses
+      .filter(c => c.id !== showCloseResult.id && new Date(c.closedAt).getTime() < closeTs)
+      .sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime())[0];
+    const prevTs = prevClose ? new Date(prevClose.closedAt).getTime() : 0;
+
+    // Todas las ventas u órdenes correspondientes al período de este cierre
+    const pOrders = orders.filter(o => {
+      const ts = getOrderTimestamp(o);
+      return ts >= prevTs && ts <= closeTs && o.status !== 'Cancelado';
+    }).sort((a, b) => getOrderTimestamp(b) - getOrderTimestamp(a));
+
+    // Separar órdenes de local y pedidos (web/envío/retiro)
+    const isLocalOrder = (o: any) => o.method === 'Caja Fija' || (o.id && String(o.id).startsWith('LOC-'));
+    const localOrders = pOrders.filter(isLocalOrder);
+    const pedidoOrders = pOrders.filter(o => !isLocalOrder(o));
+    const totalLocalSales = localOrders.reduce((s, o) => s + o.total, 0);
+    const totalPedidoSales = pedidoOrders.reduce((s, o) => s + o.total, 0);
+
+    // Movimientos de caja registrados
+    const cMovs = getCashCloseMovements(showCloseResult.id);
+
+    // Otros movimientos de caja (cobros de cuenta corriente, retiros o egresos) que no son órdenes ya listadas
+    const oMovs = cMovs.filter(m => {
+      const isLinkedToOrder = pOrders.some(o => o.id === m.orderId || (o.id && m.description.includes(o.id)));
+      return !isLinkedToOrder;
+    });
+
+    // Mapear órdenes a items unificados diferenciando Ventas de Local vs Pedidos
+    const unifiedOrders = pOrders.map(o => {
+      const ts = getOrderTimestamp(o);
+      const isLocal = isLocalOrder(o);
+      const relMov = cMovs.find(m => m.orderId === o.id || (o.id && m.description.includes(o.id)));
+      const paymentMethodKey = o.paymentMethod || 'cash';
+      const paymentLabel = PAYMENT_LABELS[paymentMethodKey] || paymentMethodKey;
+      
+      const itemsCount = o.items?.length ? `${o.items.length} ítems` : '1 ítem';
+      const custSuffix = o.customer && o.customer !== 'Cliente Local' ? ` - ${o.customer}` : '';
+
+      let title = '';
+      if (isLocal) {
+        title = relMov?.description || `Venta Local (${paymentLabel}) - ${itemsCount}${custSuffix}`;
+      } else {
+        const methodLabel = o.method === 'Envío' ? 'Envío' : o.method === 'Retiro' ? 'Retiro' : 'Web';
+        title = `Pedido #${o.id} · ${methodLabel} (${paymentLabel}) - ${itemsCount}${custSuffix}`;
+      }
+
+      const cashier = relMov?.cashier || ((o as any).cashier || 'Lautaro');
+      const timeStr = new Date(ts).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = o.date || new Date(ts).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+      return {
+        id: o.id,
+        type: 'Ingreso' as const,
+        saleCategory: (isLocal ? 'local' : 'pedido') as 'local' | 'pedido' | 'otro',
+        badgeText: isLocal ? 'LOCAL' : 'PEDIDO',
+        badgeStyle: isLocal ? 'bg-emerald-100 text-emerald-800 border border-emerald-200/60' : 'bg-blue-100 text-blue-800 border border-blue-200/60',
+        isVenta: true,
+        title,
+        description: title,
+        timestamp: ts,
+        timeStr,
+        dateStr,
+        cashier,
+        amount: o.total,
+        paymentMethod: paymentMethodKey,
+        paymentLabel,
+        customer: o.customer,
+        orderId: o.id,
+        orderMethod: isLocal ? 'Caja Fija (Local)' : (o.method || 'Web'),
+        items: o.items || []
+      };
+    });
+
+    // Mapear otros movimientos a items unificados
+    const unifiedOther = oMovs.map(m => {
+      const paymentMethodMatch = m.description.match(/\(([^)]+)\)/);
+      const paymentKey = paymentMethodMatch ? paymentMethodMatch[1].toLowerCase() : 'cash';
+      const paymentLabel = PAYMENT_LABELS[paymentKey] || (paymentMethodMatch ? paymentMethodMatch[1] : 'Efectivo');
+      const timeStr = new Date(m.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = new Date(m.timestamp).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const isIngreso = m.type === 'Ingreso';
+      const isRetiro = m.type === 'Retiro';
+
+      return {
+        id: m.id,
+        type: m.type as 'Ingreso' | 'Egreso' | 'Retiro',
+        saleCategory: 'otro' as const,
+        badgeText: isIngreso ? 'INGRESO' : isRetiro ? 'RETIRO' : 'EGRESO',
+        badgeStyle: isIngreso ? 'bg-amber-100 text-amber-800 border border-amber-200/60' : isRetiro ? 'bg-orange-100 text-orange-800 border border-orange-200/60' : 'bg-red-100 text-red-800 border border-red-200/60',
+        isVenta: false,
+        title: m.description,
+        description: m.description,
+        timestamp: m.timestamp,
+        timeStr,
+        dateStr,
+        cashier: m.cashier || 'Lautaro',
+        amount: m.amount,
+        paymentMethod: paymentKey,
+        paymentLabel,
+        customer: '',
+        orderId: undefined,
+        orderMethod: undefined,
+        items: []
+      };
+    });
+
+    // Combinar todos ordenados cronológicamente descendente
+    const allUnifiedItems = [...unifiedOrders, ...unifiedOther].sort((a, b) => b.timestamp - a.timestamp);
+
+    // Sumar otros movimientos netos
+    const totalOtherMovements = oMovs.reduce((s, m) => m.type === 'Ingreso' ? s + m.amount : s - m.amount, 0);
+
+    return {
+      allUnifiedItems,
+      periodOrders: pOrders,
+      localOrders,
+      pedidoOrders,
+      otherMovements: oMovs,
+      hasOtherMovements: oMovs.length > 0,
+      totalSalesSum: pOrders.reduce((sum, o) => sum + o.total, 0),
+      totalLocalSales,
+      totalPedidoSales,
+      totalOtherMovements
+    };
+  }, [showCloseResult, orders, cashCloses, getCashCloseMovements, getOrderTimestamp]);
 
   // Calculate revenue for each of the 6 fixed categories in the period
   const catData = useMemo(() => {
@@ -898,15 +1060,15 @@ export const Analytics: React.FC = () => {
 
                       {/* Badge de estado de arqueo de apertura */}
                       {(() => {
-                        const isChecked = c.openingControlCounted != null;
-                        const diff = c.openingControlDifference ?? 0;
+                        const isChecked = Boolean(c.openingControlCheckedAt && c.openingControlCheckedAt.trim() !== '');
+                        const diff = isChecked ? ((c.openingControlCounted ?? 0) - (c.openingControlExpected ?? 0)) : 0;
                         const badgeColor = isChecked
                           ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
                           : 'bg-gray-100 text-gray-500';
                         return (
                           <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
                             {isChecked
-                              ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `${formatCurrency(Math.abs(diff))} Faltante`)
+                              ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `-${formatCurrency(Math.abs(diff))} Faltante`)
                               : 'Sin arqueo'}
                           </span>
                         );
@@ -1152,46 +1314,133 @@ export const Analytics: React.FC = () => {
       )}
 
       {showCloseResult && createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200 no-print-bg">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-md no-print" onClick={() => setShowCloseResult(null)} />
-          <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 overflow-hidden printable-area">
-            {/* Header */}
-            <div className="p-6 border-b border-outline-variant/10 flex items-center gap-4 bg-surface-container-lowest">
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-100 text-blue-600">
-                <span className="material-symbols-outlined text-[28px]">receipt_long</span>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 md:p-6 animate-in fade-in duration-200 no-print-bg">
+          <div 
+            className="absolute inset-0 bg-black/70 backdrop-blur-md no-print" 
+            onClick={() => { setShowCloseResult(null); setCloseExpandedRowId(null); setCloseActivityTab('todos'); }} 
+          />
+          <div className="bg-white w-full max-w-2xl sm:max-w-3xl max-h-[92vh] sm:max-h-[90vh] rounded-[1.75rem] sm:rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 flex flex-col overflow-hidden printable-area my-auto">
+            
+            {/* Header (Sticky) */}
+            <div className="p-4 sm:p-6 border-b border-outline-variant/10 flex items-center gap-3 sm:gap-4 bg-surface-container-lowest flex-shrink-0 sticky top-0 z-20">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center bg-blue-100 text-blue-600 flex-shrink-0">
+                <span className="material-symbols-outlined text-[24px] sm:text-[28px]">receipt_long</span>
               </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-black capitalize">Cierre Diario</h3>
-                <p className="text-xs text-on-surface-variant">{showCloseResult.date}</p>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg sm:text-xl font-black capitalize truncate">Cierre Diario</h3>
+                <p className="text-xs text-on-surface-variant truncate">{showCloseResult.date}</p>
               </div>
-              <button onClick={() => setShowCloseResult(null)} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 no-print"><span className="material-symbols-outlined">close</span></button>
+              <button 
+                onClick={() => { setShowCloseResult(null); setCloseExpandedRowId(null); setCloseActivityTab('todos'); }} 
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 no-print flex-shrink-0"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
             </div>
 
-            {/* Body */}
-            <div className="p-6 overflow-y-auto max-h-[65vh] no-scrollbar space-y-4">
-              {/* Summary */}
-              <div className="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/10 space-y-3">
+            {/* Modal Body: UNICO SCROLL VERTICAL */}
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 no-scrollbar overscroll-contain">
+              
+              {/* Información del Cierre */}
+              <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-outline-variant/10 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase block">Período de Cierre</span>
+                  <span className="text-sm font-black capitalize text-on-background">{showCloseResult.period || 'Diario'}</span>
+                </div>
+                <div>
+                  <span className="text-[11px] font-bold text-on-surface-variant uppercase block">Fecha y Hora</span>
+                  <span className="text-sm font-bold text-on-background">
+                    {showCloseResult.closedAt ? new Date(showCloseResult.closedAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : showCloseResult.date}
+                  </span>
+                </div>
+                {showCloseResult.initialAmount !== undefined && showCloseResult.initialAmount > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold text-on-surface-variant uppercase block">Monto Inicial en Caja</span>
+                    <span className="text-sm font-black text-primary">${formatCurrency(showCloseResult.initialAmount)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Resumen */}
+              <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-outline-variant/10 space-y-3">
                 <div className="flex justify-between items-center pb-2 border-b border-outline-variant/5">
                   <span className="text-sm text-on-surface-variant font-medium">Total Ventas</span>
                   <span className="font-black text-xl text-primary">${formatCurrency(showCloseResult.totalSales)}</span>
                 </div>
-                <div className="flex justify-between items-center py-1">
-                  <span className="text-sm text-on-surface-variant">Pedidos</span>
-                  <span className="font-bold">{showCloseResult.totalOrders}</span>
+
+                {/* Desglose: Ventas de Local vs Pedidos vs Otros Movimientos (Responsive para celular, tablet y PC) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 py-1">
+                  {/* Ventas de Local */}
+                  <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-2.5 sm:p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"></span>
+                      <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wide truncate">Ventas de Local</span>
+                    </div>
+                    <p className="text-sm sm:text-base font-black text-emerald-900 truncate">${formatCurrency(closePeriodData.totalLocalSales)}</p>
+                    <span className="text-[10px] text-emerald-700 font-semibold">{closePeriodData.localOrders.length} {closePeriodData.localOrders.length === 1 ? 'venta' : 'ventas'}</span>
+                  </div>
+
+                  {/* Pedidos */}
+                  <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-2.5 sm:p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"></span>
+                      <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide truncate">Pedidos (Web/Envíos)</span>
+                    </div>
+                    <p className="text-sm sm:text-base font-black text-blue-900 truncate">${formatCurrency(closePeriodData.totalPedidoSales)}</p>
+                    <span className="text-[10px] text-blue-700 font-semibold">{closePeriodData.pedidoOrders.length} {closePeriodData.pedidoOrders.length === 1 ? 'pedido' : 'pedidos'}</span>
+                  </div>
+
+                  {/* Otros Movimientos */}
+                  <div className="bg-amber-50/70 border border-amber-100 rounded-xl p-2.5 sm:p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0"></span>
+                      <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wide truncate">Otros Movimientos</span>
+                    </div>
+                    <p className="text-sm sm:text-base font-black text-amber-900 truncate">
+                      {closePeriodData.totalOtherMovements < 0 ? '-' : ''}${formatCurrency(Math.abs(closePeriodData.totalOtherMovements))}
+                    </p>
+                    <span className="text-[10px] text-amber-700 font-semibold">{closePeriodData.otherMovements.length} {closePeriodData.otherMovements.length === 1 ? 'movimiento' : 'movimientos'}</span>
+                  </div>
                 </div>
-                <div className="pt-3 space-y-2.5">
-                  <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500"></span><span className="text-xs text-on-surface-variant font-bold">Efectivo</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.cashPayments)}</span></div>
-                  <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500"></span><span className="text-xs text-on-surface-variant font-bold">Tarjeta</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.cardPayments)}</span></div>
-                  <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-purple-500"></span><span className="text-xs text-on-surface-variant font-bold">Transferencia</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.transferPayments)}</span></div>
+
+                <div className="pt-2 space-y-2.5 border-t border-outline-variant/5">
+                  <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider">Desglose por Método de Pago</p>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                      <span className="text-xs text-on-surface-variant font-bold">Efectivo</span>
+                    </div>
+                    <span className="text-xs font-black">${formatCurrency(showCloseResult.cashPayments)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                      <span className="text-xs text-on-surface-variant font-bold">Tarjeta</span>
+                    </div>
+                    <span className="text-xs font-black">${formatCurrency(showCloseResult.cardPayments)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                      <span className="text-xs text-on-surface-variant font-bold">Transferencia</span>
+                    </div>
+                    <span className="text-xs font-black">${formatCurrency(showCloseResult.transferPayments)}</span>
+                  </div>
                   {showCloseResult.cuentaCorrientePayments !== undefined && (
-                    <div className="flex justify-between items-center"><div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span><span className="text-xs text-on-surface-variant font-bold">Cuenta Corriente</span></div><span className="text-xs font-black">${formatCurrency(showCloseResult.cuentaCorrientePayments)}</span></div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                        <span className="text-xs text-on-surface-variant font-bold">Cuenta Corriente</span>
+                      </div>
+                      <span className="text-xs font-black">${formatCurrency(showCloseResult.cuentaCorrientePayments)}</span>
+                    </div>
                   )}
                 </div>
               </div>
 
-              {/* Withdrawals */}
+              {/* Retiros */}
               {showCloseResult.withdrawals && showCloseResult.withdrawals.length > 0 && (
-                <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100 space-y-2">
+                <div className="bg-orange-50 rounded-2xl p-4 sm:p-5 border border-orange-100 space-y-2">
                   <p className="text-xs font-black text-orange-700 uppercase tracking-wider">Retiros de Efectivo</p>
                   {showCloseResult.withdrawals.map((w: any, i: number) => (
                     <div key={i} className="flex justify-between items-center text-sm">
@@ -1206,67 +1455,368 @@ export const Analytics: React.FC = () => {
                 </div>
               )}
 
-              {/* Movements list */}
-              {(() => {
-                const closeMovements = getCashCloseMovements(showCloseResult.id);
-                if (closeMovements.length === 0) return null;
-                return (
-                  <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/10 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-outline-variant/10">
-                      <p className="text-xs font-black text-on-surface-variant uppercase tracking-wider">Movimientos del Período ({closeMovements.length})</p>
-                    </div>
-                    <div className="max-h-[200px] overflow-y-auto no-scrollbar">
-                      {closeMovements.sort((a, b) => b.timestamp - a.timestamp).map(m => (
-                        <div key={m.id} onClick={() => setSelectedCloseMovement(m)}
-                          className="flex items-center justify-between px-4 py-3 border-b border-outline-variant/5 hover:bg-surface-container-low transition-colors cursor-pointer group">
-                          <div className="flex items-center gap-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${m.type === 'Ingreso' ? 'bg-green-100 text-green-700' : m.type === 'Retiro' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>{m.type}</span>
-                            <div>
-                              <p className="text-xs font-bold text-on-background line-clamp-1">{m.description}</p>
-                              <p className="text-[10px] text-on-surface-variant">{new Date(m.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} · {m.cashier}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm font-black ${m.type === 'Ingreso' ? 'text-green-600' : 'text-error'}`}>{m.type === 'Ingreso' ? '+' : '-'}${formatCurrency(m.amount)}</span>
-                            <span className="material-symbols-outlined text-[16px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+              {/* MOVIMIENTOS Y VENTAS DEL PERÍODO CON ACORDEÓN INLINE */}
+              <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/10 overflow-hidden">
+                {/* Header con tabs separados por Local, Pedidos y Otros */}
+                <div className="p-3 sm:p-4 border-b border-outline-variant/10 bg-surface-container-low/40 space-y-2.5">
+                  <div className="flex justify-between items-center">
+                    <p className="text-xs font-black text-on-surface-variant uppercase tracking-wider">
+                      Detalle de Actividad del Período
+                    </p>
+                    <span className="text-[10px] text-on-surface-variant/80 hidden sm:inline">Hacé clic para desplegar los productos y detalles</span>
                   </div>
-                );
-              })()}
+                  
+                  {/* Selector de pestañas: Separado en Todos, Ventas Local, Pedidos y Otros */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setCloseActivityTab('todos')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        closeActivityTab === 'todos' 
+                          ? 'bg-primary text-white shadow-sm' 
+                          : 'bg-surface-container-high text-on-surface-variant hover:bg-black/5'
+                      }`}
+                    >
+                      <span>Todos</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${closeActivityTab === 'todos' ? 'bg-white/20 text-white' : 'bg-black/10'}`}>
+                        {closePeriodData.allUnifiedItems.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCloseActivityTab('local')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        closeActivityTab === 'local' 
+                          ? 'bg-emerald-600 text-white shadow-sm' 
+                          : 'bg-surface-container-high text-on-surface-variant hover:bg-black/5'
+                      }`}
+                    >
+                      <span>Ventas Local</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${closeActivityTab === 'local' ? 'bg-white/20 text-white' : 'bg-black/10'}`}>
+                        {closePeriodData.localOrders.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCloseActivityTab('pedidos')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                        closeActivityTab === 'pedidos' 
+                          ? 'bg-blue-600 text-white shadow-sm' 
+                          : 'bg-surface-container-high text-on-surface-variant hover:bg-black/5'
+                      }`}
+                    >
+                      <span>Pedidos</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${closeActivityTab === 'pedidos' ? 'bg-white/20 text-white' : 'bg-black/10'}`}>
+                        {closePeriodData.pedidoOrders.length}
+                      </span>
+                    </button>
+
+                    {closePeriodData.hasOtherMovements && (
+                      <button
+                        type="button"
+                        onClick={() => setCloseActivityTab('otros')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                          closeActivityTab === 'otros' 
+                            ? 'bg-amber-600 text-white shadow-sm' 
+                            : 'bg-surface-container-high text-on-surface-variant hover:bg-black/5'
+                        }`}
+                      >
+                        <span>Otros Movimientos</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${closeActivityTab === 'otros' ? 'bg-white/20 text-white' : 'bg-black/10'}`}>
+                          {closePeriodData.otherMovements.length}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Listado unificado según pestaña seleccionada */}
+                {(() => {
+                  const displayedItems = closeActivityTab === 'local'
+                    ? closePeriodData.allUnifiedItems.filter(i => i.saleCategory === 'local')
+                    : closeActivityTab === 'pedidos'
+                      ? closePeriodData.allUnifiedItems.filter(i => i.saleCategory === 'pedido')
+                      : closeActivityTab === 'otros'
+                        ? closePeriodData.allUnifiedItems.filter(i => i.saleCategory === 'otro')
+                        : closePeriodData.allUnifiedItems;
+
+                  if (displayedItems.length === 0) {
+                    return (
+                      <div className="p-8 text-center text-xs text-on-surface-variant">
+                        No hay registros en esta categoría para este cierre.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="divide-y divide-outline-variant/5">
+                      {displayedItems.map(item => {
+                        const isExpanded = closeExpandedRowId === item.id;
+                        const isIngreso = item.type === 'Ingreso';
+
+                        return (
+                          <div key={item.id} className="transition-all">
+                            {/* Fila principal con badge distintivo */}
+                            <div 
+                              onClick={() => setCloseExpandedRowId(isExpanded ? null : item.id)}
+                              className={`flex items-center justify-between px-4 py-3.5 transition-all cursor-pointer group ${
+                                isExpanded ? 'bg-primary/5 border-l-4 border-primary' : 'hover:bg-surface-container-low'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase flex-shrink-0 ${item.badgeStyle}`}>
+                                  {item.badgeText}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-on-background truncate">
+                                    {item.title}
+                                  </p>
+                                  <p className="text-[10px] text-on-surface-variant">
+                                    {item.timeStr} · {item.cashier}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <span className={`text-sm font-black ${isIngreso ? 'text-green-600' : 'text-error'}`}>
+                                  {isIngreso ? '+' : '-'}${formatCurrency(item.amount)}
+                                </span>
+                                <span className={`material-symbols-outlined text-[18px] transition-transform duration-200 ${isExpanded ? 'rotate-90 text-primary' : 'text-on-surface-variant opacity-60 group-hover:opacity-100'}`}>
+                                  chevron_right
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* ACORDEÓN DESPLEGABLE DIRECTAMENTE DEBAJO */}
+                            {isExpanded && (
+                              <div className="bg-surface-container-low/70 border-t border-b border-primary/20 p-3.5 sm:p-4 space-y-3 animate-in fade-in duration-150 text-xs">
+                                
+                                {/* Ficha de información homogénea */}
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-white rounded-xl p-3 border border-outline-variant/10">
+                                  <div>
+                                    <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Tipo</span>
+                                    <span className="font-bold text-on-background">
+                                      {item.saleCategory === 'local' ? 'Venta de Local' : item.saleCategory === 'pedido' ? 'Pedido (Web / Envío)' : item.type}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Responsable</span>
+                                    <span className="font-bold text-on-background">{item.cashier}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Fecha y Hora</span>
+                                    <span className="font-bold text-on-background">{item.dateStr}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Método de Pago</span>
+                                    <span className="font-bold text-on-background uppercase">{item.paymentLabel}</span>
+                                  </div>
+                                  {item.orderId && (
+                                    <div>
+                                      <span className="text-[9px] font-bold text-on-surface-variant uppercase block">N° Ticket / Pedido</span>
+                                      <span className="font-bold font-mono text-primary">#{item.orderId}</span>
+                                    </div>
+                                  )}
+                                  {item.customer && item.customer !== 'Cliente Local' && (
+                                    <div>
+                                      <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Cliente</span>
+                                      <span className="font-bold truncate block">{item.customer}</span>
+                                    </div>
+                                  )}
+                                  {item.orderMethod && (
+                                    <div>
+                                      <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Modalidad</span>
+                                      <span className="font-bold">{item.orderMethod}</span>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <span className="text-[9px] font-bold text-on-surface-variant uppercase block">Monto</span>
+                                    <span className={`font-black text-sm ${isIngreso ? 'text-green-600' : 'text-error'}`}>
+                                      {isIngreso ? '+' : '-'}${formatCurrency(item.amount)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* TABLA DE PRODUCTOS VENDIDOS */}
+                                {item.items && item.items.length > 0 && (
+                                  <div className="bg-white rounded-xl border border-outline-variant/10 overflow-hidden">
+                                    <div className="px-3.5 py-2 bg-surface-container-low/40 border-b border-outline-variant/10 flex justify-between items-center">
+                                      <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider">
+                                        Productos Vendidos ({item.items.length})
+                                      </p>
+                                      <span className="text-[11px] font-black text-primary">Total: ${formatCurrency(item.amount)}</span>
+                                    </div>
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-[9px] font-bold text-on-surface-variant uppercase bg-surface-container-low/20 border-b border-outline-variant/5">
+                                          <th className="px-3 py-1.5 text-left">Producto</th>
+                                          <th className="px-3 py-1.5 text-center">Cant.</th>
+                                          <th className="px-3 py-1.5 text-right">P. Unit.</th>
+                                          <th className="px-3 py-1.5 text-right">Subtotal</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-outline-variant/5">
+                                        {item.items.map((prod, i) => (
+                                          <tr key={i} className="hover:bg-surface-container-low/20">
+                                            <td className="px-3 py-2 font-medium text-on-background">{prod.name}</td>
+                                            <td className="px-3 py-2 text-center font-bold">
+                                              {prod.saleType === 'weight' ? `${parseFloat(prod.quantity.toFixed(2))} kg` : prod.quantity}
+                                            </td>
+                                            <td className="px-3 py-2 text-right text-on-surface-variant">${formatCurrency(prod.price, true, true)}</td>
+                                            <td className="px-3 py-2 text-right font-bold text-on-background">
+                                              ${formatCurrency(prod.price * prod.quantity, true, true)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+
+                                {/* Si no tiene items y no es venta */}
+                                {(!item.items || item.items.length === 0) && !item.isVenta && (
+                                  <div className="bg-white rounded-xl p-3 border border-outline-variant/10">
+                                    <span className="text-[10px] font-bold text-on-surface-variant uppercase block mb-1">Detalle</span>
+                                    <p className="text-on-background font-medium">{item.description}</p>
+                                  </div>
+                                )}
+
+                                {/* Botón de reimpresión para pedidos */}
+                                {item.isVenta && item.orderId && (
+                                  <div className="flex justify-end pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveCloseTicket({
+                                          ticketNumber: item.orderId!,
+                                          date: item.dateStr,
+                                          items: (item.items || []).map(p => ({
+                                            name: p.name,
+                                            quantity: p.quantity,
+                                            price: p.price,
+                                            finalPrice: p.price,
+                                            offerLabel: null,
+                                            saleType: p.saleType
+                                          })),
+                                          subtotal: item.amount,
+                                          globalDiscount: 0,
+                                          globalDiscountAmount: 0,
+                                          total: item.amount,
+                                          paymentMethod: item.paymentMethod,
+                                          customer: item.customer,
+                                          cashier: item.cashier
+                                        });
+                                      }}
+                                      className="px-3 py-1.5 bg-surface-container-high hover:bg-surface-container-highest text-on-surface text-[11px] font-bold rounded-xl transition-all flex items-center gap-1.5"
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">receipt_long</span>
+                                      Reimprimir Ticket
+                                    </button>
+                                  </div>
+                                )}
+
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Información Adicional (Arqueo de apertura) */}
+              {(showCloseResult.openingControlExpected !== undefined || showCloseResult.openingControlCounted != null) && (
+                <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-outline-variant/10 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-outline-variant/5">
+                    <p className="text-xs font-black text-on-surface-variant uppercase tracking-wider">Control de Arqueo (Apertura)</p>
+                    {(() => {
+                      const isChecked = Boolean(
+                        showCloseResult.openingControlCheckedAt && 
+                        showCloseResult.openingControlCheckedAt.trim() !== ''
+                      );
+                      const diff = isChecked 
+                        ? ((showCloseResult.openingControlCounted ?? 0) - (showCloseResult.openingControlExpected ?? 0)) 
+                        : 0;
+                      const badgeColor = isChecked
+                        ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
+                        : 'bg-gray-100 text-gray-500';
+                      return (
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
+                          {isChecked
+                            ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `-${formatCurrency(Math.abs(diff))} Faltante`)
+                            : 'Sin arqueo'}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                    {showCloseResult.openingControlExpected !== undefined && (
+                      <div>
+                        <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Efectivo Esperado</span>
+                        <span className="font-bold">${formatCurrency(showCloseResult.openingControlExpected)}</span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Efectivo Contado</span>
+                      <span className="font-bold">
+                        {Boolean(showCloseResult.openingControlCheckedAt && showCloseResult.openingControlCheckedAt.trim() !== '')
+                          ? `$${formatCurrency(showCloseResult.openingControlCounted ?? 0)}` 
+                          : 'Pendiente de arqueo'}
+                      </span>
+                    </div>
+                    {Boolean(showCloseResult.openingControlCheckedAt && showCloseResult.openingControlCheckedAt.trim() !== '') && (
+                      <div>
+                        <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Diferencia</span>
+                        {(() => {
+                          const diff = (showCloseResult.openingControlCounted ?? 0) - (showCloseResult.openingControlExpected ?? 0);
+                          return (
+                            <span className={`font-black ${diff === 0 ? 'text-green-600' : diff > 0 ? 'text-blue-600' : 'text-error'}`}>
+                              {diff > 0 ? '+' : ''}${formatCurrency(diff)}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  {showCloseResult.openingControlNotes && (
+                    <div className="pt-2 text-xs border-t border-outline-variant/5">
+                      <span className="text-[10px] text-on-surface-variant font-bold block uppercase">Notas de arqueo</span>
+                      <p className="text-on-background italic">"{showCloseResult.openingControlNotes}"</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
 
-            {/* Footer */}
-            <div className="p-6 border-t border-outline-variant/10 flex gap-3 no-print">
+            {/* Footer (Sticky) */}
+            <div className="p-4 sm:p-6 border-t border-outline-variant/10 flex gap-3 bg-surface-container-lowest flex-shrink-0 sticky bottom-0 z-20 no-print">
               <button 
                 onClick={() => window.print()} 
-                className="flex-1 flex items-center justify-center gap-2 bg-surface-container-high text-on-surface font-bold py-4 rounded-2xl hover:bg-surface-container-highest transition-colors"
+                className="flex-1 flex items-center justify-center gap-2 bg-surface-container-high text-on-surface font-bold py-3.5 sm:py-4 rounded-2xl hover:bg-surface-container-highest transition-colors text-sm"
               >
                 <span className="material-symbols-outlined text-[18px]">print</span>
                 Imprimir
               </button>
               <button 
-                onClick={() => setShowCloseResult(null)} 
-                className="flex-[2] bg-primary text-white font-bold py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-colors"
+                onClick={() => { setShowCloseResult(null); setCloseExpandedRowId(null); setCloseActivityTab('todos'); }} 
+                className="flex-[2] bg-primary text-white font-bold py-3.5 sm:py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-colors text-sm"
               >
                 Cerrar
               </button>
             </div>
+
           </div>
         </div>,
         document.body
       )}
 
-      {/* Movement Detail within Cash Close */}
-      {selectedCloseMovement && (
-        <MovementDetailModal
-          movement={selectedCloseMovement}
-          relatedOrder={orders.find(o => o.id === selectedCloseMovement.orderId) || null}
-          formatCurrency={formatCurrency}
-          onClose={() => setSelectedCloseMovement(null)}
-        />
+      {/* Modal de impresión de ticket si se activa desde el detalle */}
+      {activeCloseTicket && (
+        <TicketPrinter ticket={activeCloseTicket} onClose={() => setActiveCloseTicket(null)} />
       )}
     </div>
   );

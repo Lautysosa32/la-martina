@@ -53,6 +53,7 @@ export default function App() {
         {/* Rutas de la Tienda */}
         <Route path="/" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Home /></main><Footer /></>} />
         <Route path="/category/:id" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Category /></main><Footer /></>} />
+        <Route path="/category/:id/:subId" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Category /></main><Footer /></>} />
         <Route path="/cart" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Cart /></main><Footer /></>} />
         <Route path="/profile" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Profile /></main><Footer /></>} />
         <Route path="/about" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><About /></main><Footer /></>} />

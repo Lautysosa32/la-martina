@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { products as catalogProducts, categories as catalogCategories, Product } from '../data/mockData';
-import type { Category } from '../data/mockData';
-export type { Category };
+import { products as catalogProducts, categories as catalogCategories } from '../data/mockData';
+import type { Category, Subcategory } from '../data/mockData';
+export type { Category, Subcategory };
+import { Product } from '../types/product.types';
+export type { Product };
 import { useProductStore } from '../stores/useProductStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
@@ -13,7 +15,8 @@ import {
   fetchOffers, insertOffer, updateOfferInDb, deleteOfferInDb,
   fetchCustomerProfiles, upsertCustomerProfile,
   fetchSetting, saveSetting,
-  fetchCategories, insertCategory, updateCategoryInDb, deleteCategoryFromDb
+  fetchCategories, insertCategory, updateCategoryInDb, deleteCategoryFromDb,
+  fetchSubcategories, insertSubcategory, updateSubcategoryInDb, deleteSubcategoryFromDb
 } from '../services/admin.service';
 import { fetchExpenses, insertExpense, updateExpenseInDb, cancelExpenseInDb } from '../services/expense.service';
 import type { Expense } from '../types/expense.types';
@@ -300,6 +303,12 @@ export interface AdminContextType {
   updateCategory: (categoryId: string, updates: Partial<Category>) => void;
   deleteCategory: (categoryId: string) => void;
 
+  // Subcategories
+  adminSubcategories: Subcategory[];
+  addSubcategory: (subcategory: Subcategory) => void;
+  updateSubcategory: (subcategoryId: string, updates: Partial<Subcategory>) => void;
+  deleteSubcategory: (subcategoryId: string) => void;
+
   // Tags (Badges)
   adminTags: string[];
   addTag: (tag: string) => void;
@@ -568,25 +577,25 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     storeFetch();
-  }, [storeFetch]);
+  }, []);
 
   useEffect(() => {
     if (!storeLoading && storeProducts.length > 0) {
-        setAdminProducts(storeProducts as any);
-        // Sincronizar stockMap con el stock de la base de datos para asegurar consistencia
-        setStockMap(prev => {
-          const next = { ...prev };
-          storeProducts.forEach(p => {
-            if (p.id) {
-              next[p.id] = p.stock ?? 0;
-            }
-          });
-          return next;
+      setAdminProducts(storeProducts as any);
+      setStockMap(prev => {
+        const next = { ...prev };
+        storeProducts.forEach(p => {
+          if (p.id) {
+            next[p.id] = p.stock ?? 0;
+          }
         });
-      }
-  }, [storeProducts, storeLoading, storeFetch]);
+        return next;
+      });
+    }
+  }, [storeProducts, storeLoading]);
 
   const [adminCategories, setAdminCategories] = useState<Category[]>([]);
+  const [adminSubcategories, setAdminSubcategories] = useState<Subcategory[]>([]);
 
   const [adminTags, setAdminTags] = useState<string[]>(initialTags);
 
@@ -918,7 +927,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     // 1. Fetch initial data from Supabase
     const loadAllData = async () => {
-    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _tags, _expenses, _autoCashClose, _generalCfg, _heroBanners] = await Promise.all([
+    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _subcategories, _tags, _expenses, _autoCashClose, _generalCfg, _heroBanners] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
         fetchCashCloses(),
@@ -931,6 +940,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('billing_customers', [] as BillingCustomer[]),
         fetchSetting('last_pos_close_timestamp', 0),
         fetchCategories(),
+        fetchSubcategories(),
         fetchSetting<string[]>('admin_tags', initialTags),
         fetchExpenses(),
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }),
@@ -979,6 +989,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         finalCategories = await fetchCategories();
       }
       setAdminCategories(finalCategories);
+      setAdminSubcategories(_subcategories || []);
 
       // Store Status
       supabase.from('settings').select('value').eq('key', 'store_status').maybeSingle().then(({ data }) => {
@@ -1062,6 +1073,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
       .subscribe();
 
+    const subcategoriesSub = supabase.channel('subcategories_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'subcategories' }, () => {
+        console.log('🔔 Cambio en tabla subcategories detectado, re-fecheando...');
+        fetchSubcategories().then(setAdminSubcategories);
+      })
+      .subscribe();
+
     const expensesSub = supabase.channel('expenses_channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
         fetchExpenses().then(setExpenses);
@@ -1078,6 +1096,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       supabase.removeChannel(settingsSub);
       supabase.removeChannel(productsSub);
       supabase.removeChannel(categoriesSub);
+      supabase.removeChannel(subcategoriesSub);
       supabase.removeChannel(expensesSub);
     };
   }, []);
@@ -1393,6 +1412,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...(up.name !== undefined && { name: up.name }),
       ...(up.brand !== undefined && { brand: up.brand }),
       ...(up.categoryId !== undefined && { categoryId: up.categoryId }),
+      ...(up.subcategoryId !== undefined && { subcategoryId: up.subcategoryId }),
       ...(up.price !== undefined && { price: up.price }),
       ...(up.originalPrice !== undefined && { originalPrice: up.originalPrice }),
       ...(up.image !== undefined && { image: up.image }),
@@ -1421,6 +1441,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       name: p.name,
       brand: p.brand || '',
       categoryId: p.categoryId,
+      subcategoryId: p.subcategoryId || null,
       price: p.price,
       originalPrice: p.originalPrice || null,
       image: p.image || '',
@@ -1454,6 +1475,23 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setAdminCategories(prev => prev.filter(c => c.id !== id));
     setAdminProducts(prev => prev.map(p => p.categoryId === id ? { ...p, categoryId: 'general' } : p));
     deleteCategoryFromDb(id).catch(console.error);
+  };
+
+  // Handlers: Subcategories
+  const addSubcategory = (s: Subcategory) => {
+    setAdminSubcategories(prev => [...prev, s]);
+    insertSubcategory(s).catch(console.error);
+  };
+
+  const updateSubcategory = (id: string, up: Partial<Subcategory>) => {
+    setAdminSubcategories(prev => prev.map(s => s.id === id ? { ...s, ...up } : s));
+    updateSubcategoryInDb(id, up).catch(console.error);
+  };
+
+  const deleteSubcategory = (id: string) => {
+    setAdminSubcategories(prev => prev.filter(s => s.id !== id));
+    setAdminProducts(prev => prev.map(p => p.subcategoryId === id ? { ...p, subcategoryId: null } : p));
+    deleteSubcategoryFromDb(id).catch(console.error);
   };
 
   // Handlers: Tags
@@ -2443,6 +2481,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <AdminContext.Provider value={{
       adminProducts, addProduct, updateProduct, deleteProduct, bulkUpdatePrice, bulkAddProducts,
       adminCategories, addCategory, updateCategory, deleteCategory,
+      adminSubcategories, addSubcategory, updateSubcategory, deleteSubcategory,
       adminTags, addTag, updateTag, deleteTag,
       stockMap, updateStock, getStock, deductStockForOrder, lowStockProducts, findProductByBarcode, searchProductExternal,
       orders, addAdminOrder, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, updateOrderWeightItems, getOrderTimestamp,

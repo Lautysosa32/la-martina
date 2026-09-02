@@ -8,6 +8,7 @@ const toSupabaseProduct = (input: Partial<CreateProductInput>): Partial<Supabase
     ...(input.name !== undefined && { name: input.name }),
     ...(input.brand !== undefined && { brand: input.brand }),
     ...(input.categoryId !== undefined && { category_id: input.categoryId }),
+    ...(input.subcategoryId !== undefined && { subcategory_id: input.subcategoryId || null }),
     ...(input.price !== undefined && { price: input.price }),
     ...(input.originalPrice !== undefined && { original_price: input.originalPrice }),
     ...(input.image !== undefined && { image: input.image }),
@@ -30,6 +31,7 @@ const toFrontendProduct = (product: SupabaseProduct): Product => {
     name: product.name,
     brand: product.brand,
     categoryId: product.category_id,
+    subcategoryId: product.subcategory_id || null,
     price: product.price,
     originalPrice: product.original_price,
     image: product.image,
@@ -47,12 +49,16 @@ const toFrontendProduct = (product: SupabaseProduct): Product => {
 };
 
 export const productsService = {
-  async getProductsPaginated(params: { page: number; limit: number; search?: string; categoryId?: string; sortBy?: string; sortDesc?: boolean }): Promise<{ data: Product[]; total: number }> {
+  async getProductsPaginated(params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string; sortBy?: string; sortDesc?: boolean }): Promise<{ data: Product[]; total: number }> {
     const offset = (params.page - 1) * params.limit;
     let url = `/products?select=*&limit=${params.limit}&offset=${offset}`;
 
     if (params.categoryId && params.categoryId !== 'all') {
       url += `&category_id=eq.${params.categoryId}`;
+    }
+
+    if (params.subcategoryId && params.subcategoryId !== 'all') {
+      url += `&subcategory_id=eq.${params.subcategoryId}`;
     }
 
     if (params.search) {
@@ -63,6 +69,7 @@ export const productsService = {
       // Map frontend keys to database columns
       let column = params.sortBy;
       if (column === 'categoryId') column = 'category_id';
+      if (column === 'subcategoryId') column = 'subcategory_id';
       
       // Stock sorting shouldn't fail if null, PostgREST handles nulls, but we can specify nulls first/last if needed.
       url += `&order=${column}.${params.sortDesc ? 'desc' : 'asc'}.nullslast`;

@@ -10,7 +10,8 @@ import { categories } from '../data/mockData';
 import logo from '../logo.png';
 
 export const Header: React.FC = () => {
-  const { adminProducts } = useAdmin();
+  const { adminProducts, adminCategories, adminSubcategories } = useAdmin();
+  const categoriesList = adminCategories.length > 0 ? adminCategories : categories;
   const { user, isAuthenticated } = useAuth();
   const { favorites } = useFavorites();
   const { totalItems, totalPrice } = useCart();
@@ -309,18 +310,55 @@ export const Header: React.FC = () => {
 
               <div className="h-4 w-px bg-outline-variant/30 mx-1" />
 
-              {categories.map(cat => (
-                <Link
-                  key={cat.id}
-                  to={`/category/${cat.id}`}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-on-surface/90 hover:text-primary hover:bg-surface-container-low transition-colors font-medium whitespace-nowrap"
-                >
-                  <span className="material-symbols-outlined text-[16px] text-on-surface-variant/70">
-                    {getCategoryIcon(cat.id)}
-                  </span>
-                  <span>{cat.title}</span>
-                </Link>
-              ))}
+              {categoriesList.map(cat => {
+                const catSubs = adminSubcategories.filter(s => s.categoryId === cat.id);
+                const hasSubs = catSubs.length > 0;
+
+                return (
+                  <div key={cat.id} className="relative group">
+                    <Link
+                      to={`/category/${cat.id}`}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-on-surface/90 hover:text-primary hover:bg-surface-container-low transition-colors font-medium whitespace-nowrap group-hover:text-primary group-hover:bg-surface-container-low"
+                    >
+                      <span className="material-symbols-outlined text-[16px] text-on-surface-variant/70 group-hover:text-primary transition-colors">
+                        {getCategoryIcon(cat.id)}
+                      </span>
+                      <span>{cat.title}</span>
+                      {hasSubs && (
+                        <span className="material-symbols-outlined text-[14px] text-on-surface-variant/40 group-hover:text-primary group-hover:rotate-180 transition-transform duration-200">
+                          expand_more
+                        </span>
+                      )}
+                    </Link>
+
+                    {/* Dropdown flotante con subcategorías al hacer hover */}
+                    {hasSubs && (
+                      <div className="absolute left-0 top-full pt-1 hidden group-hover:block z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+                        <div className="bg-white rounded-2xl shadow-xl border border-outline-variant/15 p-2 min-w-[210px] backdrop-blur-md">
+                          <Link
+                            to={`/category/${cat.id}`}
+                            className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold text-primary hover:bg-primary/5 transition-colors border-b border-outline-variant/10 mb-1"
+                          >
+                            <span>Ver todo en {cat.title}</span>
+                            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                          </Link>
+                          <div className="max-h-[60vh] overflow-y-auto space-y-0.5">
+                            {catSubs.map(sub => (
+                              <Link
+                                key={sub.id}
+                                to={`/category/${cat.id}/${sub.id}`}
+                                className="flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-on-surface hover:text-primary hover:bg-surface-container-low transition-colors"
+                              >
+                                <span>{sub.title}</span>
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             <div className="flex items-center gap-2">

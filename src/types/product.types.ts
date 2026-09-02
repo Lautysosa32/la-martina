@@ -14,6 +14,7 @@ export interface Product {
   minStock: number;
   barcode: string | null;
   stock: number;
+  subcategoryId?: string | null;
   saleType?: 'unit' | 'weight';
   createdAt: string;
   updatedAt: string;
@@ -29,6 +30,7 @@ export interface SupabaseProduct {
   name: string;
   brand: string;
   category_id: string;
+  subcategory_id?: string | null;
   price: number;
   original_price: number | null;
   image: string;

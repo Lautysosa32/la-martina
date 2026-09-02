@@ -355,9 +355,11 @@ export const POS: React.FC = () => {
 
   // Stats
   const stats = useMemo(() => {
-    let cash = cashRegister?.initialAmount || 0;
+    const initialAmount = cashRegister?.initialAmount || 0;
+    let cashNew = 0; // Efectivo nuevo de ventas/cobros del período
     let card = 0, transfer = 0;
-    let currentBox = cashRegister?.initialAmount || 0;
+    let netMovements = 0; // Ingresos menos egresos/retiros del período (sin incluir monto inicial)
+
     cashMovements.forEach(m => {
       if (m.timestamp > lastPOSCloseTimestamp) {
         const isVenta = m.description.includes('Venta Local');
@@ -366,26 +368,41 @@ export const POS: React.FC = () => {
         const method = (descLower.includes('(card)') || descLower.includes('(tarjeta)')) ? 'card' :
           (descLower.includes('(transfer)') || descLower.includes('(transferencia)')) ? 'transfer' :
             (descLower.includes('(cuenta_corriente)') || descLower.includes('(cta. corriente)')) ? 'cuenta_corriente' : 'cash';
+
         if (isVenta || isPagoCC) {
-          if (method === 'cash') cash += m.amount;
+          if (method === 'cash') cashNew += m.amount;
           else if (method === 'card') card += m.amount;
           else if (method === 'transfer') transfer += m.amount;
         }
+
         if (m.type === 'Ingreso') {
           // No sumamos las ventas a cuenta corriente a la caja física (es dinero no ingresado)
           if (method !== 'cuenta_corriente') {
-            currentBox += m.amount;
+            netMovements += m.amount;
           }
         }
         if (m.type === 'Egreso' || m.type === 'Retiro') {
           // Excluimos PAGO PROVEEDOR de restar de la caja chica/actual en vivo
           if (!m.description.startsWith('PAGO PROVEEDOR:')) {
-            currentBox -= m.amount;
+            netMovements -= m.amount;
           }
         }
       }
     });
-    return { cash, card, transfer, currentBox };
+
+    const totalToday = netMovements; // Total generado en el día/período (sin el inicio)
+    const cashTotal = initialAmount + cashNew; // Total de efectivo en caja: inicio + nuevo
+    const currentBox = initialAmount + netMovements; // Total real en caja con inicio incluido
+
+    return {
+      cash: cashNew, // Efectivo nuevo generado hoy
+      cashTotal,     // Efectivo total en caja (inicio + nuevo)
+      initialAmount, // Monto con el que inició la caja
+      totalToday,    // Total de hoy (menos el inicio)
+      card,
+      transfer,
+      currentBox
+    };
   }, [cashMovements, lastPOSCloseTimestamp, cashRegister?.initialAmount]);
 
   const recentActivity = useMemo(() => {
@@ -567,9 +584,9 @@ export const POS: React.FC = () => {
       const existingIdx = prev.findIndex(item => item.productCode === productCode);
       if (existingIdx !== -1) {
         const newCart = [...prev];
-        newCart[existingIdx] = { 
-          ...newCart[existingIdx], 
-          quantity: parseFloat((newCart[existingIdx].quantity + itemQuantity).toFixed(3)) 
+        newCart[existingIdx] = {
+          ...newCart[existingIdx],
+          quantity: parseFloat((newCart[existingIdx].quantity + itemQuantity).toFixed(3))
         };
         return newCart;
       }
@@ -634,8 +651,8 @@ export const POS: React.FC = () => {
     } else {
       // Si hay un cierre anterior, predeterminar con el saldo de cierre
       const lastClose = cashCloses.find(c => c.period === 'diario') || cashCloses[0];
-      const previousClosingCash = lastClose && lastClose.openingControlExpected != null 
-        ? Math.max(0, lastClose.openingControlExpected) 
+      const previousClosingCash = lastClose && lastClose.openingControlExpected != null
+        ? Math.max(0, lastClose.openingControlExpected)
         : 0;
 
       if (lastClose && lastClose.openingControlExpected != null) {
@@ -984,7 +1001,7 @@ export const POS: React.FC = () => {
           <span className="absolute top-6 right-6 bg-error/10 text-error text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">En Vivo</span>
           <div className="w-12 h-12 bg-[#FFD700] rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-[#8B6508]">account_balance_wallet</span></div>
           <p className="text-sm font-medium text-on-surface-variant">Total</p>
-          <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.currentBox)}</p>
+          <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.totalToday)}</p>
         </div>
         <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm relative">
           <div className="w-12 h-12 bg-surface-container-highest rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-on-surface-variant">payments</span></div>
@@ -992,8 +1009,8 @@ export const POS: React.FC = () => {
           <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.cash)}</p>
           {isCashRegisterOpen && (
             <div className="absolute top-5 right-6 text-right flex flex-col gap-0.5">
-              <p className="text-[12px] font-bold text-on-surface-variant uppercase tracking-wider">Inicio: ${formatCurrency(cashRegister.initialAmount, true, true)}</p>
-              <p className="text-[12px] font-bold text-green-600 uppercase tracking-wider">Ventas: ${formatCurrency(stats.cash - cashRegister.initialAmount, true, true)}</p>
+              <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Inicio: ${formatCurrency(stats.initialAmount, true, true)}</p>
+              <p className="text-[11px] font-bold text-green-600 uppercase tracking-wider">Total: ${formatCurrency(stats.cashTotal, true, true)}</p>
             </div>
           )}
         </div>
@@ -1594,8 +1611,8 @@ export const POS: React.FC = () => {
 
         const handleSkipArqueo = () => {
           // Sin arqueo: va al paso de ingresar monto inicial precargado con el cierre anterior
-          const prevCash = lastDailyClose && lastDailyClose.openingControlExpected != null 
-            ? Math.max(0, lastDailyClose.openingControlExpected) 
+          const prevCash = lastDailyClose && lastDailyClose.openingControlExpected != null
+            ? Math.max(0, lastDailyClose.openingControlExpected)
             : 0;
           setCashOpenAmount(prevCash > 0 ? String(prevCash) : '');
           setCashOpenStep('open');

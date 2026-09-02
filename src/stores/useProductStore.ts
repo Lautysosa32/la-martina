@@ -13,7 +13,7 @@ interface ProductState {
   inventoryProducts: Product[];
   inventoryTotal: number;
   inventoryLoading: boolean;
-  fetchInventoryProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; sortBy?: string; sortDesc?: boolean }) => Promise<void>;
+  fetchInventoryProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string; sortBy?: string; sortDesc?: boolean }) => Promise<void>;
 
   lowStockDashboardProducts: Product[];
   lowStockDashboardTotal: number;

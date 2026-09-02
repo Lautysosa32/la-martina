@@ -1,9 +1,10 @@
 import { supabase } from '../lib/supabase';
+import api from '../lib/axios';
 import { 
   AdminOrder, CashMovement, CashClose, Offer, 
   CustomerProfile, TicketConfig, CurrentAccountConfig, 
   StoreStatus, CashRegister, Invoice, BillingCustomer,
-  Category
+  Category, Subcategory
 } from '../context/AdminContext';
 
 const BRANCH_ID = 'main';
@@ -485,3 +486,62 @@ export const deleteCategoryFromDb = async (id: string): Promise<void> => {
   const { error } = await supabase.from('categories').delete().eq('id', id);
   if (error) console.error('Error deleting category:', error);
 };
+
+// ─── SUBCATEGORIES ───────────────────────────────────────────────────────
+export const fetchSubcategories = async (): Promise<Subcategory[]> => {
+  const { data, error } = await supabase
+    .from('subcategories')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('title', { ascending: true });
+  if (error) { console.error('Error fetching subcategories:', error); return []; }
+  return (data || []).map((s: any) => ({
+    id: s.id,
+    categoryId: s.category_id,
+    title: s.title,
+    description: s.description || '',
+    sortOrder: s.sort_order ?? 0,
+    createdAt: s.created_at
+  }));
+};
+
+export const insertSubcategory = async (subcategory: Subcategory): Promise<boolean> => {
+  const payload = {
+    id: subcategory.id,
+    category_id: subcategory.categoryId,
+    title: subcategory.title,
+    description: subcategory.description || '',
+    sort_order: subcategory.sortOrder ?? 0
+  };
+
+  const { error } = await supabase.from('subcategories').upsert(payload, { onConflict: 'id' });
+  if (!error) return true;
+
+  console.warn('⚠️ Supabase client insert subcategory error:', error);
+  try {
+    await api.post('/subcategories', payload, {
+      headers: { 'Prefer': 'resolution=merge-duplicates' }
+    });
+    return true;
+  } catch (axiosErr: any) {
+    console.error('❌ Error inserting subcategory in Supabase:', axiosErr.response?.data || axiosErr.message || error);
+    return false;
+  }
+};
+
+export const updateSubcategoryInDb = async (id: string, updates: Partial<Subcategory>): Promise<void> => {
+  const payload: any = {};
+  if (updates.categoryId !== undefined) payload.category_id = updates.categoryId;
+  if (updates.title !== undefined) payload.title = updates.title;
+  if (updates.description !== undefined) payload.description = updates.description;
+  if (updates.sortOrder !== undefined) payload.sort_order = updates.sortOrder;
+
+  const { error } = await supabase.from('subcategories').update(payload).eq('id', id);
+  if (error) console.error('Error updating subcategory:', error);
+};
+
+export const deleteSubcategoryFromDb = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('subcategories').delete().eq('id', id);
+  if (error) console.error('Error deleting subcategory:', error);
+};
+

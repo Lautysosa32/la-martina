@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { categories } from '../data/mockData';
+import { categories as mockCategories } from '../data/mockData';
+import { useAdmin } from '../context/AdminContext';
 
 interface NavigationDrawerProps {
   isOpen: boolean;
@@ -10,6 +11,16 @@ interface NavigationDrawerProps {
 }
 
 export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onClose, onOpenZones }) => {
+  const { adminCategories, adminSubcategories } = useAdmin();
+  const categoriesList = adminCategories.length > 0 ? adminCategories : mockCategories;
+  const [expandedCatId, setExpandedCatId] = useState<string | null>(null);
+
+  const toggleExpand = (catId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setExpandedCatId(prev => prev === catId ? null : catId);
+  };
+
   return (
     <>
       {/* Overlay */}
@@ -49,46 +60,95 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
               Categorías
             </h2>
             <ul className="space-y-1">
-              {categories.map((cat) => (
-                <li key={cat.id}>
-                  <NavLink
-                    to={`/category/${cat.id}`}
-                    onClick={onClose}
-                    className={({ isActive }) =>
-                      cn(
-                        'cursor-pointer group flex items-center justify-between w-full px-3 py-2.5 transition-all duration-200 rounded-xl font-medium text-sm',
-                        isActive
-                          ? 'text-primary font-bold bg-primary/10'
-                          : 'text-on-surface hover:bg-surface-container-high'
-                      )
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <div className="flex items-center gap-3">
+              {categoriesList.map((cat) => {
+                const catSubs = adminSubcategories.filter(s => s.categoryId === cat.id);
+                const hasSubs = catSubs.length > 0;
+                const isExpanded = expandedCatId === cat.id;
+
+                return (
+                  <li key={cat.id} className="rounded-xl overflow-hidden transition-all">
+                    <div className="flex items-center justify-between group rounded-xl hover:bg-surface-container-high transition-colors">
+                      <NavLink
+                        to={`/category/${cat.id}`}
+                        onClick={onClose}
+                        className={({ isActive }) =>
+                          cn(
+                            'cursor-pointer flex-1 flex items-center gap-3 px-3 py-2.5 transition-all duration-200 font-medium text-sm',
+                            isActive
+                              ? 'text-primary font-bold bg-primary/10 rounded-xl'
+                              : 'text-on-surface'
+                          )
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
+                            <span
+                              className={cn(
+                                'material-symbols-outlined text-[20px] shrink-0',
+                                isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary transition-colors'
+                              )}
+                            >
+                              {getIconForCategory(cat.id)}
+                            </span>
+                            <span className="truncate">{cat.title}</span>
+                          </>
+                        )}
+                      </NavLink>
+
+                      {hasSubs && (
+                        <button
+                          type="button"
+                          onClick={(e) => toggleExpand(cat.id, e)}
+                          className="p-2.5 text-on-surface-variant/70 hover:text-primary hover:bg-primary/5 rounded-xl transition-colors cursor-pointer"
+                          aria-label={isExpanded ? 'Contraer subcategorías' : 'Expandir subcategorías'}
+                        >
                           <span
                             className={cn(
-                              'material-symbols-outlined text-[20px] shrink-0',
-                              isActive ? 'text-primary' : 'text-on-surface-variant group-hover:text-primary transition-colors'
+                              'material-symbols-outlined text-[18px] transition-transform duration-200 block',
+                              isExpanded ? 'rotate-180 text-primary' : ''
                             )}
                           >
-                            {getIconForCategory(cat.id)}
+                            expand_more
                           </span>
-                          <span className="truncate">{cat.title}</span>
-                        </div>
-                        <span
-                          className={cn(
-                            'material-symbols-outlined text-[18px] transition-colors shrink-0',
-                            isActive ? 'text-primary' : 'text-on-surface-variant/40 group-hover:text-primary'
-                          )}
-                        >
-                          chevron_right
-                        </span>
-                      </>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Acordeón de Subcategorías */}
+                    {hasSubs && isExpanded && (
+                      <ul className="pl-9 pr-2 py-1 space-y-1 bg-surface-container-lowest/70 rounded-b-xl border-l-2 border-primary/20 ml-4 my-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                        <li>
+                          <NavLink
+                            to={`/category/${cat.id}`}
+                            onClick={onClose}
+                            className="block px-2.5 py-1.5 rounded-lg text-xs font-bold text-primary hover:bg-primary/5 transition-colors"
+                          >
+                            Ver todo en {cat.title}
+                          </NavLink>
+                        </li>
+                        {catSubs.map(sub => (
+                          <li key={sub.id}>
+                            <NavLink
+                              to={`/category/${cat.id}/${sub.id}`}
+                              onClick={onClose}
+                              className={({ isActive }) =>
+                                cn(
+                                  'block px-2.5 py-1.5 rounded-lg text-xs transition-colors',
+                                  isActive
+                                    ? 'bg-primary/10 text-primary font-bold'
+                                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
+                                )
+                              }
+                            >
+                              {sub.title}
+                            </NavLink>
+                          </li>
+                        ))}
+                      </ul>
                     )}
-                  </NavLink>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           </div>
 

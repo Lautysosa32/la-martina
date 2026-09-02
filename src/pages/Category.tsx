@@ -5,10 +5,20 @@ import { categories } from '../data/mockData';
 import { useAdmin } from '../context/AdminContext';
 
 export const Category: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const category = categories.find(c => c.id === id) || { title: id?.toUpperCase() || 'CATEGORÍA', description: 'Productos seleccionados', id: id || 'cat' };
+  const { id, subId } = useParams<{ id: string; subId?: string }>();
+  const { adminProducts, adminCategories, adminSubcategories, getStock, applyOffersToCartItem } = useAdmin();
   
-  const { adminProducts, getStock, applyOffersToCartItem } = useAdmin();
+  const categoriesList = adminCategories.length > 0 ? adminCategories : categories;
+  const category = categoriesList.find(c => c.id === id) || { title: id?.toUpperCase() || 'CATEGORÍA', description: 'Productos seleccionados', id: id || 'cat' };
+  
+  const currentCategorySubcategories = React.useMemo(() => {
+    return adminSubcategories.filter(s => s.categoryId === id);
+  }, [adminSubcategories, id]);
+
+  const currentSubcategory = React.useMemo(() => {
+    return currentCategorySubcategories.find(s => s.id === subId);
+  }, [currentCategorySubcategories, subId]);
+
   const [isFilterOpen, setIsFilterOpen] = React.useState(false);
   const [priceRange, setPriceRange] = React.useState<[number, number]>([0, 50000]);
   const [selectedBrands, setSelectedBrands] = React.useState<string[]>([]);
@@ -36,15 +46,28 @@ export const Category: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Reiniciar a página 1 cuando cambia la categoría o los filtros
+  // Reiniciar a página 1 cuando cambia la categoría, subcategoría o los filtros
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [id, priceRange, selectedBrands, sortBy]);
+  }, [id, subId, priceRange, selectedBrands, sortBy]);
 
-  // Solo productos con stock disponible para esta categoría y con ofertas aplicadas
+  // Conteo de productos por subcategoría para esta categoría
+  const subcategoryCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    adminProducts
+      .filter(p => p.categoryId === id && getStock(p.id) > 0)
+      .forEach(p => {
+        if (p.subcategoryId) {
+          counts[p.subcategoryId] = (counts[p.subcategoryId] || 0) + 1;
+        }
+      });
+    return counts;
+  }, [adminProducts, id, getStock]);
+
+  // Solo productos con stock disponible para esta categoría (y subcategoría si está seleccionada) y con ofertas aplicadas
   const baseProducts = React.useMemo(() => {
     return adminProducts
-      .filter(p => p.categoryId === id && getStock(p.id) > 0)
+      .filter(p => p.categoryId === id && (!subId || p.subcategoryId === subId) && getStock(p.id) > 0)
       .map(p => {
         const calc = applyOffersToCartItem({ productId: p.id, categoryId: p.categoryId, price: p.price, quantity: 1 });
         if (calc.discountAmount > 0) {
@@ -58,7 +81,7 @@ export const Category: React.FC = () => {
         }
         return p;
       });
-  }, [adminProducts, id, getStock, applyOffersToCartItem]);
+  }, [adminProducts, id, subId, getStock, applyOffersToCartItem]);
   
   // Obtener marcas únicas de esta categoría con conteo (solo productos con stock)
   const brandCounts = React.useMemo(() => {
@@ -148,20 +171,71 @@ export const Category: React.FC = () => {
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-in fade-in duration-500">
       {/* Breadcrumb & Header */}
       <div className="mb-6">
-        <div className="flex items-center gap-2 text-xs font-semibold text-on-surface-variant/70 mb-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-on-surface-variant/70 mb-2 flex-wrap">
           <Link to="/" className="hover:text-primary transition-colors">Inicio</Link>
           <span>/</span>
-          <span className="text-on-surface font-bold">{category.title}</span>
+          {subId ? (
+            <>
+              <Link to={`/category/${category.id}`} className="hover:text-primary transition-colors">{category.title}</Link>
+              <span>/</span>
+              <span className="text-on-surface font-bold">{currentSubcategory?.title || subId}</span>
+            </>
+          ) : (
+            <span className="text-on-surface font-bold">{category.title}</span>
+          )}
         </div>
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-2 border-b border-outline-variant/15 pb-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-on-background tracking-tight">{category.title}</h1>
-            <p className="text-on-surface-variant text-sm mt-1">{category.description}</p>
+            <h1 className="text-2xl sm:text-3xl font-black text-on-background tracking-tight">
+              {currentSubcategory ? currentSubcategory.title : category.title}
+            </h1>
+            <p className="text-on-surface-variant text-sm mt-1">
+              {currentSubcategory?.description || category.description}
+            </p>
           </div>
           <span className="text-xs font-bold text-on-surface-variant/80 bg-surface-container-high px-3 py-1.5 rounded-full w-fit">
             {filteredProducts.length} {filteredProducts.length === 1 ? 'producto encontrado' : 'productos encontrados'}
           </span>
         </div>
+
+        {/* Subcategories Horizontal Pills Bar */}
+        {currentCategorySubcategories.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto pt-4 pb-1 scrollbar-none">
+            <Link
+              to={`/category/${id}`}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                !subId
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'bg-surface-container text-on-surface hover:bg-surface-container-high'
+              }`}
+            >
+              <span>Todos</span>
+              <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${!subId ? 'bg-white/25 text-white' : 'bg-black/5 text-on-surface-variant'}`}>
+                {adminProducts.filter(p => p.categoryId === id && getStock(p.id) > 0).length}
+              </span>
+            </Link>
+            {currentCategorySubcategories.map(sub => {
+              const isSelected = subId === sub.id;
+              const count = subcategoryCounts[sub.id] || 0;
+              return (
+                <Link
+                  key={sub.id}
+                  to={`/category/${id}/${sub.id}`}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-primary text-white shadow-xs'
+                      : 'bg-surface-container text-on-surface hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span>{sub.title}</span>
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${isSelected ? 'bg-white/25 text-white' : 'bg-black/5 text-on-surface-variant'}`}>
+                    {count}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Main Layout: Sidebar (Desktop) + Products Area */}
@@ -183,6 +257,50 @@ export const Category: React.FC = () => {
               </button>
             )}
           </div>
+
+          {/* Subcategorías en Sidebar */}
+          {currentCategorySubcategories.length > 0 && (
+            <div className="border-b border-outline-variant/15 pb-5">
+              <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant block mb-3">
+                Subcategorías
+              </span>
+              <div className="space-y-1">
+                <Link
+                  to={`/category/${id}`}
+                  className={`flex items-center justify-between text-xs py-1.5 px-2.5 rounded-xl transition-colors ${
+                    !subId
+                      ? 'bg-primary text-white font-bold shadow-2xs'
+                      : 'text-on-surface hover:bg-surface-container-high font-medium'
+                  }`}
+                >
+                  <span>Todas</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${!subId ? 'bg-white/20 text-white' : 'text-on-surface-variant/70'}`}>
+                    {adminProducts.filter(p => p.categoryId === id && getStock(p.id) > 0).length}
+                  </span>
+                </Link>
+                {currentCategorySubcategories.map(sub => {
+                  const isSelected = subId === sub.id;
+                  const count = subcategoryCounts[sub.id] || 0;
+                  return (
+                    <Link
+                      key={sub.id}
+                      to={`/category/${id}/${sub.id}`}
+                      className={`flex items-center justify-between text-xs py-1.5 px-2.5 rounded-xl transition-colors ${
+                        isSelected
+                          ? 'bg-primary text-white font-bold shadow-2xs'
+                          : 'text-on-surface hover:bg-surface-container-high font-medium'
+                      }`}
+                    >
+                      <span>{sub.title}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'text-on-surface-variant/70'}`}>
+                        {count}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Rango de Precio */}
           <div>
@@ -395,6 +513,52 @@ export const Category: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
+              {/* Subcategorías en Mobile Drawer */}
+              {currentCategorySubcategories.length > 0 && (
+                <div className="border-b border-outline-variant/15 pb-5">
+                  <h4 className="font-bold mb-3 text-xs uppercase tracking-wider text-on-surface-variant">
+                    Subcategorías
+                  </h4>
+                  <div className="space-y-1">
+                    <Link
+                      to={`/category/${id}`}
+                      onClick={() => setIsFilterOpen(false)}
+                      className={`flex items-center justify-between text-xs py-2 px-3 rounded-xl transition-colors ${
+                        !subId
+                          ? 'bg-primary text-white font-bold shadow-2xs'
+                          : 'text-on-surface hover:bg-surface-container-high font-medium'
+                      }`}
+                    >
+                      <span>Todas</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${!subId ? 'bg-white/20 text-white' : 'text-on-surface-variant/70'}`}>
+                        {adminProducts.filter(p => p.categoryId === id && getStock(p.id) > 0).length}
+                      </span>
+                    </Link>
+                    {currentCategorySubcategories.map(sub => {
+                      const isSelected = subId === sub.id;
+                      const count = subcategoryCounts[sub.id] || 0;
+                      return (
+                        <Link
+                          key={sub.id}
+                          to={`/category/${id}/${sub.id}`}
+                          onClick={() => setIsFilterOpen(false)}
+                          className={`flex items-center justify-between text-xs py-2 px-3 rounded-xl transition-colors ${
+                            isSelected
+                              ? 'bg-primary text-white font-bold shadow-2xs'
+                              : 'text-on-surface hover:bg-surface-container-high font-medium'
+                          }`}
+                        >
+                          <span>{sub.title}</span>
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'text-on-surface-variant/70'}`}>
+                            {count}
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Rango de Precio */}
               <div>
                 <h4 className="font-bold mb-3 flex justify-between items-center text-xs uppercase tracking-wider text-on-surface-variant">

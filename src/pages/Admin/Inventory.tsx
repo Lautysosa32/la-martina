@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Category } from '../../data/mockData';
+import { Category, Subcategory } from '../../data/mockData';
 import { Product } from '../../types/product.types';
 import { useAdmin } from '../../context/AdminContext';
 import { useProductStore } from '../../stores/useProductStore';
+import { insertSubcategory } from '../../services/admin.service';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
 import Papa from 'papaparse';
@@ -19,8 +20,9 @@ interface SortConfig {
 
 export const Inventory: React.FC = () => {
   const {
-    adminCategories, adminTags,
+    adminProducts, adminCategories, adminSubcategories, adminTags,
     addCategory, updateCategory, deleteCategory,
+    addSubcategory, updateSubcategory, deleteSubcategory,
     addTag, updateTag, deleteTag,
     searchProductExternal, formatCurrency
   } = useAdmin();
@@ -51,6 +53,7 @@ export const Inventory: React.FC = () => {
   } | null>(null);
 
   const [activeTab, setActiveTab] = useState('all');
+  const [activeSubcategoryTab, setActiveSubcategoryTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -73,25 +76,34 @@ export const Inventory: React.FC = () => {
       limit,
       search: debouncedSearchQuery,
       categoryId: activeTab,
+      subcategoryId: activeSubcategoryTab,
       sortBy: sortConfig?.key,
       sortDesc: sortConfig?.direction === 'desc'
     });
-  }, [fetchInventoryProducts, page, limit, debouncedSearchQuery, activeTab, sortConfigs]);
+  }, [fetchInventoryProducts, page, limit, debouncedSearchQuery, activeTab, activeSubcategoryTab, sortConfigs]);
 
   const handleTabChange = (catId: string) => {
     setActiveTab(catId);
+    setActiveSubcategoryTab('all');
+    setPage(1);
+  };
+
+  const handleSubcategoryTabChange = (subId: string) => {
+    setActiveSubcategoryTab(subId);
     setPage(1);
   };
 
   // Modales
   const [showProductModal, setShowProductModal] = useState<{ show: boolean, mode: 'new' | 'edit', product?: Product }>({ show: false, mode: 'new' });
   const [showBulkModal, setShowBulkModal] = useState(false);
-  const [showManageModal, setShowManageModal] = useState<{ show: boolean, type: 'category' | 'tag' }>({ show: false, type: 'category' });
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'product' | 'category' | 'tag' } | null>(null);
+  const [showManageModal, setShowManageModal] = useState<{ show: boolean, type: 'category' | 'subcategory' | 'tag' }>({ show: false, type: 'category' });
+  const [selectedManageCategory, setSelectedManageCategory] = useState<string>('');
+  const [newSubcategoryTitle, setNewSubcategoryTitle] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'product' | 'category' | 'subcategory' | 'tag' } | null>(null);
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
 
   // Form States
-  const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight' });
+  const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight' });
   const [bulkPercent, setBulkPercent] = useState('');
   const [editItem, setEditItem] = useState<{ id: string, value: string } | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -105,6 +117,8 @@ export const Inventory: React.FC = () => {
     incomplete: any[]
   }>({ valid: [], errors: [], duplicates: [], incomplete: [] });
   const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number; percentage: number }>({ current: 0, total: 0, percentage: 0 });
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -227,6 +241,7 @@ export const Inventory: React.FC = () => {
           name: externalData.name || '',
           brand: externalData.brand || '',
           categoryId: adminCategories[0]?.id || 'almacen',
+          subcategoryId: '',
           price: '',
           image: externalData.image || '',
           format: externalData.format || '',
@@ -239,7 +254,7 @@ export const Inventory: React.FC = () => {
         });
       } else {
         console.log("No se encontraron datos externos.");
-        setProductForm(prev => ({ ...prev, id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: code, saleType: 'unit' }));
+        setProductForm(prev => ({ ...prev, id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: code, saleType: 'unit' }));
       }
       setShowProductModal({ show: true, mode: 'new' });
     }
@@ -308,6 +323,7 @@ export const Inventory: React.FC = () => {
     if (mode === 'edit' && product) {
       setProductForm({
         id: product.id, name: product.name, brand: product.brand || '', categoryId: product.categoryId,
+        subcategoryId: product.subcategoryId || '',
         price: product.price.toString(), image: product.image || '', format: product.format || '',
         badge: product.badge || '', originalPrice: product.originalPrice?.toString() || '',
         stock: (product.stock ?? 0).toString(),
@@ -321,6 +337,7 @@ export const Inventory: React.FC = () => {
         name: product?.name || '',
         brand: product?.brand || '',
         categoryId: product?.categoryId || adminCategories[0]?.id || 'almacen',
+        subcategoryId: product?.subcategoryId || '',
         price: product?.price ? product.price.toString() : '',
         image: product?.image || '',
         format: product?.format || '',
@@ -350,6 +367,7 @@ export const Inventory: React.FC = () => {
     const data: any = {
       ...(showProductModal.mode === 'edit' ? { id: productForm.id } : {}),
       name: productForm.name, brand: productForm.brand, categoryId: productForm.categoryId,
+      subcategoryId: productForm.subcategoryId || null,
       price: parseInt(productForm.price) || 0, image: productForm.image, format: productForm.format,
       badge: productForm.badge, originalPrice: productForm.originalPrice ? parseInt(productForm.originalPrice) : undefined,
       minStock: productForm.minStock !== '' ? parseInt(productForm.minStock) : 15,
@@ -357,13 +375,13 @@ export const Inventory: React.FC = () => {
       stock: stockVal,
       saleType: productForm.saleType
     };
-    
+
     if (showProductModal.mode === 'edit') {
       await updateProduct(data.id, data);
     } else {
       await addProduct(data);
     }
-    
+
     setShowProductModal({ show: false, mode: 'new' });
   };
 
@@ -408,12 +426,22 @@ export const Inventory: React.FC = () => {
     const duplicates: any[] = [];
     const incomplete: any[] = [];
 
-    const seenBarcodes = new Set();
-    const dbBarcodes = new Set(); // We cannot easily check duplicates locally now, would require DB query or fail on insert
+    const seenBarcodesInFile = new Set<string>();
 
-    // Debug: log column names from first row
+    // Index existing products to identify updates vs creations and prevent duplicates
+    const existingByBarcode = new Map<string, Product>();
+    const existingByName = new Map<string, Product>();
+    (adminProducts || []).forEach(p => {
+      if (p.barcode && p.barcode.trim()) {
+        existingByBarcode.set(p.barcode.trim().toLowerCase(), p);
+      }
+      if (p.name && p.name.trim()) {
+        existingByName.set(p.name.trim().toLowerCase(), p);
+      }
+    });
+
     if (rawData.length > 0) {
-      console.log('📋 Columnas detectadas en el archivo:', Object.keys(rawData[0]));
+      console.log('📋 Columnas detectadas en el archivo importado:', Object.keys(rawData[0]));
     }
 
     rawData.forEach((row, index) => {
@@ -425,7 +453,6 @@ export const Inventory: React.FC = () => {
           .replace(/[^a-z0-9\s]/g, '') // quitar caracteres especiales
           .trim();
         normalizedRow[normalizedKey] = row[key];
-        console.log(`  Key original: "${key}" -> normalizada: "${normalizedKey}"`);
       });
 
       const getVal = (paths: string[]) => {
@@ -435,20 +462,25 @@ export const Inventory: React.FC = () => {
         return '';
       };
 
-      const item: any = {
-        barcode: getVal(['barcode', 'codigo de barras', 'codigo', 'ean', 'upc', 'cod barra', 'cod barras']).toString().replace(/\./g, '').trim(),
-        name: getVal(['productos', 'producto', 'nombre', 'name', 'articulo', 'descripcion', 'description', 'detalle', 'item', 'product']).toString().trim(),
-        brand: getVal(['marca', 'brand', 'laboratorio']).toString().trim(),
-        category: getVal(['categoria', 'category', 'rubro', 'seccion']).toString().trim(),
-        price: getVal(['precio', 'price', 'costo', 'valor', 'precio unitario', 'precio unit']),
-        stock: getVal(['stock', 'inventario', 'cantidad', 'existencia']) || 0,
-        image: getVal(['image', 'foto', 'url', 'imagen']) || '',
-      };
-      console.log(`  Fila ${index + 2}: name="${item.name}" price="${item.price}" category="${item.category}"`);
+      const rawBarcode = getVal(['barcode', 'codigo de barras', 'codigo', 'ean', 'upc', 'cod barra', 'cod barras', 'codigobarras']).toString().replace(/\./g, '').trim();
+      const rawName = getVal(['productos', 'producto', 'nombre', 'name', 'articulo', 'descripcion', 'description', 'detalle', 'item', 'product']).toString().trim();
+      const rawBrand = getVal(['marca', 'brand', 'laboratorio']).toString().trim();
+      const rawCategory = getVal(['categoria', 'category', 'rubro', 'seccion']).toString().trim();
+      const rawSubcategory = getVal(['subcategoria', 'sub categoria', 'sub-categoria', 'sub_categoria', 'subcategory', 'sub category', 'sub-category', 'subrubro', 'sub rubro', 'sub-rubro']).toString().trim();
+      const rawPrice = getVal(['precio', 'price', 'costo', 'valor', 'precio unitario', 'precio unit']);
+      const rawStock = getVal(['stock', 'inventario', 'cantidad', 'existencia']) || 0;
+      const rawImage = getVal(['image', 'foto', 'url', 'imagen']) || '';
 
-      // Asignar valores por defecto a campos vacíos
-      if (item.name === '') item.name = 'Sin nombre';
-      if (item.category === '') item.category = adminCategories[0]?.title || 'General';
+      const item: any = {
+        barcode: rawBarcode,
+        name: rawName || 'Sin nombre',
+        brand: rawBrand,
+        category: rawCategory || (adminCategories[0]?.title || 'General'),
+        subcategory: rawSubcategory,
+        price: rawPrice,
+        stock: rawStock,
+        image: rawImage,
+      };
 
       // Validar tipos de datos
       const priceNum = item.price !== '' ? parseFloat(item.price.toString().replace(/\$/g, '').replace(/\s/g, '').replace(',', '.')) : 0;
@@ -458,20 +490,61 @@ export const Inventory: React.FC = () => {
         return;
       }
 
-      // Validar duplicados (barcode)
+      // Check if product already exists in DB
+      let existing: Product | undefined;
+      if (item.barcode && existingByBarcode.has(item.barcode.toLowerCase())) {
+        existing = existingByBarcode.get(item.barcode.toLowerCase());
+      } else if (item.name && existingByName.has(item.name.toLowerCase())) {
+        existing = existingByName.get(item.name.toLowerCase());
+      }
+
+      // Detect duplicates within the uploaded file itself
       if (item.barcode) {
-        if (seenBarcodes.has(item.barcode) || dbBarcodes.has(item.barcode)) {
-          duplicates.push({ ...item, row: index + 2, reason: 'Código de barras duplicado' });
+        if (seenBarcodesInFile.has(item.barcode.toLowerCase())) {
+          duplicates.push({ ...item, row: index + 2, reason: 'Código de barras repetido en el archivo' });
           return;
         }
-        seenBarcodes.add(item.barcode);
+        seenBarcodesInFile.add(item.barcode.toLowerCase());
+      }
+
+      // Compare if existing product has actual differences
+      let isDifferent = false;
+      if (existing) {
+        const cat = adminCategories.find(c =>
+          c.id.toLowerCase() === item.category.toLowerCase().trim() ||
+          c.title.toLowerCase() === item.category.toLowerCase().trim()
+        );
+        const catId = cat?.id || adminCategories[0]?.id || 'almacen';
+
+        const sub = adminSubcategories.find(s =>
+          s.categoryId === catId && (s.id.toLowerCase() === item.subcategory.toLowerCase().trim() || s.title.toLowerCase() === item.subcategory.toLowerCase().trim())
+        );
+        const subId = item.subcategory ? (sub ? sub.id : `new-${item.subcategory}`) : null;
+
+        const targetBrand = item.brand || existing.brand || '';
+        const targetBarcode = item.barcode || existing.barcode || undefined;
+        const targetImage = item.image || existing.image || '';
+
+        isDifferent =
+          (item.name && item.name.trim() !== existing.name.trim()) ||
+          (targetBrand.trim() !== (existing.brand || '').trim()) ||
+          (catId !== existing.categoryId) ||
+          (subId !== (existing.subcategoryId || null)) ||
+          (item.price !== '' && Math.abs(priceNum - (existing.price ?? 0)) > 0.001) ||
+          (item.stock !== '' && stockNum !== (existing.stock ?? 0)) ||
+          (Boolean(targetBarcode) && targetBarcode !== existing.barcode) ||
+          (Boolean(targetImage) && targetImage !== (existing.image || ''));
       }
 
       valid.push({
         ...item,
         price: priceNum,
         stock: stockNum,
-        id: 'p_imp_' + Date.now() + '_' + index
+        isUpdate: Boolean(existing),
+        isModified: !existing || isDifferent,
+        existingId: existing?.id,
+        existingProduct: existing,
+        id: existing?.id || ('p_imp_' + Date.now() + '_' + index)
       });
     });
 
@@ -489,38 +562,169 @@ export const Inventory: React.FC = () => {
   };
 
   const handleConfirmImport = async () => {
-    const newProducts: any[] = importData.valid.map(item => {
-      // Mapear categoría
-      const cat = adminCategories.find(c =>
-        c.id.toLowerCase() === item.category.toLowerCase() ||
-        c.title.toLowerCase() === item.category.toLowerCase()
-      );
+    if (importData.valid.length === 0) return;
+    setIsImporting(true);
 
-      return {
-        name: item.name,
-        brand: item.brand || '',
-        categoryId: cat?.id || adminCategories[0]?.id || 'almacen',
-        price: item.price,
-        image: item.image || '',
-        format: '',
-        barcode: item.barcode || undefined,
-        stock: item.stock,
-        branchId: 'main'
+    try {
+      // 1. Cache de subcategorías existentes y creadas durante esta importación
+      const currentSubs = [...adminSubcategories];
+
+      const getCategory = (catName: string) => {
+        if (!catName) return adminCategories[0];
+        const trimmed = catName.trim().toLowerCase();
+        return adminCategories.find(c =>
+          c.id.toLowerCase() === trimmed ||
+          c.title.toLowerCase() === trimmed
+        ) || adminCategories[0];
       };
-    });
 
-    await bulkAddProducts(newProducts);
-    setShowImportReview(false);
-    setImportData({ valid: [], errors: [], duplicates: [], incomplete: [] });
+      const resolveSubcategory = async (catId: string, subName: string): Promise<string | null> => {
+        if (!subName || !subName.trim()) return null;
+        const cleanSub = subName.trim();
+        const cleanLower = cleanSub.toLowerCase();
+
+        // Buscar si ya existe para esta categoría
+        const found = currentSubs.find(s =>
+          s.categoryId === catId && (s.id.toLowerCase() === cleanLower || s.title.toLowerCase() === cleanLower)
+        );
+        if (found) return found.id;
+
+        // Crear nueva subcategoría automáticamente en Supabase
+        const slug = cleanLower.replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const newSubId = `${catId}-${slug}`;
+        const newSub: Subcategory = {
+          id: newSubId,
+          categoryId: catId,
+          title: cleanSub,
+          description: '',
+          sortOrder: currentSubs.filter(s => s.categoryId === catId).length
+        };
+
+        console.log(`✨ Creando automáticamente nueva subcategoría en Supabase: "${cleanSub}" (${newSubId})`);
+        await insertSubcategory(newSub);
+        addSubcategory(newSub);
+        currentSubs.push(newSub);
+        return newSubId;
+      };
+
+      // 2. Separar productos a modificar vs productos a crear
+      const toUpdate: { id: string; updates: any }[] = [];
+      const toCreate: any[] = [];
+
+      for (const item of importData.valid) {
+        const cat = getCategory(item.category);
+        const catId = cat?.id || adminCategories[0]?.id || 'almacen';
+        const subId = await resolveSubcategory(catId, item.subcategory);
+
+        if (item.isUpdate && item.existingId) {
+          const ep = item.existingProduct;
+          const targetBrand = item.brand || ep?.brand || '';
+          const targetSubId = subId !== null ? subId : (ep?.subcategoryId || null);
+          const targetBarcode = item.barcode || ep?.barcode || undefined;
+          const targetImage = item.image || ep?.image || '';
+
+          // Comparar si realmente hubo algún cambio
+          const hasChanges =
+            (item.name && item.name !== ep?.name) ||
+            (targetBrand !== (ep?.brand || '')) ||
+            (catId !== ep?.categoryId) ||
+            (targetSubId !== (ep?.subcategoryId || null)) ||
+            (item.price !== undefined && Math.abs(item.price - (ep?.price ?? 0)) > 0.001) ||
+            (item.stock !== undefined && item.stock !== ep?.stock) ||
+            (targetBarcode && targetBarcode !== ep?.barcode) ||
+            (targetImage && targetImage !== (ep?.image || ''));
+
+          if (hasChanges) {
+            toUpdate.push({
+              id: item.existingId,
+              updates: {
+                name: item.name,
+                brand: targetBrand,
+                categoryId: catId,
+                subcategoryId: targetSubId,
+                price: item.price,
+                stock: item.stock,
+                barcode: targetBarcode,
+                image: targetImage
+              }
+            });
+          }
+        } else {
+          toCreate.push({
+            name: item.name,
+            brand: item.brand || '',
+            categoryId: catId,
+            subcategoryId: subId,
+            price: item.price,
+            image: item.image || '',
+            format: '',
+            barcode: item.barcode || undefined,
+            stock: item.stock,
+            branchId: 'main'
+          });
+        }
+      }
+
+      const totalItemsToProcess = toUpdate.length + toCreate.length;
+      setImportProgress({ current: 0, total: totalItemsToProcess, percentage: 0 });
+
+      console.log(`📦 Importando: ${toUpdate.length} productos modificados/actualizados, ${toCreate.length} nuevos productos`);
+
+      let processedCount = 0;
+
+      // Aplicar modificaciones a productos existentes en paralelo por lotes
+      const batchSize = 30;
+      for (let i = 0; i < toUpdate.length; i += batchSize) {
+        const batch = toUpdate.slice(i, i + batchSize);
+        await Promise.all(batch.map(item => updateProduct(item.id, item.updates)));
+        processedCount += batch.length;
+        setImportProgress({
+          current: processedCount,
+          total: totalItemsToProcess,
+          percentage: Math.min(100, Math.round((processedCount / (totalItemsToProcess || 1)) * 100))
+        });
+      }
+
+      // Crear nuevos productos
+      if (toCreate.length > 0) {
+        await bulkAddProducts(toCreate);
+        processedCount += toCreate.length;
+        setImportProgress({
+          current: processedCount,
+          total: totalItemsToProcess,
+          percentage: 100
+        });
+      }
+
+      // Refrescar inventario
+      fetchInventoryProducts({
+        page: 1,
+        limit,
+        search: debouncedSearchQuery,
+        categoryId: activeTab,
+        subcategoryId: activeSubcategoryTab,
+        sortBy: sortConfigs[0]?.key,
+        sortDesc: sortConfigs[0]?.direction === 'desc'
+      });
+
+      setShowImportReview(false);
+      setImportData({ valid: [], errors: [], duplicates: [], incomplete: [] });
+    } catch (error) {
+      console.error('❌ Error al confirmar importación:', error);
+      alert('Ocurrió un error al procesar la importación. Revisa la consola para más detalles.');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleExportCSV = () => {
-    const headers = ['Código de Barras', 'Producto', 'Marca', 'Categoría', 'Precio', 'Stock'];
+    const headers = ['Código de Barras', 'Producto', 'Marca', 'Categoría', 'Subcategoría', 'Precio', 'Stock'];
     const rows = sortedProducts.map(p => [
       p.barcode || '',
-      `"${p.name}"`,
-      `"${p.brand}"`,
-      `"${adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId}"`,
+      `"${(p.name || '').replace(/"/g, '""')}"`,
+      `"${(p.brand || '').replace(/"/g, '""')}"`,
+      `"${(adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId || '').replace(/"/g, '""')}"`,
+      `"${(adminSubcategories.find(s => s.id === p.subcategoryId)?.title || '').replace(/"/g, '""')}"`,
       p.price,
       p.stock ?? 0
     ]);
@@ -556,23 +760,20 @@ export const Inventory: React.FC = () => {
             <span className="material-symbols-outlined text-[18px]">download</span>
             Exportar
           </button>
-          <button 
-            onClick={() => setShowManageModal({ show: true, type: 'category' })} 
-            className="w-10 h-10 bg-white text-on-surface-variant rounded-full flex items-center justify-center border border-outline-variant/20 hover:bg-surface-container-low transition-all shadow-sm shrink-0"
-            title="Configurar Categorías"
+          <button
+            onClick={() => {
+              setSelectedManageCategory(activeTab !== 'all' ? activeTab : (adminCategories[0]?.id || ''));
+              setShowManageModal({ show: true, type: 'category' });
+            }}
+            className="flex items-center gap-2 bg-white hover:bg-surface-container-low text-on-surface-variant font-bold px-4 py-2.5 rounded-full border border-outline-variant/20 transition-all shadow-sm shrink-0 cursor-pointer text-xs"
+            title="Administrar Categorías, Subcategorías y Etiquetas"
           >
-            <span className="material-symbols-outlined text-[20px]">settings</span>
-          </button>
-          <button 
-            onClick={() => setShowManageModal({ show: true, type: 'tag' })} 
-            className="w-10 h-10 bg-white text-on-surface-variant rounded-full flex items-center justify-center border border-outline-variant/20 hover:bg-surface-container-low transition-all shadow-sm shrink-0"
-            title="Configurar Etiquetas"
-          >
-            <span className="material-symbols-outlined text-[16px]">label</span>
+            <span className="material-symbols-outlined text-[18px]">tune</span>
+            <span>Etiquetas</span>
           </button>
           <PermissionGuard permission="products.create">
-            <button 
-              onClick={() => openProductModal('new')} 
+            <button
+              onClick={() => openProductModal('new')}
               className="bg-primary text-white font-bold px-6 py-2.5 rounded-full hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 text-sm whitespace-nowrap"
             >
               <span className="material-symbols-outlined text-[20px]">add</span> Nuevo
@@ -605,11 +806,10 @@ export const Inventory: React.FC = () => {
           <div className="flex justify-center w-full">
             <button
               onClick={() => handleTabChange('all')}
-              className={`w-2/3 py-2 rounded-xl text-sm font-bold transition-all text-center flex items-center justify-center ${
-                activeTab === 'all'
+              className={`w-2/3 py-2 rounded-xl text-sm font-bold transition-all text-center flex items-center justify-center ${activeTab === 'all'
                   ? 'bg-primary text-white shadow-md'
                   : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
-              }`}
+                }`}
             >
               Todos {activeTab === 'all' && `(${inventoryTotal})`}
             </button>
@@ -621,11 +821,10 @@ export const Inventory: React.FC = () => {
               <button
                 key={cat.id}
                 onClick={() => handleTabChange(cat.id)}
-                className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${
-                  activeTab === cat.id
+                className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${activeTab === cat.id
                     ? 'bg-primary text-white shadow-md'
                     : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
-                }`}
+                  }`}
               >
                 <span className="truncate">{cat.title}</span>
               </button>
@@ -638,11 +837,10 @@ export const Inventory: React.FC = () => {
               <button
                 key={cat.id}
                 onClick={() => handleTabChange(cat.id)}
-                className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${
-                  activeTab === cat.id
+                className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${activeTab === cat.id
                     ? 'bg-primary text-white shadow-md'
                     : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
-                }`}
+                  }`}
               >
                 <span className="truncate">{cat.title}</span>
               </button>
@@ -660,6 +858,45 @@ export const Inventory: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Subcategory Pills Bar (When a category is active) */}
+      {activeTab !== 'all' && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full hide-scrollbar -mt-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <button
+            onClick={() => handleSubcategoryTabChange('all')}
+            className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${activeSubcategoryTab === 'all'
+                ? 'bg-primary text-white shadow-xs'
+                : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/15'
+              }`}
+          >
+            <span>Todas las subcategorías</span>
+          </button>
+          {adminSubcategories
+            .filter(s => s.categoryId === activeTab)
+            .map(sub => (
+              <button
+                key={sub.id}
+                onClick={() => handleSubcategoryTabChange(sub.id)}
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${activeSubcategoryTab === sub.id
+                    ? 'bg-primary text-white shadow-xs'
+                    : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/15'
+                  }`}
+              >
+                <span>{sub.title}</span>
+              </button>
+            ))}
+          <button
+            onClick={() => {
+              setSelectedManageCategory(activeTab);
+              setShowManageModal({ show: true, type: 'subcategory' });
+            }}
+            className="px-3 py-1.5 rounded-xl text-xs font-bold text-primary hover:bg-primary/5 transition-all whitespace-nowrap flex items-center gap-1 border border-dashed border-primary/30 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[14px]">add</span>
+            <span>Nueva subcategoría</span>
+          </button>
+        </div>
+      )}
 
       {/* Bulk Action Bar */}
       {selectedIds.length > 0 && (
@@ -686,8 +923,8 @@ export const Inventory: React.FC = () => {
               <p className="text-xs text-red-700 mt-1">{productsError}</p>
             </div>
           </div>
-          <button 
-            onClick={() => clearError()} 
+          <button
+            onClick={() => clearError()}
             className="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100/50 cursor-pointer flex items-center justify-center transition-all"
           >
             <span className="material-symbols-outlined text-[18px]">close</span>
@@ -795,9 +1032,17 @@ export const Inventory: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-8 py-4">
-                        <span className="bg-surface-container-low px-3 py-1.5 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
-                          {adminCategories.find(c => c.id === product.categoryId)?.title || product.categoryId}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className="bg-surface-container-low px-3 py-1.5 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
+                            {adminCategories.find(c => c.id === product.categoryId)?.title || product.categoryId}
+                          </span>
+                          {product.subcategoryId && (
+                            <span className="text-[11px] font-semibold text-primary flex items-center gap-0.5">
+                              <span className="text-[12px] opacity-60">↳</span>
+                              {adminSubcategories.find(s => s.id === product.subcategoryId)?.title || product.subcategoryId}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-8 py-4">
                         <div className="flex flex-col">
@@ -929,7 +1174,7 @@ export const Inventory: React.FC = () => {
               {/* Código de Barras */}
               <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10">
                 <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest block mb-2">Código de Barras</label>
-                <input type="text" value={productForm.barcode} onChange={e => { setProductForm({...productForm, barcode: e.target.value}); setBarcodeError(null); }} className="w-full bg-surface-container-low border border-outline-variant/10 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary" placeholder="Escanear o escribir..." />
+                <input type="text" value={productForm.barcode} onChange={e => { setProductForm({ ...productForm, barcode: e.target.value }); setBarcodeError(null); }} className="w-full bg-surface-container-low border border-outline-variant/10 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary" placeholder="Escanear o escribir..." />
                 {barcodeError && <p className="text-error text-[10px] font-bold mt-1 animate-in shake duration-300">{barcodeError}</p>}
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -937,10 +1182,42 @@ export const Inventory: React.FC = () => {
                 <input type="text" value={productForm.brand} onChange={e => setProductForm({ ...productForm, brand: e.target.value })} placeholder="Marca" className="bg-surface-container-low rounded-xl px-4 py-3 font-bold" />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <select value={productForm.categoryId} onChange={e => setProductForm({ ...productForm, categoryId: e.target.value })} className="bg-surface-container-low rounded-xl px-4 py-3 font-bold">
-                  {adminCategories.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-                </select>
-                <select value={productForm.badge} onChange={e => setProductForm({ ...productForm, badge: e.target.value })} className="bg-surface-container-low rounded-xl px-4 py-3 font-bold">
+                <div>
+                  <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Categoría *</label>
+                  <select
+                    value={productForm.categoryId}
+                    onChange={e => {
+                      const newCatId = e.target.value;
+                      const validSubs = adminSubcategories.filter(s => s.categoryId === newCatId);
+                      const subStillValid = validSubs.some(s => s.id === productForm.subcategoryId);
+                      setProductForm({
+                        ...productForm,
+                        categoryId: newCatId,
+                        subcategoryId: subStillValid ? productForm.subcategoryId : ''
+                      });
+                    }}
+                    className="w-full bg-surface-container-low rounded-xl px-4 py-3 font-bold"
+                  >
+                    {adminCategories.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Subcategoría</label>
+                  <select
+                    value={productForm.subcategoryId || ''}
+                    onChange={e => setProductForm({ ...productForm, subcategoryId: e.target.value })}
+                    className="w-full bg-surface-container-low rounded-xl px-4 py-3 font-bold"
+                  >
+                    <option value="">Sin subcategoría</option>
+                    {adminSubcategories
+                      .filter(s => s.categoryId === productForm.categoryId)
+                      .map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">Etiqueta / Badge</label>
+                <select value={productForm.badge} onChange={e => setProductForm({ ...productForm, badge: e.target.value })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 font-bold">
                   <option value="">Sin etiqueta</option>
                   {adminTags.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
@@ -958,7 +1235,7 @@ export const Inventory: React.FC = () => {
                     <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">{productForm.saleType === 'weight' ? 'Precio por kg *' : 'Precio *'}</label>
                     <input type="number" value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} className="w-full bg-surface-container-low rounded-xl px-4 py-3 outline-none font-bold text-primary" />
                   </div>
-                  
+
                 </div>
                 <div className="space-y-4">
                   <div>
@@ -1022,23 +1299,177 @@ export const Inventory: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Gestión (Compacto) */}
+      {/* Modal de Gestión (Categorías, Subcategorías, Etiquetas) */}
       {showManageModal.show && (
         <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setShowManageModal({ show: false, type: 'category' })} />
-          <div className="bg-white w-full max-w-sm rounded-4xl shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 p-6">
-            <h3 className="font-bold mb-4">Gestionar {showManageModal.type === 'category' ? 'Categorías' : 'Etiquetas'}</h3>
-            <div className="flex gap-2 mb-4">
-              <input type="text" value={newItemName} onChange={e => setNewItemName(e.target.value)} placeholder="Nuevo..." className="flex-1 bg-surface-container-low rounded-xl px-4 py-2 outline-none" />
-              <button onClick={() => { if (!newItemName) return; if (showManageModal.type === 'category') addCategory({ id: newItemName.toLowerCase().replace(/ /g, '-'), title: newItemName, description: '' }); else addTag(newItemName); setNewItemName(''); }} className="bg-primary text-white p-2 rounded-xl"><span className="material-symbols-outlined">add</span></button>
+          <div className="bg-white w-full max-w-md rounded-4xl shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-lg text-on-surface">Gestionar Catálogo</h3>
+              <button onClick={() => setShowManageModal({ show: false, type: 'category' })} className="w-8 h-8 rounded-full hover:bg-surface-container-high flex items-center justify-center text-on-surface-variant cursor-pointer">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
             </div>
+
+            {/* Pestañas del Modal */}
+            <div className="flex bg-surface-container-low p-1 rounded-2xl mb-4 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setShowManageModal({ show: true, type: 'category' })}
+                className={`flex-1 py-2 rounded-xl transition-all cursor-pointer ${showManageModal.type === 'category' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Categorías
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedManageCategory && adminCategories.length > 0) {
+                    setSelectedManageCategory(adminCategories[0].id);
+                  }
+                  setShowManageModal({ show: true, type: 'subcategory' });
+                }}
+                className={`flex-1 py-2 rounded-xl transition-all cursor-pointer ${showManageModal.type === 'subcategory' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Subcategorías
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowManageModal({ show: true, type: 'tag' })}
+                className={`flex-1 py-2 rounded-xl transition-all cursor-pointer ${showManageModal.type === 'tag' ? 'bg-white text-primary shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Etiquetas
+              </button>
+            </div>
+
+            {/* Selector de Categoría Padre si estamos en pestaña de Subcategorías */}
+            {showManageModal.type === 'subcategory' && (
+              <div className="mb-4">
+                <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block">
+                  Categoría Padre
+                </label>
+                <select
+                  value={selectedManageCategory || adminCategories[0]?.id || ''}
+                  onChange={e => setSelectedManageCategory(e.target.value)}
+                  className="w-full bg-surface-container-low rounded-xl px-4 py-2.5 text-xs font-bold outline-none border border-outline-variant/10 focus:border-primary"
+                >
+                  {adminCategories.map(c => (
+                    <option key={c.id} value={c.id}>{c.title}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Input para agregar */}
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={newItemName}
+                onChange={e => setNewItemName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (!newItemName.trim()) return;
+                    const name = newItemName.trim();
+                    if (showManageModal.type === 'category') {
+                      const slug = name.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+                      addCategory({ id: slug, title: name, description: '' });
+                    } else if (showManageModal.type === 'subcategory') {
+                      const parentCat = selectedManageCategory || adminCategories[0]?.id || 'almacen';
+                      const slug = name.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+                      const id = `${parentCat}-${slug}`;
+                      addSubcategory({
+                        id,
+                        categoryId: parentCat,
+                        title: name,
+                        description: '',
+                        sortOrder: adminSubcategories.filter(s => s.categoryId === parentCat).length
+                      });
+                    } else {
+                      addTag(name);
+                    }
+                    setNewItemName('');
+                  }
+                }}
+                placeholder={
+                  showManageModal.type === 'category'
+                    ? 'Nueva categoría...'
+                    : showManageModal.type === 'subcategory'
+                      ? 'Nueva subcategoría...'
+                      : 'Nueva etiqueta...'
+                }
+                className="flex-1 bg-surface-container-low rounded-xl px-4 py-2.5 text-xs font-bold outline-none border border-outline-variant/10 focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newItemName.trim()) return;
+                  const name = newItemName.trim();
+                  if (showManageModal.type === 'category') {
+                    const slug = name.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+                    addCategory({ id: slug, title: name, description: '' });
+                  } else if (showManageModal.type === 'subcategory') {
+                    const parentCat = selectedManageCategory || adminCategories[0]?.id || 'almacen';
+                    const slug = name.toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
+                    const id = `${parentCat}-${slug}`;
+                    addSubcategory({
+                      id,
+                      categoryId: parentCat,
+                      title: name,
+                      description: '',
+                      sortOrder: adminSubcategories.filter(s => s.categoryId === parentCat).length
+                    });
+                  } else {
+                    addTag(name);
+                  }
+                  setNewItemName('');
+                }}
+                className="bg-primary text-white p-2.5 rounded-xl hover:bg-primary/90 transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm"
+              >
+                <span className="material-symbols-outlined text-[20px]">add</span>
+              </button>
+            </div>
+
+            {/* Listado de elementos */}
             <div className="max-h-60 overflow-y-auto custom-scrollbar space-y-2">
-              {(showManageModal.type === 'category' ? adminCategories : adminTags).map((item: any) => (
-                <div key={typeof item === 'string' ? item : item.id} className="flex justify-between items-center bg-surface-container-low p-3 rounded-xl group">
-                  <span className="font-bold text-xs">{typeof item === 'string' ? item : item.title}</span>
-                  <button onClick={() => setDeleteConfirm({ id: typeof item === 'string' ? item : item.id, type: showManageModal.type })} className="text-error opacity-0 group-hover:opacity-100"><span className="material-symbols-outlined text-[18px]">delete</span></button>
+              {showManageModal.type === 'subcategory' ? (
+                adminSubcategories
+                  .filter(s => s.categoryId === (selectedManageCategory || adminCategories[0]?.id))
+                  .map(sub => (
+                    <div key={sub.id} className="flex justify-between items-center bg-surface-container-low p-3 rounded-xl group">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-xs text-on-surface">{sub.title}</span>
+                        <span className="text-[10px] text-on-surface-variant/60 font-mono">ID: {sub.id}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirm({ id: sub.id, type: 'subcategory' })}
+                        className="text-error opacity-70 group-hover:opacity-100 hover:scale-110 transition-all p-1 cursor-pointer"
+                        title="Eliminar subcategoría"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">delete</span>
+                      </button>
+                    </div>
+                  ))
+              ) : (
+                (showManageModal.type === 'category' ? adminCategories : adminTags).map((item: any) => (
+                  <div key={typeof item === 'string' ? item : item.id} className="flex justify-between items-center bg-surface-container-low p-3 rounded-xl group">
+                    <span className="font-bold text-xs">{typeof item === 'string' ? item : item.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirm({ id: typeof item === 'string' ? item : item.id, type: showManageModal.type })}
+                      className="text-error opacity-70 group-hover:opacity-100 hover:scale-110 transition-all p-1 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  </div>
+                ))
+              )}
+
+              {showManageModal.type === 'subcategory' && adminSubcategories.filter(s => s.categoryId === (selectedManageCategory || adminCategories[0]?.id)).length === 0 && (
+                <div className="p-6 text-center text-xs text-on-surface-variant/60 font-medium border border-dashed border-outline-variant/20 rounded-2xl">
+                  No hay subcategorías en esta categoría todavía.
                 </div>
-              ))}
+              )}
             </div>
           </div>
         </div>
@@ -1054,8 +1485,19 @@ export const Inventory: React.FC = () => {
             </div>
             <h4 className="font-bold mb-6">¿Confirmar eliminación?</h4>
             <div className="flex flex-col gap-2">
-              <button onClick={() => { if (deleteConfirm.type === 'product') deleteProduct(deleteConfirm.id); else if (deleteConfirm.type === 'category') deleteCategory(deleteConfirm.id); else deleteTag(deleteConfirm.id); setDeleteConfirm(null); }} className="w-full bg-error text-white font-bold py-3 rounded-xl">Eliminar</button>
-              <button onClick={() => setDeleteConfirm(null)} className="w-full py-3 font-bold text-on-surface-variant">Cancelar</button>
+              <button
+                onClick={() => {
+                  if (deleteConfirm.type === 'product') deleteProduct(deleteConfirm.id);
+                  else if (deleteConfirm.type === 'category') deleteCategory(deleteConfirm.id);
+                  else if (deleteConfirm.type === 'subcategory') deleteSubcategory(deleteConfirm.id);
+                  else deleteTag(deleteConfirm.id);
+                  setDeleteConfirm(null);
+                }}
+                className="w-full bg-error text-white font-bold py-3 rounded-xl cursor-pointer"
+              >
+                Eliminar
+              </button>
+              <button onClick={() => setDeleteConfirm(null)} className="w-full py-3 font-bold text-on-surface-variant cursor-pointer">Cancelar</button>
             </div>
           </div>
         </div>
@@ -1078,10 +1520,24 @@ export const Inventory: React.FC = () => {
 
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
               {/* Resumen */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
                 <div className="bg-green-50 border border-green-100 p-4 rounded-2xl text-center">
-                  <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1">Válidos</p>
-                  <p className="text-2xl font-black text-green-600">{importData.valid.length}</p>
+                  <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1">Nuevos</p>
+                  <p className="text-2xl font-black text-green-600">
+                    {importData.valid.filter(p => !p.isUpdate).length}
+                  </p>
+                </div>
+                <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl text-center">
+                  <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-1">Con Cambios</p>
+                  <p className="text-2xl font-black text-blue-600">
+                    {importData.valid.filter(p => p.isUpdate && p.isModified).length}
+                  </p>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl text-center">
+                  <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-1">Sin Cambios</p>
+                  <p className="text-2xl font-black text-slate-500">
+                    {importData.valid.filter(p => p.isUpdate && !p.isModified).length}
+                  </p>
                 </div>
                 <div className="bg-red-50 border border-red-100 p-4 rounded-2xl text-center">
                   <p className="text-[10px] font-black text-red-700 uppercase tracking-widest mb-1">Errores</p>
@@ -1091,10 +1547,6 @@ export const Inventory: React.FC = () => {
                   <p className="text-[10px] font-black text-orange-700 uppercase tracking-widest mb-1">Duplicados</p>
                   <p className="text-2xl font-black text-orange-600">{importData.duplicates.length}</p>
                 </div>
-                <div className="bg-surface-container-low border border-outline-variant/10 p-4 rounded-2xl text-center">
-                  <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-widest mb-1">Incompletos</p>
-                  <p className="text-2xl font-black">{importData.incomplete.length}</p>
-                </div>
               </div>
 
               {/* Tablas de resultados */}
@@ -1103,15 +1555,17 @@ export const Inventory: React.FC = () => {
                   <div>
                     <h4 className="font-bold text-sm mb-4 flex items-center gap-2">
                       <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                      Productos Listos para Importar ({importData.valid.length})
+                      Productos Listos para Procesar ({importData.valid.length})
                     </h4>
                     <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl overflow-hidden">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-surface-container-low font-bold">
                           <tr>
+                            <th className="px-4 py-3">Acción</th>
                             <th className="px-4 py-3">Nombre</th>
                             <th className="px-4 py-3">Marca</th>
                             <th className="px-4 py-3">Categoría</th>
+                            <th className="px-4 py-3">Subcategoría</th>
                             <th className="px-4 py-3 text-right">Precio</th>
                             <th className="px-4 py-3 text-right">Stock</th>
                             <th className="px-4 py-3">Código</th>
@@ -1121,14 +1575,36 @@ export const Inventory: React.FC = () => {
                         <tbody className="divide-y divide-outline-variant/5">
                           {importData.valid.slice(0, 10).map((p, i) => (
                             <tr key={i}>
+                              <td className="px-4 py-3">
+                                {!p.isUpdate ? (
+                                  <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider whitespace-nowrap">
+                                    Nuevo
+                                  </span>
+                                ) : p.isModified ? (
+                                  <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider whitespace-nowrap">
+                                    Modificar
+                                  </span>
+                                ) : (
+                                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider whitespace-nowrap">
+                                    Sin cambios
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-4 py-3 font-bold">{p.name}</td>
-                              <td className="px-4 py-3 text-on-surface-variant">{p.brand}</td>
+                              <td className="px-4 py-3 text-on-surface-variant">{p.brand || '---'}</td>
                               <td className="px-4 py-3"><span className="bg-surface-container-low px-2 py-0.5 rounded text-[9px] font-black">{p.category}</span></td>
+                              <td className="px-4 py-3">
+                                {p.subcategory ? (
+                                  <span className="text-primary font-bold">{p.subcategory}</span>
+                                ) : (
+                                  <span className="text-on-surface-variant/40 italic">---</span>
+                                )}
+                              </td>
                               <td className="px-4 py-3 text-right font-black text-primary">${p.price}</td>
                               <td className="px-4 py-3 text-right font-black">{p.stock}</td>
-                              <td className="px-4 py-3 font-mono text-[10px] text-on-surface-variant">#{p.barcode}</td>
+                              <td className="px-4 py-3 font-mono text-[10px] text-on-surface-variant">{p.barcode ? `#${p.barcode}` : '---'}</td>
                               <td className="px-4 py-3 text-right">
-                                <button onClick={() => discardImportRow('valid', p.id)} className="text-on-surface-variant hover:text-error transition-colors">
+                                <button onClick={() => discardImportRow('valid', p.id)} className="text-on-surface-variant hover:text-error transition-colors cursor-pointer">
                                   <span className="material-symbols-outlined text-[18px]">close</span>
                                 </button>
                               </td>
@@ -1147,17 +1623,17 @@ export const Inventory: React.FC = () => {
 
                 {(importData.errors.length > 0 || importData.duplicates.length > 0 || importData.incomplete.length > 0) && (
                   <div>
-                    <h4 className="font-bold text-sm mb-4 flex items-center gap-2">
+                    <h4 className="font-bold text-sm mb-4 text-red-600 flex items-center gap-2">
                       <span className="w-2 h-2 bg-red-500 rounded-full"></span>
-                      Problemas Encontrados ({importData.errors.length + importData.duplicates.length + importData.incomplete.length})
+                      Filas que serán omitidas ({importData.errors.length + importData.duplicates.length + importData.incomplete.length})
                     </h4>
-                    <div className="bg-red-50/30 border border-red-100 rounded-2xl overflow-hidden">
+                    <div className="bg-red-50/50 border border-red-100 rounded-2xl overflow-hidden">
                       <table className="w-full text-left text-xs">
-                        <thead className="bg-red-50 font-bold text-red-700">
+                        <thead className="bg-red-100/50 font-bold text-red-900">
                           <tr>
                             <th className="px-4 py-3">Fila</th>
-                            <th className="px-4 py-3">Producto</th>
-                            <th className="px-4 py-3">Motivo del Error</th>
+                            <th className="px-4 py-3">Nombre</th>
+                            <th className="px-4 py-3">Motivo</th>
                             <th className="px-4 py-3 w-10"></th>
                           </tr>
                         </thead>
@@ -1176,7 +1652,7 @@ export const Inventory: React.FC = () => {
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-right">
-                                <button onClick={() => discardImportRow(p.type, p.row)} className="text-on-surface-variant hover:text-error transition-colors">
+                                <button onClick={() => discardImportRow(p.type, p.row)} className="text-on-surface-variant hover:text-error transition-colors cursor-pointer">
                                   <span className="material-symbols-outlined text-[18px]">delete</span>
                                 </button>
                               </td>
@@ -1190,24 +1666,57 @@ export const Inventory: React.FC = () => {
               </div>
             </div>
 
-            <div className="p-8 border-t border-outline-variant/10 bg-surface-container-lowest flex flex-col md:flex-row gap-4 items-center justify-between">
-              <div className="text-sm font-medium text-on-surface-variant">
-                Se importarán <span className="font-black text-on-background">{importData.valid.length}</span> productos válidos.
-              </div>
-              <div className="flex gap-4 w-full md:w-auto">
-                <button
-                  onClick={() => setShowImportReview(false)}
-                  className="flex-1 md:flex-none px-8 py-3 font-bold text-on-surface-variant hover:bg-surface-container-low rounded-2xl transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleConfirmImport}
-                  disabled={importData.valid.length === 0}
-                  className="flex-1 md:flex-none bg-primary text-white font-bold px-12 py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all disabled:opacity-50 disabled:grayscale"
-                >
-                  Confirmar y Guardar
-                </button>
+            <div className="p-8 border-t border-outline-variant/10 bg-surface-container-lowest flex flex-col gap-4">
+              {isImporting && (
+                <div className="w-full bg-surface-container-low rounded-2xl p-4 border border-outline-variant/20 animate-in fade-in duration-300">
+                  <div className="flex justify-between items-center text-xs font-bold mb-2">
+                    <span className="text-on-surface flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-primary animate-ping"></span>
+                      Guardando cambios en Supabase...
+                    </span>
+                    <span className="text-primary font-mono font-black text-sm">
+                      {importProgress.current} / {importProgress.total} ({importProgress.percentage}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-outline-variant/20 h-3 rounded-full overflow-hidden">
+                    <div
+                      className="bg-primary h-full transition-all duration-300 ease-out rounded-full shadow-sm"
+                      style={{ width: `${importProgress.percentage}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+                <div className="text-sm font-medium text-on-surface-variant">
+                  Se procesarán <span className="font-black text-green-600">{importData.valid.filter(p => !p.isUpdate).length}</span> nuevos y <span className="font-black text-blue-600">{importData.valid.filter(p => p.isUpdate && p.isModified).length}</span> modificaciones ({importData.valid.filter(p => p.isUpdate && !p.isModified).length} sin cambios que se omitirán).
+                </div>
+                <div className="flex gap-4 w-full md:w-auto">
+                  <button
+                    onClick={() => setShowImportReview(false)}
+                    disabled={isImporting}
+                    className="flex-1 md:flex-none px-8 py-3 font-bold text-on-surface-variant hover:bg-surface-container-low rounded-2xl transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleConfirmImport}
+                    disabled={importData.valid.length === 0 || isImporting}
+                    className={`flex-1 md:flex-none font-bold px-10 py-4 rounded-2xl transition-all flex items-center justify-center gap-3 cursor-pointer ${isImporting
+                        ? 'bg-primary/80 text-white cursor-wait'
+                        : 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed'
+                      }`}
+                  >
+                    {isImporting ? (
+                      <>
+                        <div className="w-5 h-5 border-3 border-white/30 border-t-white rounded-full animate-spin shrink-0"></div>
+                        <span className="whitespace-nowrap">Procesando ({importProgress.percentage}%)...</span>
+                      </>
+                    ) : (
+                      <span>Confirmar e Importar</span>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
