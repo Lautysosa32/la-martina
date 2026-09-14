@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { parseScaleBarcode } from '../utils/scale-barcode';
+import { useScrollLock } from '../utils/useScrollLock';
 
 interface WeightInputModalProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ export const WeightInputModal: React.FC<WeightInputModalProps> = ({
   pricePerKg = 0,
   subtitle
 }) => {
+  useScrollLock(isOpen);
   const [value, setValue] = useState<string>(initialValue > 0 ? initialValue.toString() : '');
   const [barcodeBuffer, setBarcodeBuffer] = useState<string>('');
   const [lastScannedFeedback, setLastScannedFeedback] = useState<string | null>(null);

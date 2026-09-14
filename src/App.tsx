@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useAuthStore } from './stores/useAuthStore';
 import { AuthGuard } from './components/auth/AuthGuard';
@@ -36,6 +36,14 @@ import { WhatsAppMessages } from './pages/Admin/WhatsAppMessages';
 import { Expenses } from './pages/Admin/Expenses';
 import { AdminLogin } from './pages/AdminLogin';
 
+function ScrollToTop() {
+  const { pathname, search } = useLocation();
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [pathname, search]);
+  return null;
+}
+
 export default function App() {
   const initializeAuth = useAuthStore((state) => state.initializeAuth);
   const isAuthInitialized = useAuthStore((state) => state.initialized);
@@ -44,11 +52,9 @@ export default function App() {
     initializeAuth();
   }, [initializeAuth]);
 
-  // Optionally, you can show a global loader here while `isAuthInitialized` is false,
-  // but for now we just render the app so we don't break existing routing.
-
   return (
     <div className="flex flex-col min-h-screen">
+      <ScrollToTop />
       <Routes>
         {/* Rutas de la Tienda */}
         <Route path="/" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><Home /></main><Footer /></>} />

@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product.types';
 import { productsService } from '../services/products.service';
+import { productRepository } from '../offline/repositories/productRepository';
+import { syncEngine } from '../offline/syncEngine';
+import { LocalProduct } from '../offline/types';
 
 interface ProductState {
   products: Product[];
@@ -29,6 +32,7 @@ interface ProductState {
   getProductByBarcode: (barcode: string) => Product | undefined;
   bulkAddProducts: (products: CreateProductInput[]) => Promise<boolean>;
   bulkUpdatePrice: (ids: string[], percentage: number) => Promise<boolean>;
+  bulkTogglePause: (ids: string[], forceState?: boolean) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -57,20 +61,91 @@ export const useProductStore = create<ProductState>((set, get) => ({
   fetchProducts: async () => {
     set({ loading: true, error: null });
     try {
-      console.log('🔄 Fetching products from Supabase...');
-      const products = await productsService.getProducts();
-      set({ products, loading: false });
-      console.log('✅ Products fetched successfully:', products.length);
+      // 1. Hidratación inmediata desde IndexedDB local (0 ms de bloqueo para el POS)
+      const cached = await productRepository.getAllProducts();
+      if (cached && cached.length > 0) {
+        const mappedCached: Product[] = cached.map(p => ({
+          id: p.id,
+          branchId: p.branch_id ?? null,
+          name: p.name,
+          brand: p.brand,
+          categoryId: p.category_id,
+          subcategoryId: p.subcategory_id || null,
+          price: p.price,
+          originalPrice: p.original_price ?? null,
+          image: p.image,
+          format: p.format ?? null,
+          isNew: p.is_new ?? false,
+          discount: p.discount ? Number(p.discount) : null,
+          badge: p.badge ?? null,
+          minStock: p.min_stock ?? 0,
+          barcode: p.barcode ?? null,
+          stock: p.stock,
+          saleType: p.sale_type,
+          isPaused: p.is_paused ?? false,
+          createdAt: '',
+          updatedAt: p.updated_at
+        }));
+        set({ products: mappedCached, loading: false });
+        console.log('📦 Productos precargados desde IndexedDB local:', mappedCached.length);
+      }
+
+      // 2. Si hay red, sincronizar de forma diferencial (Delta Sync) solo los cambios
+      console.log('🔄 Ejecutando Delta Sync de catálogo con Supabase...');
+      await syncEngine.pullProductsIncremental();
+
+      // 3. Recargar el catálogo local fresco desde IndexedDB
+      const freshLocal = await productRepository.getAllProducts();
+      if (freshLocal && freshLocal.length > 0) {
+        const mappedFresh: Product[] = freshLocal.map(p => ({
+          id: p.id,
+          branchId: p.branch_id ?? null,
+          name: p.name,
+          brand: p.brand,
+          categoryId: p.category_id,
+          subcategoryId: p.subcategory_id || null,
+          price: p.price,
+          originalPrice: p.original_price ?? null,
+          image: p.image,
+          format: p.format ?? null,
+          isNew: p.is_new ?? false,
+          discount: p.discount ? Number(p.discount) : null,
+          badge: p.badge ?? null,
+          minStock: p.min_stock ?? 0,
+          barcode: p.barcode ?? null,
+          stock: p.stock,
+          saleType: p.sale_type,
+          isPaused: p.is_paused ?? false,
+          createdAt: '',
+          updatedAt: p.updated_at
+        }));
+        set({ products: mappedFresh, loading: false });
+        console.log('✅ Catálogo POS sincronizado y actualizado en memoria:', mappedFresh.length);
+      } else {
+        set({ loading: false });
+      }
     } catch (err: any) {
       console.error('❌ Error fetching products:', err);
-      set({ error: getErrorMessage(err, 'Error al obtener productos'), loading: false });
+      // Si ya tenemos productos locales en memoria, continuar operando
+      const current = get().products;
+      if (current.length === 0) {
+        set({ error: getErrorMessage(err, 'Error al obtener productos'), loading: false });
+      } else {
+        console.log('ℹ️ Operando con productos locales de IndexedDB');
+        set({ loading: false });
+      }
     }
   },
 
   fetchInventoryProducts: async (params) => {
     set({ inventoryLoading: true, error: null });
     try {
-      const { data, total } = await productsService.getProductsPaginated(params);
+      const { data, total } = await productsService.getProductsPaginated({
+        ...params,
+        includePaused: true,
+        onlyInStock: false,
+        useCache: false
+      });
       set({ inventoryProducts: data, inventoryTotal: total, inventoryLoading: false });
     } catch (err: any) {
       console.error('❌ Error fetching inventory products:', err);
@@ -138,6 +213,14 @@ export const useProductStore = create<ProductState>((set, get) => ({
         }
       } else {
         newLowStock = state.lowStockDashboardProducts.map(p => p.id === id ? { ...p, ...updates } : p);
+      }
+
+      if (updates.isPaused === true) {
+        const wasInLowStock = state.lowStockDashboardProducts.some(p => p.id === id);
+        if (wasInLowStock) {
+          newLowStock = newLowStock.filter(p => p.id !== id);
+          newLowStockTotal = Math.max(0, newLowStockTotal - 1);
+        }
       }
 
       return {
@@ -335,26 +418,28 @@ export const useProductStore = create<ProductState>((set, get) => ({
   bulkUpdatePrice: async (ids, percentage) => {
     const multiplier = 1 + (percentage / 100);
     const previousProducts = get().products;
+    const previousInventory = get().inventoryProducts;
     
     // Optimistic UI
+    const updateProductPrice = (p: Product) => {
+      if (ids.includes(p.id)) {
+        return {
+          ...p,
+          price: Math.round(p.price * multiplier),
+          originalPrice: p.originalPrice ? Math.round(p.originalPrice * multiplier) : p.originalPrice
+        };
+      }
+      return p;
+    };
+
     set(state => ({
-      products: state.products.map(p => {
-        if (ids.includes(p.id)) {
-          return {
-            ...p,
-            price: Math.round(p.price * multiplier),
-            originalPrice: p.originalPrice ? Math.round(p.originalPrice * multiplier) : p.originalPrice
-          };
-        }
-        return p;
-      }),
+      products: state.products.map(updateProductPrice),
+      inventoryProducts: state.inventoryProducts.map(updateProductPrice),
       error: null
     }));
 
     try {
       console.log(`🔄 Bulk updating prices for ${ids.length} products...`);
-      // Since Supabase REST doesn't easily support a single bulk PATCH with different values without an RPC, 
-      // we'll loop sequentially or in parallel batches. For small numbers, Promise.all is fine.
       const toUpdate = get().products.filter(p => ids.includes(p.id));
       await Promise.all(
         toUpdate.map(p => productsService.updateProduct(p.id, { 
@@ -366,7 +451,63 @@ export const useProductStore = create<ProductState>((set, get) => ({
       return true;
     } catch (err: any) {
       console.error('❌ Error in bulk updating prices:', err);
-      set({ products: previousProducts, error: getErrorMessage(err, 'Error actualizando precios masivamente') });
+      set({ 
+        products: previousProducts, 
+        inventoryProducts: previousInventory,
+        error: getErrorMessage(err, 'Error actualizando precios masivamente') 
+      });
+      return false;
+    }
+  },
+
+  bulkTogglePause: async (ids, forceState) => {
+    if (ids.length === 0) return true;
+    const currentInventory = get().inventoryProducts;
+    const currentProducts = get().products;
+    
+    // Si no se especifica forceState:
+    // Si al menos uno no está pausado -> pausar todos.
+    // Si todos ya están pausados -> reanudar todos.
+    const selectedItems = currentInventory.length > 0
+      ? currentInventory.filter(p => ids.includes(p.id))
+      : currentProducts.filter(p => ids.includes(p.id));
+
+    const targetPaused = forceState !== undefined 
+      ? forceState 
+      : (selectedItems.length > 0 ? selectedItems.some(p => !p.isPaused) : true);
+
+    const previousProducts = currentProducts;
+    const previousInventory = currentInventory;
+    const previousLowStock = get().lowStockDashboardProducts;
+    const previousLowStockTotal = get().lowStockDashboardTotal;
+
+    // Optimistic UI
+    set(state => ({
+      products: state.products.map(p => ids.includes(p.id) ? { ...p, isPaused: targetPaused } : p),
+      inventoryProducts: state.inventoryProducts.map(p => ids.includes(p.id) ? { ...p, isPaused: targetPaused } : p),
+      lowStockDashboardProducts: targetPaused
+        ? state.lowStockDashboardProducts.filter(p => !ids.includes(p.id))
+        : state.lowStockDashboardProducts,
+      lowStockDashboardTotal: targetPaused
+        ? Math.max(0, state.lowStockDashboardTotal - state.lowStockDashboardProducts.filter(p => ids.includes(p.id)).length)
+        : state.lowStockDashboardTotal,
+      error: null
+    }));
+
+    try {
+      console.log(`🔄 Bulk toggling pause (${targetPaused ? 'PAUSAR' : 'REANUDAR'}) for ${ids.length} products...`);
+      await productsService.bulkUpdatePause(ids, targetPaused);
+      console.log('✅ Bulk pause update successful');
+      return true;
+    } catch (err: any) {
+      console.error('❌ Error in bulk pause toggle:', err);
+      set({ 
+        products: previousProducts, 
+        inventoryProducts: previousInventory,
+        lowStockDashboardProducts: previousLowStock,
+        lowStockDashboardTotal: previousLowStockTotal,
+        error: getErrorMessage(err, 'Error al cambiar estado de pausa de los productos') 
+      });
       return false;
     }
   },

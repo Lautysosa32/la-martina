@@ -35,8 +35,8 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         
         if (data) {
           const favoriteIds = data.map((f: any) => f.product_id);
-          // Resolve to actual product objects from our product store
-          const favProducts = products.filter(p => favoriteIds.includes(p.id)) as any;
+          // Resolve to actual product objects from our product store (excluyendo pausados)
+          const favProducts = products.filter(p => favoriteIds.includes(p.id) && !p.isPaused) as any;
           setFavorites(favProducts);
         }
       };

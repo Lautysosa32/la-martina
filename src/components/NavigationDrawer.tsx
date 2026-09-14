@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { categories as mockCategories } from '../data/mockData';
 import { useAdmin } from '../context/AdminContext';
+import { useScrollLock } from '../utils/useScrollLock';
 
 interface NavigationDrawerProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface NavigationDrawerProps {
 }
 
 export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onClose, onOpenZones }) => {
+  useScrollLock(isOpen);
   const { adminCategories, adminSubcategories } = useAdmin();
   const categoriesList = adminCategories.length > 0 ? adminCategories : mockCategories;
   const [expandedCatId, setExpandedCatId] = useState<string | null>(null);
@@ -203,7 +205,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
 
         {/* Bottom Drawer Footer */}
         <div className="p-3 border-t border-outline-variant/15 bg-surface-container-low/50 text-xs text-on-surface-variant/70 text-center">
-          <p className="font-semibold text-on-surface">La Martina Supermercado</p>
+          <p className="font-semibold text-on-surface">Martina Supermercado</p>
           <p className="text-[10px] mt-0.5">Calidad y frescura garantizada</p>
         </div>
       </aside>

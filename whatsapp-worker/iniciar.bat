@@ -1,9 +1,9 @@
 @echo off
-title Robot WhatsApp - La Martina
+title Robot WhatsApp - Martina Supermercado
 color 0A
 
 echo ===================================================
-echo   🤖 ROBOT DE WHATSAPP - LA MARTINA PREMIUM 🏪
+echo   🤖 ROBOT DE WHATSAPP - Martina Supermercado PREMIUM 🏪
 echo ===================================================
 echo.
 

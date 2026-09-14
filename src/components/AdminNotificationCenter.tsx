@@ -18,7 +18,11 @@ interface AppNotification {
   isRead?: boolean;
 }
 
-export const AdminNotificationCenter: React.FC = () => {
+interface AdminNotificationCenterProps {
+  compact?: boolean;
+}
+
+export const AdminNotificationCenter: React.FC<AdminNotificationCenterProps> = ({ compact = false }) => {
   const navigate = useNavigate();
   const { orders, customers, isCashRegisterOpen, cashRegister, currentAccountConfig } = useAdmin();
   const { employeeProfile, hasPermission } = useAuthStore();
@@ -35,15 +39,19 @@ export const AdminNotificationCenter: React.FC = () => {
     fetchLowStockDashboardProducts({ page: 1, limit: 100 });
   }, [employeeProfile?.id, fetchReads, fetchLowStockDashboardProducts]);
 
-  // Click outside listener
+  // Click outside listener (mouse and touch)
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
+    const handler = (e: MouseEvent | TouchEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
   }, []);
 
   const isSuperOrOwner = employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner';
@@ -208,34 +216,60 @@ export const AdminNotificationCenter: React.FC = () => {
   return (
     <div className="relative" ref={dropdownRef}>
       <button 
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-outline-variant/10 shadow-sm relative hover:bg-surface-container-lowest transition-colors"
+        className={compact
+          ? "w-9 h-9 rounded-xl flex items-center justify-center hover:bg-surface-container-low transition-all text-on-surface relative cursor-pointer"
+          : "w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-outline-variant/10 shadow-sm relative hover:bg-surface-container-lowest transition-colors cursor-pointer"
+        }
+        aria-label="Notificaciones"
       >
-        <span className="material-symbols-outlined" aria-hidden="true" translate="no">notifications</span>
+        <span className={`material-symbols-outlined ${compact ? 'text-[22px]' : ''}`} aria-hidden="true" translate="no">notifications</span>
         {unreadCount > 0 && (
-          <span className="absolute top-2 right-2 w-5 h-5 bg-error rounded-full text-white text-[10px] font-bold flex items-center justify-center animate-in zoom-in">
-            {unreadCount}
+          <span className={compact
+            ? "absolute top-1 right-1 w-4 h-4 bg-error rounded-full text-white text-[9px] font-bold flex items-center justify-center"
+            : "absolute top-2 right-2 w-5 h-5 bg-error rounded-full text-white text-[10px] font-bold flex items-center justify-center animate-in zoom-in"
+          }>
+            {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
 
       {isOpen && (
-        <div className="absolute right-[-60px] md:right-0 top-14 w-[340px] md:w-96 bg-white rounded-[2rem] shadow-2xl border border-outline-variant/10 z-50 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="p-4 md:p-6 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest">
-            <h3 className="font-bold text-lg flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary">notifications</span>
-              Notificaciones
-            </h3>
-            {unreadCount > 0 && (
-              <button 
-                onClick={handleMarkAllAsRead}
-                className="text-xs font-bold text-primary hover:underline flex items-center gap-1 bg-primary/10 px-3 py-1.5 rounded-lg"
-              >
-                <span className="material-symbols-outlined text-[14px]">done_all</span>
-                Marcar leídas
-              </button>
-            )}
-          </div>
+        <>
+          {/* Mobile backdrop */}
+          <div 
+            className="fixed inset-0 bg-black/30 backdrop-blur-[2px] z-50 lg:hidden"
+            onClick={() => setIsOpen(false)}
+          />
+
+          <div className="fixed inset-x-3 top-16 max-h-[82vh] z-50 lg:z-50 lg:absolute lg:inset-x-auto lg:right-0 lg:top-14 w-auto lg:w-96 bg-white rounded-3xl shadow-2xl border border-outline-variant/10 overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="p-4 md:p-6 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest">
+              <h3 className="font-bold text-lg flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">notifications</span>
+                Notificaciones
+              </h3>
+              <div className="flex items-center gap-2">
+                {unreadCount > 0 && (
+                  <button 
+                    type="button"
+                    onClick={handleMarkAllAsRead}
+                    className="text-xs font-bold text-primary hover:underline flex items-center gap-1 bg-primary/10 px-2.5 py-1.5 rounded-lg"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">done_all</span>
+                    Marcar leídas
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsOpen(false)}
+                  className="lg:hidden w-8 h-8 rounded-full bg-surface-container-low flex items-center justify-center text-on-surface-variant hover:text-on-surface"
+                  aria-label="Cerrar notificaciones"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+            </div>
 
           <div className="flex-1 max-h-[60vh] overflow-y-auto custom-scrollbar bg-surface-container-lowest/50">
             {sortedNotifications.length === 0 ? (
@@ -287,6 +321,7 @@ export const AdminNotificationCenter: React.FC = () => {
             )}
           </div>
         </div>
+        </>
       )}
     </div>
   );

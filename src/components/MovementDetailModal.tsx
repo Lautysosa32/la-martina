@@ -2,6 +2,7 @@ import React from 'react';
 import { CashMovement, AdminOrder } from '../context/AdminContext';
 import { TicketPrinter, TicketData } from './TicketPrinter';
 import { useState } from 'react';
+import { useScrollLock } from '../utils/useScrollLock';
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
@@ -30,6 +31,7 @@ export const MovementDetailModal: React.FC<MovementDetailModalProps> = ({
   formatCurrency,
   onClose,
 }) => {
+  useScrollLock(true);
   const [showTicket, setShowTicket] = useState(false);
 
   const isVenta = movement.description.includes('Venta Local') || movement.description.includes('Pago Cta. Corriente');

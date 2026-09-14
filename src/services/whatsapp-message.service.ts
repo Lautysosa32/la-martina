@@ -94,15 +94,15 @@ export const whatsappMessageService = {
    * Encola un mensaje de cambio de estado de pedido (Fase 4), evitando duplicar
    * el mismo estado consecutivamente para el mismo pedido.
    */
-  async createOrderStatusMessage(order: { 
-    id: string; 
-    customer: string; 
-    phone: string; 
-    status: string; 
-    total?: number; 
+  async createOrderStatusMessage(order: {
+    id: string;
+    customer: string;
+    phone: string;
+    status: string;
+    total?: number;
     estimatedTotal?: number;
     weightAdjusted?: boolean;
-    method?: string 
+    method?: string
   }) {
     if (!order.phone) return null;
 
@@ -128,7 +128,7 @@ export const whatsappMessageService = {
 
     switch (order.status) {
       case 'Nuevo':
-        message = `👋 *¡Hola ${order.customer}!* Recibimos tu pedido en *La Martina*.\n\nTu pedido *#${order.id}* por *${formatCurrency(order.total, true, true)}* se registró con éxito. ¡En breve comenzamos a prepararlo! 🛒`;
+        message = `👋 *¡Hola ${order.customer}!* Recibimos tu pedido en *Martina Supermercado*.\n\nTu pedido *#${order.id}* por *${formatCurrency(order.total, true, true)}* se registró con éxito. ¡En breve comenzamos a prepararlo! 🛒`;
         break;
       case 'Preparando':
         message = `📦 *Actualización de Pedido #${order.id}*\n\n¡Ya estamos preparando tu pedido! Te avisaremos cuando esté listo.`;
@@ -153,7 +153,7 @@ export const whatsappMessageService = {
         break;
       case 'Entregado':
         const deliveryText = (order.method === 'Retiro' || order.method === 'Caja Fija') ? 'retirado' : 'entregado';
-        message = `✅ *Pedido #${order.id} ${deliveryText.charAt(0).toUpperCase() + deliveryText.slice(1)}*\n\nTu pedido fue ${deliveryText}. Esperamos que lo disfrutes.\n\n¡Muchas gracias por elegir La Martina!`;
+        message = `✅ *Pedido #${order.id} ${deliveryText.charAt(0).toUpperCase() + deliveryText.slice(1)}*\n\nTu pedido fue ${deliveryText}. Esperamos que lo disfrutes.\n\n¡Muchas gracias por elegir Martina Supermercado!`;
         break;
       case 'Cancelado':
         message = `❌ *Actualización de Pedido #${order.id}*\n\nLamentablemente tu pedido ha sido cancelado. Si tenés alguna duda, comunicate con nosotros.`;
@@ -180,7 +180,7 @@ export const whatsappMessageService = {
     const formattedPhone = cleanAndFormatPhone(phone);
     if (!formattedPhone) return null;
 
-    const message = `🔐 *La Martina* - Código de Verificación:\n\nTu código es: *${code}*\n\nIngresalo en la pantalla para confirmar tu pedido. No compartas este código con nadie.`;
+    const message = `🔐 *Martina Supermercado* - Código de Verificación:\n\nTu código es: *${code}*\n\nIngresalo en la pantalla para confirmar tu pedido. No compartas este código con nadie.`;
 
     return this.createWhatsAppMessage({
       phone: formattedPhone,
@@ -378,9 +378,9 @@ export const whatsappMessageService = {
     if (orderId) {
       const deliveryLine = deliveryMethod ? `\n📦 *Entrega:* ${deliveryMethod}` : '';
       const itemsSuffix = itemsCount ? ` (${itemsCount} ítems)` : '';
-      message = `Hola ${customerName} 👋\nTu pedido *#${orderId}* se registró con éxito y fue cargado a tu Cuenta Corriente.${deliveryLine}\n💰 *Importe del pedido:* $${formattedAmount}${itemsSuffix}\n💳 *Deuda total acumulada:* $${formattedTotal}${reminderSuffix}\n\n¡Muchas gracias por tu compra en La Martina! 🏪`;
+      message = `Hola ${customerName} 👋\nTu pedido *#${orderId}* se registró con éxito y fue cargado a tu Cuenta Corriente.${deliveryLine}\n💰 *Importe del pedido:* $${formattedAmount}${itemsSuffix}\n💳 *Deuda total acumulada:* $${formattedTotal}${reminderSuffix}\n\n¡Muchas gracias por tu compra en Martina Supermercado! 🏪`;
     } else {
-      message = `Hola ${customerName} 👋\nSe agregó un cargo a tu cuenta corriente en La Martina.\n\n💰 *Importe:* $${formattedAmount}\n📝 *Detalle:* ${detail}\n💳 *Deuda total acumulada:* $${formattedTotal}${reminderSuffix}\n\n¡Muchas gracias! 🏪`;
+      message = `Hola ${customerName} 👋\nSe agregó un cargo a tu cuenta corriente en Martina Supermercado.\n\n💰 *Importe:* $${formattedAmount}\n📝 *Detalle:* ${detail}\n💳 *Deuda total acumulada:* $${formattedTotal}${reminderSuffix}\n\n¡Muchas gracias! 🏪`;
     }
 
     return this.createWhatsAppMessage({
@@ -406,7 +406,7 @@ export const whatsappMessageService = {
     const formattedPayment = paymentAmount.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const formattedRemaining = remainingDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
 
-    const message = `Hola, ${customerName} 👋\nRegistramos un pago en tu cuenta corriente.\n\n💰 *Pago recibido:* $${formattedPayment}\n💳 *Deuda restante:* $${formattedRemaining}\n\n¡Muchas gracias por tu pago en La Martina! 🏪`;
+    const message = `Hola, ${customerName} 👋\nRegistramos un pago en tu cuenta corriente.\n\n💰 *Pago recibido:* $${formattedPayment}\n💳 *Deuda restante:* $${formattedRemaining}\n\n¡Muchas gracias por tu pago en Martina Supermercado! 🏪`;
 
     return this.createWhatsAppMessage({
       phone: customerPhone,
@@ -454,7 +454,7 @@ export const whatsappMessageService = {
     const formattedDebt = totalDebt.toLocaleString('es-AR', { minimumFractionDigits: 2 });
     const daysLine = oldestDays && oldestDays > 0 ? `\n⏳ *Antigüedad del saldo:* ${oldestDays} días` : '';
 
-    const message = `Hola ${customerName}! 👋 Te saludamos desde *La Martina*.\n\nTe enviamos este recordatorio sobre el estado de tu *Cuenta Corriente*:\n\n💳 *Saldo pendiente:* *$${formattedDebt}*${daysLine}\n\nℹ️ _Recordá que la fecha límite para regularizar tu cuenta es el día 10 del mes para mantener habilitadas tus compras a cuenta._\n\nTe solicitamos acercarte al local o contactarnos para poner al día tu saldo cuando te sea posible. ¡Muchas gracias! 🏪`;
+    const message = `Hola ${customerName}! 👋 Te saludamos desde *Martina Supermercado*.\n\nTe enviamos este recordatorio sobre el estado de tu *Cuenta Corriente*:\n\n💳 *Saldo pendiente:* *$${formattedDebt}*${daysLine}\n\nℹ️ _Recordá que la fecha límite para regularizar tu cuenta es el día 10 del mes para mantener habilitadas tus compras a cuenta._\n\nTe solicitamos acercarte al local o contactarnos para poner al día tu saldo cuando te sea posible. ¡Muchas gracias! 🏪`;
 
     return this.createWhatsAppMessage({
       phone: customerPhone,

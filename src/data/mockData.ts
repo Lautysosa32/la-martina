@@ -17,6 +17,7 @@ export interface Product {
   stock?: number;
   branchId?: string | null;
   saleType?: 'unit' | 'weight';
+  isPaused?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useScrollLock } from '../utils/useScrollLock';
 
 interface MapSelectorProps {
   initialLat?: number;
@@ -21,6 +22,7 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
   onLocationSelected,
   onClose
 }) => {
+  useScrollLock(true);
   const defaultLat = initialLat ?? storeLat;
   const defaultLng = initialLng ?? storeLng;
 
@@ -70,12 +72,12 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
       if (response.ok) {
         const data = await response.json();
         const address = data.address;
-        
+
         // Build a friendly label from Nominatim results
         const street = address.road || address.pedestrian || address.suburb || '';
         const number = address.house_number || '';
         const city = address.city || address.town || address.village || 'La Paz';
-        
+
         let label = '';
         if (street) {
           label = number ? `${street} ${number}` : street;
@@ -139,7 +141,7 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
         iconAnchor: [12, 12]
       });
       L.marker([storeLat, storeLng], { icon: storePin, interactive: false })
-        .bindTooltip('La Martina (Local)', { permanent: false, direction: 'top' })
+        .bindTooltip('Martina Supermercado(Local)', { permanent: false, direction: 'top' })
         .addTo(map);
     }
 
@@ -192,12 +194,12 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
       (position) => {
         const { latitude, longitude } = position.coords;
         setCoords({ lat: latitude, lng: longitude });
-        
+
         if (mapRef.current && markerRef.current) {
           mapRef.current.setView([latitude, longitude], 17);
           markerRef.current.setLatLng([latitude, longitude]);
         }
-        
+
         performReverseGeocoding(latitude, longitude);
         setIsLocating(false);
       },
@@ -207,7 +209,7 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
         if (error.code === 1) errorMsg = 'Permiso denegado. Habilitá el GPS en tu navegador.';
         else if (error.code === 2) errorMsg = 'Ubicación no disponible en este momento.';
         else if (error.code === 3) errorMsg = 'Tiempo de espera agotado al obtener ubicación.';
-        
+
         setLocatingError(errorMsg);
         setIsLocating(false);
       },
@@ -226,15 +228,15 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
 
       {/* Modal Container */}
       <div className="bg-white w-full h-full md:h-[85vh] md:max-w-3xl md:rounded-[2rem] overflow-hidden shadow-2xl relative z-10 flex flex-col animate-in zoom-in-95 duration-300">
-        
+
         {/* Header */}
         <div className="px-6 py-4 border-b border-outline-variant/10 flex justify-between items-center bg-white shrink-0">
           <div>
             <h3 className="text-lg md:text-xl font-bold text-on-background">Seleccioná tu Ubicación</h3>
             <p className="text-[11px] text-on-surface-variant font-medium">Arrastrá el pin rojo o tocá el mapa</p>
           </div>
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             type="button"
             className="w-10 h-10 hover:bg-surface-container-high rounded-full transition-colors flex items-center justify-center text-on-surface-variant"
           >
@@ -266,9 +268,9 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
             <div className="absolute top-4 left-4 right-4 z-[1000] p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 shadow-md animate-in slide-in-from-top-2 duration-300">
               <span className="material-symbols-outlined text-error text-[18px]">error</span>
               <p className="text-xs text-red-700 font-bold flex-1">{locatingError}</p>
-              <button 
+              <button
                 type="button"
-                onClick={() => setLocatingError(null)} 
+                onClick={() => setLocatingError(null)}
                 className="text-red-500 font-bold hover:text-red-700 text-xs px-1"
               >
                 Cerrar
@@ -279,7 +281,7 @@ export const MapSelector: React.FC<MapSelectorProps> = ({
 
         {/* Details & Actions Footer */}
         <div className="p-6 bg-white border-t border-outline-variant/10 shrink-0 space-y-4">
-          
+
           {/* Selected Address Display card */}
           <div className="bg-[#fcf9f8] p-4 rounded-2xl border border-outline-variant/20 flex gap-3 items-start">
             <div className={`w-8 h-8 rounded-xl shrink-0 flex items-center justify-center ${isGeocoding ? 'bg-primary/10 text-primary animate-pulse' : 'bg-primary text-white'}`}>

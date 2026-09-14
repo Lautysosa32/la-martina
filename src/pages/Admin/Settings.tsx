@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAdmin, HeroBanner, defaultHeroBanners } from '../../context/AdminContext';
 import type { AutoCashCloseConfig } from '../../context/AdminContext';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
@@ -23,6 +24,7 @@ export const Settings: React.FC = () => {
 
   // Hero Banners management state
   const [isBannerModalOpen, setIsBannerModalOpen] = useState(false);
+  useScrollLock(isBannerModalOpen);
   const [editingBannerId, setEditingBannerId] = useState<string | null>(null);
   const [bannerForm, setBannerForm] = useState<Omit<HeroBanner, 'id' | 'order'>>({
     imageUrl: '',
@@ -105,7 +107,7 @@ export const Settings: React.FC = () => {
       const defaults = {
         blankLinesTop: 0,
         blankLinesBottom: 2,
-        headerText: 'La Martina',
+        headerText: 'Martina Supermercado',
         businessName: 'Minimarket & Supermercado',
         businessAddress: 'La Paz, Mendoza',
         businessPhone: '',
@@ -137,7 +139,7 @@ export const Settings: React.FC = () => {
       };
       setStoreForm(defaultStoreStatus);
       updateStoreStatus(defaultStoreStatus);
-      
+
       const defaultAutoClose = { enabled: false, time: '22:00' };
       setAutoCloseForm(defaultAutoClose);
       updateAutoCashCloseConfig(defaultAutoClose);
@@ -338,7 +340,7 @@ export const Settings: React.FC = () => {
                     value={form.headerText}
                     onChange={e => setForm(p => ({ ...p, headerText: e.target.value }))}
                     className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                    placeholder="La Martina"
+                    placeholder="Martina Supermercado"
                   />
                 </div>
                 <div>
@@ -477,7 +479,7 @@ export const Settings: React.FC = () => {
 
                     {/* Header */}
                     <div className="text-center border-b border-dashed border-black/30 pb-3 mb-3">
-                      <div className="text-lg font-bold">{form.headerText || 'La Martina'}</div>
+                      <div className="text-lg font-bold">{form.headerText || 'Martina Supermercado'}</div>
                       <div className="text-[10px] text-gray-500">{form.businessName}</div>
                       {form.businessAddress && <div className="text-[10px] text-gray-500">{form.businessAddress}</div>}
                       {form.businessPhone && <div className="text-[10px] text-gray-500">Tel: {form.businessPhone}</div>}
@@ -571,7 +573,7 @@ export const Settings: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             {/* Columna Izquierda: Operaciones & Delivery */}
             <div className="space-y-5">
-              
+
               {/* 1. Tienda Online */}
               <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
                 <button
@@ -586,18 +588,16 @@ export const Settings: React.FC = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-black text-base md:text-lg text-on-surface truncate">Estado de la Tienda Online</h3>
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
-                          storeForm.onlineSalesPaused ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                        }`}>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${storeForm.onlineSalesPaused ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                          }`}>
                           {storeForm.onlineSalesPaused ? 'Pausada' : 'Activa'}
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant truncate mt-0.5">Control de compras al público general y motivo de pausa</p>
                     </div>
                   </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
-                    openPanels['tienda'] ? 'rotate-180 text-primary' : ''
-                  }`}>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['tienda'] ? 'rotate-180 text-primary' : ''
+                    }`}>
                     expand_more
                   </span>
                 </button>
@@ -611,24 +611,24 @@ export const Settings: React.FC = () => {
                             {storeForm.onlineSalesPaused ? 'Compras Pausadas' : 'Compras Activas'}
                           </h4>
                           <p className="text-xs text-on-surface-variant mt-1">
-                            {storeForm.onlineSalesPaused 
+                            {storeForm.onlineSalesPaused
                               ? 'Los clientes no pueden finalizar compras online. El POS sigue funcionando.'
                               : 'Los clientes pueden comprar normalmente en la tienda web.'}
                           </p>
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                          <input 
-                            type="checkbox" 
-                            checked={!storeForm.onlineSalesPaused} 
+                          <input
+                            type="checkbox"
+                            checked={!storeForm.onlineSalesPaused}
                             onChange={e => {
                               const isPaused = !e.target.checked;
-                              setStoreForm(p => ({ 
-                                ...p, 
+                              setStoreForm(p => ({
+                                ...p,
                                 onlineSalesPaused: isPaused,
                                 pausedAt: isPaused ? new Date().toISOString() : null
                               }));
-                            }} 
-                            className="sr-only peer" 
+                            }}
+                            className="sr-only peer"
                           />
                           <div className="w-14 h-7 bg-red-500 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-500 shadow-inner"></div>
                         </label>
@@ -648,11 +648,11 @@ export const Settings: React.FC = () => {
                           />
                         </div>
                         <label className="flex items-center gap-3 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/20 cursor-pointer hover:bg-surface-container-low transition-colors">
-                          <input 
-                            type="checkbox" 
-                            checked={storeForm.allowBrowsingWhilePaused} 
-                            onChange={e => setStoreForm(p => ({ ...p, allowBrowsingWhilePaused: e.target.checked }))} 
-                            className="w-5 h-5 accent-primary rounded" 
+                          <input
+                            type="checkbox"
+                            checked={storeForm.allowBrowsingWhilePaused}
+                            onChange={e => setStoreForm(p => ({ ...p, allowBrowsingWhilePaused: e.target.checked }))}
+                            className="w-5 h-5 accent-primary rounded"
                           />
                           <div>
                             <div className="font-bold text-sm">Permitir navegación de catálogo</div>
@@ -686,16 +686,15 @@ export const Settings: React.FC = () => {
                       <p className="text-xs text-on-surface-variant truncate mt-0.5">Radio máximo de entrega y coordenadas de la sucursal</p>
                     </div>
                   </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
-                    openPanels['cobertura'] ? 'rotate-180 text-primary' : ''
-                  }`}>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['cobertura'] ? 'rotate-180 text-primary' : ''
+                    }`}>
                     expand_more
                   </span>
                 </button>
 
                 {openPanels['cobertura'] && (
                   <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
-                    
+
                     {/* Tarifas de Envío Dinámico */}
                     <div className="bg-surface-container-lowest p-4 md:p-5 rounded-2xl border border-outline-variant/20 space-y-4">
                       <div className="flex items-center gap-2 mb-1">
@@ -880,18 +879,16 @@ export const Settings: React.FC = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-black text-base md:text-lg text-on-surface truncate">Límites de Cuenta Corriente</h3>
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
-                          accountForm.enabled ? 'bg-blue-100 text-blue-800' : 'bg-surface-container-high text-on-surface-variant'
-                        }`}>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${accountForm.enabled ? 'bg-blue-100 text-blue-800' : 'bg-surface-container-high text-on-surface-variant'
+                          }`}>
                           {accountForm.enabled ? 'Habilitado' : 'Desactivado'}
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant truncate mt-0.5">Configuración global para ventas a cuenta y límites de crédito</p>
                     </div>
                   </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
-                    openPanels['cuentas'] ? 'rotate-180 text-primary' : ''
-                  }`}>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['cuentas'] ? 'rotate-180 text-primary' : ''
+                    }`}>
                     expand_more
                   </span>
                 </button>
@@ -989,9 +986,8 @@ export const Settings: React.FC = () => {
                       <p className="text-xs text-on-surface-variant truncate mt-0.5">Lista negra de números que no pueden realizar pedidos</p>
                     </div>
                   </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
-                    openPanels['seguridad'] ? 'rotate-180 text-primary' : ''
-                  }`}>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['seguridad'] ? 'rotate-180 text-primary' : ''
+                    }`}>
                     expand_more
                   </span>
                 </button>
@@ -1079,18 +1075,16 @@ export const Settings: React.FC = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-black text-base md:text-lg text-on-surface truncate">Cierre Automático de Caja</h3>
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
-                          autoCloseForm.enabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface-variant'
-                        }`}>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${autoCloseForm.enabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface-variant'
+                          }`}>
                           {autoCloseForm.enabled ? autoCloseForm.time : 'Inactivo'}
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant truncate mt-0.5">Cierra la caja automáticamente todos los días a la hora configurada</p>
                     </div>
                   </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
-                    openPanels['cierre'] ? 'rotate-180 text-primary' : ''
-                  }`}>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['cierre'] ? 'rotate-180 text-primary' : ''
+                    }`}>
                     expand_more
                   </span>
                 </button>
@@ -1104,13 +1098,11 @@ export const Settings: React.FC = () => {
                       </div>
                       <button
                         onClick={() => setAutoCloseForm(f => ({ ...f, enabled: !f.enabled }))}
-                        className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${
-                          autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
-                        }`}
+                        className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
+                          }`}
                       >
-                        <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${
-                          autoCloseForm.enabled ? 'left-7' : 'left-0.5'
-                        }`} />
+                        <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${autoCloseForm.enabled ? 'left-7' : 'left-0.5'
+                          }`} />
                       </button>
                     </div>
 
@@ -1141,18 +1133,16 @@ export const Settings: React.FC = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-black text-base md:text-lg text-on-surface truncate">Notificaciones a Empleados</h3>
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${
-                          !generalForm.suspendEmployeeNotifications ? 'bg-orange-100 text-orange-800' : 'bg-surface-container-high text-on-surface-variant'
-                        }`}>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${!generalForm.suspendEmployeeNotifications ? 'bg-orange-100 text-orange-800' : 'bg-surface-container-high text-on-surface-variant'
+                          }`}>
                           {!generalForm.suspendEmployeeNotifications ? 'Activas' : 'Pausadas'}
                         </span>
                       </div>
                       <p className="text-xs text-on-surface-variant truncate mt-0.5">Control general de notificaciones y alertas por WhatsApp</p>
                     </div>
                   </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${
-                    openPanels['notificaciones'] ? 'rotate-180 text-primary' : ''
-                  }`}>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['notificaciones'] ? 'rotate-180 text-primary' : ''
+                    }`}>
                     expand_more
                   </span>
                 </button>
@@ -1183,15 +1173,15 @@ export const Settings: React.FC = () => {
               <p className="text-xs text-on-surface-variant">Aplica todas las modificaciones realizadas en la configuración general.</p>
             </div>
             <div className="flex items-center gap-3 w-full sm:w-auto">
-              <button 
-                onClick={handleReset} 
+              <button
+                onClick={handleReset}
                 className="flex-1 sm:flex-initial bg-surface-container-low border border-outline-variant/10 font-bold px-6 py-3.5 rounded-2xl text-on-surface-variant hover:bg-surface-container-high transition-all flex items-center justify-center gap-2 text-sm"
               >
                 <span className="material-symbols-outlined text-[18px]">restart_alt</span>
                 Restaurar
               </button>
-              <button 
-                onClick={handleSave} 
+              <button
+                onClick={handleSave}
                 className="flex-1 sm:flex-initial bg-primary text-white font-black px-8 py-3.5 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 text-sm"
               >
                 <span className="material-symbols-outlined text-[20px]">save</span>
@@ -1209,7 +1199,7 @@ export const Settings: React.FC = () => {
                 <p className="text-sm text-blue-800/70">Todo lo que necesitas saber sobre cómo funcionan estas configuraciones</p>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Notificaciones Info */}
               <div className="bg-white/60 p-5 rounded-2xl border border-blue-100/50">
@@ -1273,7 +1263,7 @@ export const Settings: React.FC = () => {
                 type="button"
                 onClick={handleResetBanners}
                 className="px-4 py-2.5 rounded-xl border border-outline-variant/20 hover:bg-surface-container text-on-surface-variant font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
-                title="Restablecer banners predeterminados de La Martina"
+                title="Restablecer banners predeterminados de Martina Supermercado"
               >
                 <span className="material-symbols-outlined text-[18px]">restart_alt</span>
                 Banners por Defecto
@@ -1310,11 +1300,10 @@ export const Settings: React.FC = () => {
                   return (
                     <div
                       key={banner.id}
-                      className={`bg-white rounded-2xl sm:rounded-3xl border transition-all p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xs hover:shadow-md ${
-                        banner.active
-                          ? 'border-outline-variant/15'
-                          : 'border-outline-variant/10 opacity-60 bg-surface-container-lowest/50'
-                      }`}
+                      className={`bg-white rounded-2xl sm:rounded-3xl border transition-all p-4 sm:p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xs hover:shadow-md ${banner.active
+                        ? 'border-outline-variant/15'
+                        : 'border-outline-variant/10 opacity-60 bg-surface-container-lowest/50'
+                        }`}
                     >
                       {/* Miniatura y Detalles */}
                       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full md:w-auto">
@@ -1393,11 +1382,10 @@ export const Settings: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => toggleHeroBannerActive(banner.id)}
-                          className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
-                            banner.active
-                              ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
-                          }`}
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold ${banner.active
+                            ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                            : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                            }`}
                           title={banner.active ? 'Ocultar del Home' : 'Mostrar en el Home'}
                         >
                           <span className="material-symbols-outlined text-[18px]">

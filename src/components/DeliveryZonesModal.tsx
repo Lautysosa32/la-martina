@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useAdmin } from '../context/AdminContext';
 import { calculateDistanceKm } from '../utils/shipping';
+import { useScrollLock } from '../utils/useScrollLock';
 
 interface DeliveryZonesModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface DeliveryZonesModalProps {
 }
 
 export const DeliveryZonesModal: React.FC<DeliveryZonesModalProps> = ({ isOpen, onClose }) => {
+  useScrollLock(isOpen);
   const { generalConfig } = useAdmin();
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -80,7 +82,7 @@ export const DeliveryZonesModal: React.FC<DeliveryZonesModalProps> = ({ isOpen, 
               <span class="material-symbols-outlined text-[20px]">storefront</span>
             </div>
             <span class="absolute -bottom-6 bg-black/80 text-white font-bold text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap shadow-md">
-              La Martina
+              Martina Supermercado
             </span>
           </div>
         `,
@@ -91,7 +93,7 @@ export const DeliveryZonesModal: React.FC<DeliveryZonesModalProps> = ({ isOpen, 
 
       L.marker([storeLat, storeLng], { icon: storePin })
         .addTo(map)
-        .bindPopup('<b>Supermercado La Martina</b><br/>Punto de partida de envíos');
+        .bindPopup('<b>Martina Supermercado</b><br/>Punto de partida de envíos');
     }, 100);
 
     return () => {
@@ -162,11 +164,11 @@ export const DeliveryZonesModal: React.FC<DeliveryZonesModalProps> = ({ isOpen, 
   if (!isOpen) return null;
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
       onClick={onClose}
     >
-      <div 
+      <div
         className="bg-surface-container-lowest w-full max-w-2xl rounded-3xl shadow-2xl border border-outline-variant/20 overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
@@ -181,7 +183,7 @@ export const DeliveryZonesModal: React.FC<DeliveryZonesModalProps> = ({ isOpen, 
                 Zonas de Cobertura de Envíos
               </h3>
               <p className="text-xs text-on-surface-variant font-medium">
-                Radio de entrega directa de Supermercado La Martina
+                Radio de entrega directa de Martina Supermercado
               </p>
             </div>
           </div>
@@ -216,11 +218,10 @@ export const DeliveryZonesModal: React.FC<DeliveryZonesModalProps> = ({ isOpen, 
 
         {/* Locating feedback notification */}
         {locatingStatus && (
-          <div className={`px-4 py-2.5 text-xs font-bold flex items-center gap-2 border-b ${
-            locatingStatus.inside 
-              ? 'bg-green-50 text-green-800 border-green-200' 
-              : 'bg-amber-50 text-amber-800 border-amber-200'
-          }`}>
+          <div className={`px-4 py-2.5 text-xs font-bold flex items-center gap-2 border-b ${locatingStatus.inside
+            ? 'bg-green-50 text-green-800 border-green-200'
+            : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}>
             <span className="material-symbols-outlined text-[18px]">
               {locatingStatus.inside ? 'check_circle' : 'warning'}
             </span>

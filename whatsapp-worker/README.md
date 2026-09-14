@@ -1,4 +1,4 @@
-# La Martina - WhatsApp Worker Local 🏪🤖
+# Martina Supermercado- WhatsApp Worker Local 🏪🤖
 
 Este es un servicio autónomo en Node.js que se ejecuta localmente en la computadora del supermercado (donde se tiene iniciada la sesión de WhatsApp Web del local) para procesar de forma automática la cola de mensajes almacenada en Supabase (`whatsapp_messages`).
 

@@ -156,6 +156,15 @@ body {
   scrollbar-width: none;
 }
 
+/* Modal and Drawer scroll isolation */
+.modal-scroll-lock {
+  overflow: hidden !important;
+}
+
+.overscroll-contain {
+  overscroll-behavior: contain;
+}
+
 @media print {
   /* Hide the entire React root */
   #root {

@@ -3,16 +3,48 @@ const { createClient } = require('@supabase/supabase-js');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
-// 1. Inicializar Cliente Supabase
+// 1. Inicializar Cliente Supabase (soporta service_role key, anon key o credenciales de empleado)
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 
+                    process.env.SERVICE_ROLE_KEY || 
+                    process.env.SUPABASE_KEY || 
+                    process.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error('🚨 ERROR CRÍTICO: Faltan variables de entorno SUPABASE_URL/VITE_SUPABASE_URL o SUPABASE_KEY/VITE_SUPABASE_ANON_KEY en el archivo .env');
+  console.error('🚨 ERROR CRÍTICO: Faltan variables de entorno SUPABASE_URL o SUPABASE_KEY en whatsapp-worker/.env');
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const isServiceRole = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY);
+console.log(`🔗 Conectando con Supabase: ${supabaseUrl}`);
+console.log(`🔑 Modo de clave: ${isServiceRole ? 'Service Role (Bypass RLS habilitado)' : 'Pública / Anon'}`);
+
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true
+  }
+});
+
+// Autenticar como empleado si se proporcionaron credenciales en .env
+async function ensureAuthenticated() {
+  if (process.env.WORKER_EMAIL && process.env.WORKER_PASSWORD) {
+    try {
+      console.log(`👤 Autenticando worker como empleado (${process.env.WORKER_EMAIL})...`);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: process.env.WORKER_EMAIL,
+        password: process.env.WORKER_PASSWORD
+      });
+      if (error) {
+        console.error('⚠️ Error autenticando worker en Supabase:', error.message);
+      } else {
+        console.log('✅ Worker autenticado como empleado:', data.user.email);
+      }
+    } catch (authErr) {
+      console.error('⚠️ Excepción autenticando worker:', authErr.message);
+    }
+  }
+}
 
 // 2. Inicializar Cliente WhatsApp Web con autenticación persistente local
 console.log('🤖 Inicializando cliente de WhatsApp Web con parámetros optimizados...');
@@ -50,6 +82,25 @@ client.on('qr', (qr) => {
 client.on('ready', async () => {
   console.log('✨ ¡Cliente de WhatsApp listo y conectado!');
   
+  await ensureAuthenticated();
+
+  // Test de conectividad y permisos con la tabla whatsapp_messages
+  try {
+    const { data: testRows, error: testError } = await supabase
+      .from('whatsapp_messages')
+      .select('id, status')
+      .limit(1);
+
+    if (testError) {
+      console.error('🚨 ADVERTENCIA: Error al consultar whatsapp_messages en Supabase:', testError.message);
+      console.error('👉 Ejecutá el script "supabase_fix_whatsapp_worker.sql" en el SQL Editor de Supabase.');
+    } else {
+      console.log('✅ Conexión con tabla whatsapp_messages verificada correctamente.');
+    }
+  } catch (tErr) {
+    console.warn('Advertencia en test inicial:', tErr.message);
+  }
+
   // Limpiar cualquier mensaje que haya quedado colgado en 'sending' en ejecuciones anteriores
   try {
     const { error } = await supabase
@@ -89,6 +140,7 @@ const formatArgentinePhone = (phone) => {
 
 // 4. Lógica de Envío de Mensajes
 let isProcessing = false;
+let idleTicks = 0;
 
 async function processPendingMessages() {
   if (isProcessing) return;
@@ -104,22 +156,33 @@ async function processPendingMessages() {
       .limit(5); // Procesamos de a 5 para no saturar
 
     if (error) {
-      console.error('Error leyendo la tabla whatsapp_messages:', error.message);
+      console.error('❌ Error leyendo la tabla whatsapp_messages:', error.message);
+      if (error.code === '42501' || error.message.includes('permission')) {
+        console.error('👉 Tip: Ejecutá "supabase_fix_whatsapp_worker.sql" en Supabase para otorgar permisos.');
+      }
       isProcessing = false;
       return;
     }
 
     if (!pendingMessages || pendingMessages.length === 0) {
+      idleTicks++;
+      // Mostrar mensaje de liveness cada 6 ciclos (1 minuto aprox)
+      if (idleTicks >= 6) {
+        idleTicks = 0;
+        const nowStr = new Date().toLocaleTimeString();
+        console.log(`[${nowStr}] ⏳ Escuchando cola... (0 mensajes pendientes)`);
+      }
       isProcessing = false;
       return;
     }
 
-    console.log(`📨 Procesando ${pendingMessages.length} mensaje(s) pendiente(s)...`);
+    idleTicks = 0;
+    console.log(`\n📨 [${new Date().toLocaleTimeString()}] Procesando ${pendingMessages.length} mensaje(s) pendiente(s)...`);
 
     for (const msg of pendingMessages) {
       // Normalizar número telefónico
       const formattedPhone = formatArgentinePhone(msg.phone);
-      console.log(`👉 Enviando mensaje a +${formattedPhone} (Cliente: ${msg.customer_name || 'Desconocido'})...`);
+      console.log(`👉 Enviando mensaje #${msg.id} a +${formattedPhone} (Cliente: ${msg.customer_name || 'Desconocido'})...`);
 
       // A) Actualizar estado a "sending" e incrementar intentos para bloquear el mensaje
       const nextAttempt = (msg.attempts || 0) + 1;
@@ -141,7 +204,7 @@ async function processPendingMessages() {
 
         await client.sendMessage(chatId, msg.message);
 
-        console.log(`✅ ¡Mensaje enviado con éxito a +${formattedPhone}!`);
+        console.log(`✅ ¡Mensaje #${msg.id} enviado con éxito a +${formattedPhone}!`);
 
         // C) Marcar como "sent"
         await supabase

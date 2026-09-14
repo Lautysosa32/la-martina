@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Scanner, IScannerError } from '@yudiel/react-qr-scanner';
+import { useScrollLock } from '../utils/useScrollLock';
 
 interface BarcodeScannerModalProps {
   open: boolean;
@@ -12,6 +13,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onClose,
   onDetected,
 }) => {
+  useScrollLock(open);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scannedHistory, setScannedHistory] = useState<string[]>([]);
   const lastScannedRef = useRef<string | null>(null);

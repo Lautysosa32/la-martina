@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import api from '../lib/axios';
+import { catalogCache, TTL } from './catalogCache';
 import { 
   AdminOrder, CashMovement, CashClose, Offer, 
   CustomerProfile, TicketConfig, CurrentAccountConfig, 
@@ -138,6 +139,12 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
 
   const fullAddress = [baseAddressLabel, ...metaParts].filter(Boolean).join(' ');
 
+  // Normalizar status para garantizar compatibilidad con constraints de Supabase
+  const validStatusList = ['Nuevo', 'Preparando', 'Listo', 'En Camino', 'Entregado', 'Cancelado'];
+  const sanitizedStatus = validStatusList.includes(order.status)
+    ? order.status
+    : 'Nuevo';
+
   const dbOrder: any = {
     id: order.id,
     branch_id: BRANCH_ID,
@@ -149,12 +156,13 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
     delivery_time: order.deliveryTime,
     method: order.method,
     payment_method: order.paymentMethod,
-    payment_status: order.paymentStatus,
-    status: order.status,
+    payment_status: order.paymentStatus || 'Pendiente',
+    status: sanitizedStatus,
     total: order.total,
     paid_amount: order.paidAmount ?? (order.paymentStatus === 'Pagado' ? order.total : 0),
     discount: order.discount,
-    discount_label: order.discountLabel
+    discount_label: order.discountLabel,
+    source: order.source || 'web'
   };
   if (order.dni) dbOrder.dni = order.dni;
   if (order.delivery_lat !== undefined) dbOrder.delivery_lat = order.delivery_lat;
@@ -181,12 +189,13 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
       delivery_time: order.deliveryTime,
       method: order.method,
       payment_method: order.paymentMethod,
-      payment_status: order.paymentStatus,
-      status: order.status,
+      payment_status: order.paymentStatus || 'Pendiente',
+      status: sanitizedStatus,
       total: order.total,
       paid_amount: order.paidAmount ?? (order.paymentStatus === 'Pagado' ? order.total : 0),
       discount: order.discount,
-      discount_label: order.discountLabel
+      discount_label: order.discountLabel,
+      source: order.source || 'web'
     };
     if (order.dni) standardDbOrder.dni = order.dni;
 
@@ -400,25 +409,163 @@ export const insertCashClose = async (close: CashClose): Promise<void> => {
 };
 
 // ─── OFFERS ─────────────────────────────────────────────────────────────
+// ─── OFFERS ─────────────────────────────────────────────────────────────
+const getCachedOffers = async (): Promise<Offer[]> => {
+  const fromSettings = await fetchSetting<Offer[]>('admin_offers', []);
+  if (fromSettings && fromSettings.length > 0) return fromSettings;
+  try {
+    const local = localStorage.getItem('la_martina_offers');
+    if (local) return JSON.parse(local);
+  } catch (_) {}
+  return [];
+};
+
+const saveOffersToSettings = async (offersList: Offer[]): Promise<void> => {
+  try {
+    localStorage.setItem('la_martina_offers', JSON.stringify(offersList));
+  } catch (_) {}
+  await saveSetting('admin_offers', offersList);
+};
+
 export const fetchOffers = async (): Promise<Offer[]> => {
-  const { data, error } = await supabase.from('offers').select('*').eq('branch_id', BRANCH_ID);
-  if (error) { console.error('Error fetching offers:', error); return []; }
-  return data || [];
+  try {
+    const { data, error } = await supabase.from('offers').select('*').eq('branch_id', BRANCH_ID);
+    if (!error && data && data.length > 0) {
+      const mapped = data.map((dbOffer: any) => {
+        let metadata: any = {};
+        if (dbOffer.description && typeof dbOffer.description === 'string' && dbOffer.description.trim().startsWith('{')) {
+          try { metadata = JSON.parse(dbOffer.description); } catch (_) {}
+        }
+        const targetIds = metadata.targetIds || (dbOffer.target_id && dbOffer.target_id.includes(',') ? dbOffer.target_id.split(',').map((s: string) => s.trim()) : (dbOffer.target_id ? [dbOffer.target_id] : []));
+        return {
+          id: dbOffer.id,
+          name: dbOffer.name || '',
+          description: dbOffer.description || '',
+          scope: dbOffer.scope,
+          targetId: dbOffer.target_id || dbOffer.targetId,
+          targetIds: targetIds,
+          productId: dbOffer.product_id || dbOffer.productId,
+          subcategoryId: metadata.subcategoryId || dbOffer.subcategoryId,
+          tagFilter: metadata.tagFilter || dbOffer.tagFilter,
+          requiredTier: metadata.requiredTier || dbOffer.requiredTier,
+          discountType: dbOffer.discount_type || dbOffer.discountType || 'percent',
+          discountPercent: dbOffer.discount_percent ?? dbOffer.discountPercent ?? (dbOffer.discount_value || dbOffer.discountValue || 0),
+          discountValue: dbOffer.discount_value ?? dbOffer.discountValue ?? 0,
+          maxDiscountAmount: dbOffer.max_discount_amount ?? dbOffer.maxDiscountAmount,
+          startDate: dbOffer.start_date || dbOffer.startDate || '',
+          endDate: dbOffer.end_date || dbOffer.endDate || '',
+          active: dbOffer.active !== false,
+          label: dbOffer.label || '',
+          daily_quantity_limit: dbOffer.daily_quantity_limit ?? dbOffer.daily_quantity_limit,
+          per_customer_daily_limit: dbOffer.per_customer_daily_limit ?? dbOffer.per_customer_daily_limit,
+          total_quantity_limit: dbOffer.total_quantity_limit ?? dbOffer.total_quantity_limit,
+          limit_strategy: dbOffer.limit_strategy || dbOffer.limit_strategy || 'discount_only'
+        };
+      });
+      saveOffersToSettings(mapped);
+      return mapped;
+    }
+  } catch (err) {
+    console.warn('Error fetching from offers SQL table, using settings:', err);
+  }
+
+  return await getCachedOffers();
 };
 
 export const insertOffer = async (offer: Offer): Promise<void> => {
-  const { error } = await supabase.from('offers').insert({ ...offer, branch_id: BRANCH_ID });
-  if (error) console.error('Error inserting offer:', error);
+  // 1. Persistir inmediatamente en la tabla settings de Supabase y localStorage
+  const currentOffers = await getCachedOffers();
+  const nextOffers = [...currentOffers.filter(o => o.id !== offer.id), offer];
+  await saveOffersToSettings(nextOffers);
+
+  // 2. Intentar también guardar en la tabla offers de SQL
+  try {
+    const metadata = {
+      targetIds: offer.targetIds && offer.targetIds.length > 0 ? offer.targetIds : (offer.targetId ? [offer.targetId] : []),
+      subcategoryId: offer.subcategoryId,
+      tagFilter: offer.tagFilter,
+      requiredTier: offer.requiredTier
+    };
+    const payload = {
+      id: offer.id,
+      name: offer.name,
+      description: JSON.stringify(metadata),
+      scope: offer.scope,
+      target_id: offer.targetId || (offer.targetIds && offer.targetIds.length > 0 ? offer.targetIds.join(',') : null),
+      product_id: offer.productId || (offer.scope === 'product' && offer.targetIds && offer.targetIds.length > 0 ? offer.targetIds[0] : offer.targetId) || null,
+      discount_type: offer.discountType,
+      discount_percent: offer.discountPercent ?? (offer.discountType === 'percent' ? offer.discountValue : 0),
+      discount_value: offer.discountValue,
+      max_discount_amount: offer.maxDiscountAmount ?? null,
+      start_date: offer.startDate,
+      end_date: offer.endDate,
+      active: offer.active ?? true,
+      label: offer.label || null,
+      daily_quantity_limit: offer.daily_quantity_limit ?? null,
+      per_customer_daily_limit: offer.per_customer_daily_limit ?? null,
+      total_quantity_limit: offer.total_quantity_limit ?? null,
+      limit_strategy: offer.limit_strategy || 'discount_only',
+      branch_id: BRANCH_ID
+    };
+    const { error } = await supabase.from('offers').insert(payload);
+    if (error) console.warn('SQL table insert skipped (persisted to Supabase settings):', error.message);
+  } catch (err) {
+    console.warn('SQL table insert error (persisted to Supabase settings):', err);
+  }
 };
 
 export const updateOfferInDb = async (id: string, updates: Partial<Offer>): Promise<void> => {
-  const { error } = await supabase.from('offers').update(updates).eq('id', id).eq('branch_id', BRANCH_ID);
-  if (error) console.error('Error updating offer:', error);
+  // 1. Actualizar en Supabase settings y localStorage
+  const currentOffers = await getCachedOffers();
+  const nextOffers = currentOffers.map(o => o.id === id ? { ...o, ...updates } : o);
+  await saveOffersToSettings(nextOffers);
+
+  // 2. Intentar actualización SQL
+  try {
+    const payload: any = {};
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.scope !== undefined) payload.scope = updates.scope;
+    if (updates.targetId !== undefined) payload.target_id = updates.targetId;
+    if (updates.productId !== undefined) payload.product_id = updates.productId;
+    if (updates.discountType !== undefined) payload.discount_type = updates.discountType;
+    if (updates.discountValue !== undefined) {
+      payload.discount_value = updates.discountValue;
+      if (updates.discountType === 'percent') payload.discount_percent = updates.discountValue;
+    }
+    if (updates.maxDiscountAmount !== undefined) payload.max_discount_amount = updates.maxDiscountAmount;
+    if (updates.startDate !== undefined) payload.start_date = updates.startDate;
+    if (updates.endDate !== undefined) payload.end_date = updates.endDate;
+    if (updates.active !== undefined) payload.active = updates.active;
+    if (updates.label !== undefined) payload.label = updates.label;
+    if (updates.daily_quantity_limit !== undefined) payload.daily_quantity_limit = updates.daily_quantity_limit;
+    if (updates.per_customer_daily_limit !== undefined) payload.per_customer_daily_limit = updates.per_customer_daily_limit;
+    if (updates.total_quantity_limit !== undefined) payload.total_quantity_limit = updates.total_quantity_limit;
+    if (updates.limit_strategy !== undefined) payload.limit_strategy = updates.limit_strategy;
+    
+    if (updates.targetIds !== undefined || updates.subcategoryId !== undefined || updates.tagFilter !== undefined || updates.requiredTier !== undefined) {
+      const metadata = {
+        targetIds: updates.targetIds,
+        subcategoryId: updates.subcategoryId,
+        tagFilter: updates.tagFilter,
+        requiredTier: updates.requiredTier
+      };
+      payload.description = JSON.stringify(metadata);
+    }
+
+    await supabase.from('offers').update(payload).eq('id', id).eq('branch_id', BRANCH_ID);
+  } catch (_) {}
 };
 
 export const deleteOfferInDb = async (id: string): Promise<void> => {
-  const { error } = await supabase.from('offers').delete().eq('id', id).eq('branch_id', BRANCH_ID);
-  if (error) console.error('Error deleting offer:', error);
+  // 1. Eliminar de Supabase settings y localStorage
+  const currentOffers = await getCachedOffers();
+  const nextOffers = currentOffers.filter(o => o.id !== id);
+  await saveOffersToSettings(nextOffers);
+
+  // 2. Intentar eliminación SQL
+  try {
+    await supabase.from('offers').delete().eq('id', id).eq('branch_id', BRANCH_ID);
+  } catch (_) {}
 };
 
 // ─── CUSTOMER PROFILES ──────────────────────────────────────────────────
@@ -466,36 +613,68 @@ export const saveSetting = async <T>(key: string, value: T): Promise<void> => {
 };
 
 // ─── CATEGORIES ─────────────────────────────────────────────────────────
-export const fetchCategories = async (): Promise<Category[]> => {
-  const { data, error } = await supabase.from('categories').select('*').order('title', { ascending: true });
-  if (error) { console.error('Error fetching categories:', error); return []; }
-  return data || [];
+export const fetchCategories = async (forceRefresh = false): Promise<Category[]> => {
+  const cacheKey = 'categories_tree';
+  if (!forceRefresh) {
+    const cached = catalogCache.get<Category[]>(cacheKey);
+    if (cached && cached.length > 0) return cached;
+  }
+
+  // Selección estricta de columnas (sin SELECT *)
+  const { data, error } = await supabase
+    .from('categories')
+    .select('id, title, description')
+    .order('title', { ascending: true });
+
+  if (error) { 
+    console.error('Error fetching categories:', error); 
+    return []; 
+  }
+  
+  const result = data || [];
+  catalogCache.set(cacheKey, result, TTL.CATEGORIES);
+  return result;
 };
 
 export const insertCategory = async (category: Category): Promise<void> => {
+  catalogCache.invalidateCategories();
   const { error } = await supabase.from('categories').insert(category);
   if (error) console.error('Error inserting category:', error);
 };
 
 export const updateCategoryInDb = async (id: string, updates: Partial<Category>): Promise<void> => {
+  catalogCache.invalidateCategories();
   const { error } = await supabase.from('categories').update(updates).eq('id', id);
   if (error) console.error('Error updating category:', error);
 };
 
 export const deleteCategoryFromDb = async (id: string): Promise<void> => {
+  catalogCache.invalidateCategories();
   const { error } = await supabase.from('categories').delete().eq('id', id);
   if (error) console.error('Error deleting category:', error);
 };
 
 // ─── SUBCATEGORIES ───────────────────────────────────────────────────────
-export const fetchSubcategories = async (): Promise<Subcategory[]> => {
+export const fetchSubcategories = async (forceRefresh = false): Promise<Subcategory[]> => {
+  const cacheKey = 'subcategories_all';
+  if (!forceRefresh) {
+    const cached = catalogCache.get<Subcategory[]>(cacheKey);
+    if (cached && cached.length > 0) return cached;
+  }
+
+  // Selección estricta de columnas (sin SELECT *)
   const { data, error } = await supabase
     .from('subcategories')
-    .select('*')
+    .select('id, category_id, title, description, sort_order')
     .order('sort_order', { ascending: true })
     .order('title', { ascending: true });
-  if (error) { console.error('Error fetching subcategories:', error); return []; }
-  return (data || []).map((s: any) => ({
+
+  if (error) { 
+    console.error('Error fetching subcategories:', error); 
+    return []; 
+  }
+
+  const result = (data || []).map((s: any) => ({
     id: s.id,
     categoryId: s.category_id,
     title: s.title,
@@ -503,9 +682,13 @@ export const fetchSubcategories = async (): Promise<Subcategory[]> => {
     sortOrder: s.sort_order ?? 0,
     createdAt: s.created_at
   }));
+
+  catalogCache.set(cacheKey, result, TTL.CATEGORIES);
+  return result;
 };
 
 export const insertSubcategory = async (subcategory: Subcategory): Promise<boolean> => {
+  catalogCache.invalidateCategories();
   const payload = {
     id: subcategory.id,
     category_id: subcategory.categoryId,
@@ -530,6 +713,7 @@ export const insertSubcategory = async (subcategory: Subcategory): Promise<boole
 };
 
 export const updateSubcategoryInDb = async (id: string, updates: Partial<Subcategory>): Promise<void> => {
+  catalogCache.invalidateCategories();
   const payload: any = {};
   if (updates.categoryId !== undefined) payload.category_id = updates.categoryId;
   if (updates.title !== undefined) payload.title = updates.title;
@@ -541,6 +725,7 @@ export const updateSubcategoryInDb = async (id: string, updates: Partial<Subcate
 };
 
 export const deleteSubcategoryFromDb = async (id: string): Promise<void> => {
+  catalogCache.invalidateCategories();
   const { error } = await supabase.from('subcategories').delete().eq('id', id);
   if (error) console.error('Error deleting subcategory:', error);
 };

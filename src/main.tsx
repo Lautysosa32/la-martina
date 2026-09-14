@@ -7,6 +7,11 @@ import { CartProvider } from './context/CartContext.tsx';
 import { FavoritesProvider } from './context/FavoritesContext.tsx';
 import { AdminProvider } from './context/AdminContext.tsx';
 
+// Forzar HTTPS en producción (Prevenir envío de credenciales o tokens en texto plano)
+if (typeof window !== 'undefined' && window.location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+  window.location.replace(window.location.href.replace('http:', 'https:'));
+}
+
 // Limpieza de claves administrativas obsoletas de localStorage
 const cleanupLegacyKeys = () => {
   const legacyKeys = [

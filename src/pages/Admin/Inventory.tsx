@@ -11,6 +11,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { BarcodeScannerModal } from '../../components/BarcodeScannerModal';
 import { ScanResultPanel } from '../../components/ScanResultPanel';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 type SortKey = 'name' | 'categoryId' | 'stock' | 'price';
 interface SortConfig {
@@ -29,14 +30,14 @@ export const Inventory: React.FC = () => {
 
   const {
     inventoryProducts, inventoryTotal, inventoryLoading, fetchInventoryProducts,
-    addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkAddProducts,
+    addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkTogglePause, bulkAddProducts,
     getProductByBarcode: findProductByBarcode, clearError, error: productsError
   } = useProductStore();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
 
   const [page, setPage] = useState(1);
-  const limit = 100;
+  const limit = 50;
 
   const [scannerActive, setScannerActive] = useState(false);
   const [isSearchingExternal, setIsSearchingExternal] = useState(false);
@@ -103,7 +104,7 @@ export const Inventory: React.FC = () => {
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
 
   // Form States
-  const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight' });
+  const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight', isPaused: false });
   const [bulkPercent, setBulkPercent] = useState('');
   const [editItem, setEditItem] = useState<{ id: string, value: string } | null>(null);
   const [newItemName, setNewItemName] = useState('');
@@ -121,6 +122,10 @@ export const Inventory: React.FC = () => {
   const [importProgress, setImportProgress] = useState<{ current: number; total: number; percentage: number }>({ current: 0, total: 0, percentage: 0 });
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Bloquear scroll de fondo cuando cualquier modal esté abierto
+  const hasOpenModal = showProductModal.show || showBulkModal || showManageModal.show || !!deleteConfirm || showImportReview || isProcessingFile;
+  useScrollLock(hasOpenModal);
 
   // Asegurar que el portal tenga su destino listo
   useEffect(() => {
@@ -250,11 +255,12 @@ export const Inventory: React.FC = () => {
           stock: '0',
           minStock: '15',
           barcode: code,
-          saleType: 'unit'
+          saleType: 'unit',
+          isPaused: false
         });
       } else {
         console.log("No se encontraron datos externos.");
-        setProductForm(prev => ({ ...prev, id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: code, saleType: 'unit' }));
+        setProductForm(prev => ({ ...prev, id: '', name: '', brand: '', categoryId: adminCategories[0]?.id || 'almacen', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: code, saleType: 'unit', isPaused: false }));
       }
       setShowProductModal({ show: true, mode: 'new' });
     }
@@ -329,7 +335,8 @@ export const Inventory: React.FC = () => {
         stock: (product.stock ?? 0).toString(),
         minStock: (product.minStock ?? 15).toString(),
         barcode: product.barcode || '',
-        saleType: product.saleType || 'unit'
+        saleType: product.saleType || 'unit',
+        isPaused: product.isPaused ?? false
       });
     } else {
       setProductForm({
@@ -346,7 +353,8 @@ export const Inventory: React.FC = () => {
         stock: (product?.stock ?? 0).toString(),
         minStock: (product?.minStock ?? 15).toString(),
         barcode: prefilledBarcode || product?.barcode || '',
-        saleType: product?.saleType || 'unit'
+        saleType: product?.saleType || 'unit',
+        isPaused: false
       });
     }
     setBarcodeError(null);
@@ -366,14 +374,17 @@ export const Inventory: React.FC = () => {
     const stockVal = parseInt(productForm.stock) || 0;
     const data: any = {
       ...(showProductModal.mode === 'edit' ? { id: productForm.id } : {}),
-      name: productForm.name, brand: productForm.brand, categoryId: productForm.categoryId,
+      name: productForm.name.trim(),
+      brand: (productForm.brand || '').trim(),
+      categoryId: productForm.categoryId,
       subcategoryId: productForm.subcategoryId || null,
       price: parseInt(productForm.price) || 0, image: productForm.image, format: productForm.format,
       badge: productForm.badge, originalPrice: productForm.originalPrice ? parseInt(productForm.originalPrice) : undefined,
       minStock: productForm.minStock !== '' ? parseInt(productForm.minStock) : 15,
       barcode: productForm.barcode || undefined,
       stock: stockVal,
-      saleType: productForm.saleType
+      saleType: productForm.saleType,
+      isPaused: productForm.isPaused
     };
 
     if (showProductModal.mode === 'edit') {
@@ -388,28 +399,76 @@ export const Inventory: React.FC = () => {
   const getProductCountByCat = (catId: string) => null;
   const getProductCountByTag = (tagName: string) => null;
 
+  const sanitizeCellValue = (val: any): string => {
+    if (val === null || val === undefined) return '';
+    let str = String(val).trim();
+    // Neutralizar CSV Formula Injection si la celda comienza con caracteres de fórmula
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = "'" + str;
+    }
+    return str;
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 1. Validación de tamaño (Máximo 5 MB)
+    const MAX_SIZE_BYTES = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE_BYTES) {
+      alert('El archivo seleccionado supera el límite máximo permitido de 5 MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // 2. Validación de extensión permitida
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!extension || !['csv', 'xlsx', 'xls'].includes(extension)) {
+      alert('Formato no permitido. Solo se admiten archivos .csv, .xlsx o .xls.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     setIsProcessingFile(true);
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       const bstr = evt.target?.result;
-      const extension = file.name.split('.').pop()?.toLowerCase();
+
+      // Asegurar que el catálogo completo esté disponible en memoria para detectar productos existentes por código de barras o nombre
+      let pool = adminProducts;
+      if (!pool || pool.length === 0) {
+        const stProds = useProductStore.getState().products;
+        if (stProds && stProds.length > 0) {
+          pool = stProds;
+        } else {
+          try {
+            await useProductStore.getState().fetchProducts();
+            pool = useProductStore.getState().products;
+          } catch (e) {
+            console.error('Error cargando catálogo existente:', e);
+          }
+        }
+      }
 
       if (extension === 'csv') {
         Papa.parse(file, {
           header: true,
           skipEmptyLines: true,
-          complete: (results) => processImportedData(results.data)
+          complete: (results) => processImportedData(results.data, pool)
         });
       } else if (extension === 'xlsx' || extension === 'xls') {
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
-        processImportedData(data);
+        try {
+          const wb = XLSX.read(bstr, { type: 'binary', dense: true });
+          const wsname = wb.SheetNames[0];
+          const ws = wb.Sheets[wsname];
+          const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+          processImportedData(data, pool);
+        } catch (err: any) {
+          alert('Error al leer la planilla de cálculo. Verifique que no esté dañada o protegida.');
+          setIsProcessingFile(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
       }
     };
 
@@ -420,7 +479,7 @@ export const Inventory: React.FC = () => {
     }
   };
 
-  const processImportedData = (rawData: any[]) => {
+  const processImportedData = (rawData: any[], productsPool?: Product[]) => {
     const valid: any[] = [];
     const errors: any[] = [];
     const duplicates: any[] = [];
@@ -429,9 +488,10 @@ export const Inventory: React.FC = () => {
     const seenBarcodesInFile = new Set<string>();
 
     // Index existing products to identify updates vs creations and prevent duplicates
+    const pool = (productsPool && productsPool.length > 0) ? productsPool : (adminProducts || []);
     const existingByBarcode = new Map<string, Product>();
     const existingByName = new Map<string, Product>();
-    (adminProducts || []).forEach(p => {
+    pool.forEach(p => {
       if (p.barcode && p.barcode.trim()) {
         existingByBarcode.set(p.barcode.trim().toLowerCase(), p);
       }
@@ -440,36 +500,59 @@ export const Inventory: React.FC = () => {
       }
     });
 
-    if (rawData.length > 0) {
-      console.log('📋 Columnas detectadas en el archivo importado:', Object.keys(rawData[0]));
-    }
-
     rawData.forEach((row, index) => {
-      // Normalizar las keys de la fila para búsqueda insensible a mayúsculas/acentos
-      const normalizedRow: any = {};
+      // Prevención de Prototype Pollution y normalización exhaustiva de keys
+      const normalizedRow: any = Object.create(null);
       Object.keys(row).forEach(key => {
-        const normalizedKey = key.toLowerCase()
-          .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar acentos
-          .replace(/[^a-z0-9\s]/g, '') // quitar caracteres especiales
-          .trim();
-        normalizedRow[normalizedKey] = row[key];
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+        const val = sanitizeCellValue(row[key]);
+        const lower = key.toLowerCase();
+        const unaccented = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+        const spaced = unaccented.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        const compact = unaccented.replace(/[^a-z0-9]/g, '');
+        const standard = unaccented.replace(/[^a-z0-9\s]/g, '').trim();
+
+        normalizedRow[spaced] = val;
+        normalizedRow[compact] = val;
+        normalizedRow[standard] = val;
+        normalizedRow[lower.trim()] = val;
       });
 
       const getVal = (paths: string[]) => {
         for (const p of paths) {
-          if (normalizedRow[p] !== undefined && normalizedRow[p] !== null) return normalizedRow[p];
+          if (normalizedRow[p] !== undefined && normalizedRow[p] !== null && normalizedRow[p] !== '') return normalizedRow[p];
         }
         return '';
       };
 
-      const rawBarcode = getVal(['barcode', 'codigo de barras', 'codigo', 'ean', 'upc', 'cod barra', 'cod barras', 'codigobarras']).toString().replace(/\./g, '').trim();
+      const rawBarcode = getVal(['barcode', 'codigo de barras', 'codigo', 'ean', 'upc', 'cod barra', 'cod barras', 'codigobarras', 'codigodebarras']).toString().replace(/\./g, '').trim();
       const rawName = getVal(['productos', 'producto', 'nombre', 'name', 'articulo', 'descripcion', 'description', 'detalle', 'item', 'product']).toString().trim();
       const rawBrand = getVal(['marca', 'brand', 'laboratorio']).toString().trim();
       const rawCategory = getVal(['categoria', 'category', 'rubro', 'seccion']).toString().trim();
       const rawSubcategory = getVal(['subcategoria', 'sub categoria', 'sub-categoria', 'sub_categoria', 'subcategory', 'sub category', 'sub-category', 'subrubro', 'sub rubro', 'sub-rubro']).toString().trim();
       const rawPrice = getVal(['precio', 'price', 'costo', 'valor', 'precio unitario', 'precio unit']);
       const rawStock = getVal(['stock', 'inventario', 'cantidad', 'existencia']) || 0;
-      const rawImage = getVal(['image', 'foto', 'url', 'imagen']) || '';
+
+      let rawImage = getVal([
+        'imagen_url', 'imagenurl', 'imagen url',
+        'image_url', 'imageurl', 'image url',
+        'url_imagen', 'urlimagen', 'url imagen',
+        'url_image', 'urlimage', 'url image',
+        'foto_url', 'fotourl', 'foto url',
+        'url_foto', 'urlfoto', 'url foto',
+        'image', 'foto', 'url', 'imagen', 'img', 'imgurl', 'img_url', 'img url',
+        'link', 'link_imagen', 'linkimagen', 'link imagen',
+        'picture', 'photo'
+      ]).toString().trim();
+
+      // Limpieza de fórmulas de Excel como =HYPERLINK("https://...", "ver")
+      const hyperlinkMatch = rawImage.match(/HYPERLINK\(\s*["']([^"']+)["']/i);
+      if (hyperlinkMatch) {
+        rawImage = hyperlinkMatch[1].trim();
+      }
+      // Quitar comillas circundantes si las tiene
+      rawImage = rawImage.replace(/^["']+|["']+$/g, '').trim();
 
       const item: any = {
         barcode: rawBarcode,
@@ -533,7 +616,7 @@ export const Inventory: React.FC = () => {
           (item.price !== '' && Math.abs(priceNum - (existing.price ?? 0)) > 0.001) ||
           (item.stock !== '' && stockNum !== (existing.stock ?? 0)) ||
           (Boolean(targetBarcode) && targetBarcode !== existing.barcode) ||
-          (Boolean(targetImage) && targetImage !== (existing.image || ''));
+          (Boolean(targetImage) && targetImage.trim() !== (existing.image || '').trim());
       }
 
       valid.push({
@@ -718,15 +801,16 @@ export const Inventory: React.FC = () => {
   };
 
   const handleExportCSV = () => {
-    const headers = ['Código de Barras', 'Producto', 'Marca', 'Categoría', 'Subcategoría', 'Precio', 'Stock'];
+    const headers = ['Código de Barras', 'Producto', 'Marca', 'Categoría', 'Subcategoría', 'Precio', 'Stock', 'imagen_url'];
     const rows = sortedProducts.map(p => [
       p.barcode || '',
       `"${(p.name || '').replace(/"/g, '""')}"`,
       `"${(p.brand || '').replace(/"/g, '""')}"`,
       `"${(adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId || '').replace(/"/g, '""')}"`,
-      `"${(adminSubcategories.find(s => s.id === p.subcategoryId)?.title || '').replace(/"/g, '""')}"`,
+      `"${(adminSubcategories.find(s => s.id === p.subcategoryId || s.id === `${p.categoryId}-${p.subcategoryId}` || `${s.categoryId}-${s.id}` === p.subcategoryId)?.title || '').replace(/"/g, '""')}"`,
       p.price,
-      p.stock ?? 0
+      p.stock ?? 0,
+      `"${(p.image || '').replace(/"/g, '""')}"`
     ]);
 
     const csvContent = "\uFEFF" + [headers, ...rows].map(e => e.join(",")).join("\n");
@@ -807,8 +891,8 @@ export const Inventory: React.FC = () => {
             <button
               onClick={() => handleTabChange('all')}
               className={`w-2/3 py-2 rounded-xl text-sm font-bold transition-all text-center flex items-center justify-center ${activeTab === 'all'
-                  ? 'bg-primary text-white shadow-md'
-                  : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
+                ? 'bg-primary text-white shadow-md'
+                : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
                 }`}
             >
               Todos {activeTab === 'all' && `(${inventoryTotal})`}
@@ -822,8 +906,8 @@ export const Inventory: React.FC = () => {
                 key={cat.id}
                 onClick={() => handleTabChange(cat.id)}
                 className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${activeTab === cat.id
-                    ? 'bg-primary text-white shadow-md'
-                    : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
+                  ? 'bg-primary text-white shadow-md'
+                  : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
                   }`}
               >
                 <span className="truncate">{cat.title}</span>
@@ -838,8 +922,8 @@ export const Inventory: React.FC = () => {
                 key={cat.id}
                 onClick={() => handleTabChange(cat.id)}
                 className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center truncate ${activeTab === cat.id
-                    ? 'bg-primary text-white shadow-md'
-                    : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
+                  ? 'bg-primary text-white shadow-md'
+                  : 'text-on-surface-variant hover:bg-surface-container-low border border-outline-variant/10'
                   }`}
               >
                 <span className="truncate">{cat.title}</span>
@@ -861,12 +945,12 @@ export const Inventory: React.FC = () => {
 
       {/* Subcategory Pills Bar (When a category is active) */}
       {activeTab !== 'all' && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full hide-scrollbar -mt-2 animate-in fade-in slide-in-from-top-1 duration-200">
+        <div className="flex flex-wrap items-center gap-2 pb-1 max-w-full -mt-2 animate-in fade-in slide-in-from-top-1 duration-200">
           <button
             onClick={() => handleSubcategoryTabChange('all')}
             className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${activeSubcategoryTab === 'all'
-                ? 'bg-primary text-white shadow-xs'
-                : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/15'
+              ? 'bg-primary text-white shadow-xs'
+              : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/15'
               }`}
           >
             <span>Todas las subcategorías</span>
@@ -878,8 +962,8 @@ export const Inventory: React.FC = () => {
                 key={sub.id}
                 onClick={() => handleSubcategoryTabChange(sub.id)}
                 className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${activeSubcategoryTab === sub.id
-                    ? 'bg-primary text-white shadow-xs'
-                    : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/15'
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/15'
                   }`}
               >
                 <span>{sub.title}</span>
@@ -906,10 +990,22 @@ export const Inventory: React.FC = () => {
             {selectedIds.length} seleccionados
           </p>
           <div className="flex gap-2">
+            <PermissionGuard permission="products.update">
+              <button
+                onClick={async () => {
+                  await bulkTogglePause(selectedIds);
+                  setSelectedIds([]);
+                }}
+                className="bg-neutral-800 text-white dark:bg-neutral-200 dark:text-neutral-900 font-bold px-4 py-2 rounded-xl text-xs hover:opacity-90 shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[16px]">pause_circle</span>
+                Pausar / Reanudar
+              </button>
+            </PermissionGuard>
             <PermissionGuard permission="products.change_price">
               <button onClick={() => setShowBulkModal(true)} className="bg-primary text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-primary/90 shadow-md">Ajuste %</button>
             </PermissionGuard>
-            <button onClick={() => setSelectedIds([])} className="bg-white text-on-surface-variant font-bold text-xs px-4 py-2 rounded-xl border border-outline-variant/20">Limpiar</button>
+            <button onClick={() => setSelectedIds([])} className="bg-white text-on-surface-variant font-bold text-xs px-4 py-2 rounded-xl border border-outline-variant/20 cursor-pointer">Limpiar</button>
           </div>
         </div>
       )}
@@ -1021,7 +1117,14 @@ export const Inventory: React.FC = () => {
                             <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
                           </div>
                           <div className="flex flex-col min-w-0 pr-2">
-                            <p className="font-bold text-on-background text-[15px] leading-tight whitespace-normal wrap-break-word">{product.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-on-background text-[15px] leading-tight whitespace-normal wrap-break-word">{product.name}</p>
+                              {product.isPaused && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 uppercase tracking-wider shrink-0">
+                                  Pausado
+                                </span>
+                              )}
+                            </div>
                             <div className="flex items-center gap-2 mt-1">
                               <p className="text-[10px] text-on-surface-variant font-black uppercase tracking-wider bg-surface-container-low px-1.5 py-0.5 rounded-md truncate">{product.brand}</p>
                               {product.barcode && (
@@ -1039,7 +1142,7 @@ export const Inventory: React.FC = () => {
                           {product.subcategoryId && (
                             <span className="text-[11px] font-semibold text-primary flex items-center gap-0.5">
                               <span className="text-[12px] opacity-60">↳</span>
-                              {adminSubcategories.find(s => s.id === product.subcategoryId)?.title || product.subcategoryId}
+                              {adminSubcategories.find(s => s.id === product.subcategoryId || s.id === `${product.categoryId}-${product.subcategoryId}` || `${s.categoryId}-${s.id}` === product.subcategoryId)?.title || product.subcategoryId}
                             </span>
                           )}
                         </div>
@@ -1119,7 +1222,14 @@ export const Inventory: React.FC = () => {
 
                     {/* Nombre */}
                     <div className="min-w-0 flex-1">
-                      <p className="font-bold text-on-background text-sm leading-snug wrap-break-word">{product.name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-bold text-on-background text-sm leading-snug wrap-break-word">{product.name}</p>
+                        {product.isPaused && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 uppercase tracking-wider shrink-0">
+                            Pausado
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -1247,6 +1357,30 @@ export const Inventory: React.FC = () => {
                     <input type="number" value={productForm.minStock} onChange={e => setProductForm({ ...productForm, minStock: e.target.value })} className="w-full bg-orange-50/50 rounded-xl px-4 py-3 outline-none font-bold text-orange-600 border border-orange-200" />
                   </div>
                 </div>
+              </div>
+
+              {/* Switch Pausar Producto */}
+              <div className="bg-surface-container-low/60 border border-outline-variant/15 rounded-2xl p-4 flex items-center justify-between mt-2">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${productForm.isPaused ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'bg-surface-container-high text-on-surface-variant'}`}>
+                    <span className="material-symbols-outlined text-[22px]">
+                      {productForm.isPaused ? 'pause_circle' : 'play_circle'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm text-on-background">Pausar Producto</p>
+                    <p className="text-xs text-on-surface-variant">No incluir en pedidos ni en reportes de stock bajo</p>
+                  </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={productForm.isPaused}
+                    onChange={e => setProductForm({ ...productForm, isPaused: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                </label>
               </div>
             </div>
             <div className="p-6 border-t border-outline-variant/10 flex gap-4">
@@ -1520,7 +1654,7 @@ export const Inventory: React.FC = () => {
 
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
               {/* Resumen */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
                 <div className="bg-green-50 border border-green-100 p-4 rounded-2xl text-center">
                   <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1">Nuevos</p>
                   <p className="text-2xl font-black text-green-600">
@@ -1537,6 +1671,13 @@ export const Inventory: React.FC = () => {
                   <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-1">Sin Cambios</p>
                   <p className="text-2xl font-black text-slate-500">
                     {importData.valid.filter(p => p.isUpdate && !p.isModified).length}
+                  </p>
+                </div>
+                <div className="bg-purple-50 border border-purple-100 p-4 rounded-2xl text-center">
+                  <p className="text-[10px] font-black text-purple-700 uppercase tracking-widest mb-1">Con Foto</p>
+                  <p className="text-2xl font-black text-purple-600">
+                    {importData.valid.filter(p => Boolean(p.image && p.image.trim())).length}
+                    <span className="text-xs font-semibold text-purple-600/70 ml-1">/ {importData.valid.length}</span>
                   </p>
                 </div>
                 <div className="bg-red-50 border border-red-100 p-4 rounded-2xl text-center">
@@ -1562,6 +1703,7 @@ export const Inventory: React.FC = () => {
                         <thead className="bg-surface-container-low font-bold">
                           <tr>
                             <th className="px-4 py-3">Acción</th>
+                            <th className="px-4 py-3">Foto</th>
                             <th className="px-4 py-3">Nombre</th>
                             <th className="px-4 py-3">Marca</th>
                             <th className="px-4 py-3">Categoría</th>
@@ -1573,7 +1715,7 @@ export const Inventory: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-outline-variant/5">
-                          {importData.valid.slice(0, 10).map((p, i) => (
+                          {importData.valid.slice(0, 15).map((p, i) => (
                             <tr key={i}>
                               <td className="px-4 py-3">
                                 {!p.isUpdate ? (
@@ -1588,6 +1730,24 @@ export const Inventory: React.FC = () => {
                                   <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider whitespace-nowrap">
                                     Sin cambios
                                   </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                {p.image ? (
+                                  <div className="w-10 h-10 rounded-lg bg-surface-container-low overflow-hidden border border-outline-variant/20 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
+                                    <img
+                                      src={p.image}
+                                      alt={p.name}
+                                      className="w-full h-full object-contain mix-blend-multiply"
+                                      onError={(e) => {
+                                        (e.target as HTMLElement).style.display = 'none';
+                                      }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="w-10 h-10 rounded-lg bg-surface-container-low border border-dashed border-outline-variant/30 flex items-center justify-center text-on-surface-variant/40 shrink-0" title="Sin foto">
+                                    <span className="material-symbols-outlined text-[18px]">image_not_supported</span>
+                                  </div>
                                 )}
                               </td>
                               <td className="px-4 py-3 font-bold">{p.name}</td>
@@ -1612,9 +1772,9 @@ export const Inventory: React.FC = () => {
                           ))}
                         </tbody>
                       </table>
-                      {importData.valid.length > 10 && (
+                      {importData.valid.length > 15 && (
                         <div className="p-3 text-center bg-surface-container-lowest text-[10px] text-on-surface-variant italic">
-                          Y {importData.valid.length - 10} productos más...
+                          Y {importData.valid.length - 15} productos más...
                         </div>
                       )}
                     </div>
@@ -1703,8 +1863,8 @@ export const Inventory: React.FC = () => {
                     onClick={handleConfirmImport}
                     disabled={importData.valid.length === 0 || isImporting}
                     className={`flex-1 md:flex-none font-bold px-10 py-4 rounded-2xl transition-all flex items-center justify-center gap-3 cursor-pointer ${isImporting
-                        ? 'bg-primary/80 text-white cursor-wait'
-                        : 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed'
+                      ? 'bg-primary/80 text-white cursor-wait'
+                      : 'bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed'
                       }`}
                   >
                     {isImporting ? (

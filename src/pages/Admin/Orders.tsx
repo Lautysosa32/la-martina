@@ -7,16 +7,18 @@ import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { calculateDistanceKm } from '../../utils/shipping';
 import { WeightInputModal } from '../../components/WeightInputModal';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 export const AdminOrders: React.FC = () => {
-  const { 
-    orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod, 
+  const {
+    orders, updateOrderStatus, updateOrderMethod, updateOrderPaymentMethod,
     updateOrderWeightItems, adminProducts,
-    getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked, generalConfig 
+    getOrderTimestamp, formatCurrency, blockPhone, isPhoneBlocked, generalConfig
   } = useAdmin();
   const [activeStatus, setActiveStatus] = useState('todos');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelModalData, setCancelModalData] = useState<AdminOrder | null>(null);
+  useScrollLock(!!cancelModalData);
   const [weightModalData, setWeightModalData] = useState<{
     orderId: string;
     itemIndex: number;
@@ -128,7 +130,7 @@ export const AdminOrders: React.FC = () => {
     if (!order.phone) return;
     const cleanPhone = order.phone.replace(/\D/g, '');
     const targetPhone = cleanPhone.startsWith('54') ? cleanPhone : `54${cleanPhone}`;
-    const msg = `*Hola ${order.customer}!* 👋 Te escribo del equipo de *La Martina* con respecto a tu pedido *#${order.id}*: `;
+    const msg = `*Hola ${order.customer}!* 👋 Te escribo del equipo de *Martina Supermercado* con respecto a tu pedido *#${order.id}*: `;
     window.open(`https://wa.me/${targetPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -433,12 +435,12 @@ export const AdminOrders: React.FC = () => {
                                           <span className="material-symbols-outlined text-[15px] text-primary">schedule</span>
                                           {order.deliveryTime}
                                         </p>
-                                        
+
                                         {/* Action buttons inside delivery card */}
                                         <div className="flex gap-2 mt-3 flex-wrap">
-                                          <a 
-                                            href={`https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`} 
-                                            target="_blank" 
+                                          <a
+                                            href={`https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`}
+                                            target="_blank"
                                             rel="noopener noreferrer"
                                             className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2 rounded-xl text-[10px] flex items-center gap-1 shadow-sm transition-colors"
                                           >
@@ -473,11 +475,11 @@ export const AdminOrders: React.FC = () => {
 
                                         {/* Embedded mini-map */}
                                         <div className="mt-3 w-full h-[150px] rounded-xl overflow-hidden border border-outline-variant/20 shadow-sm relative">
-                                          <iframe 
+                                          <iframe
                                             title={`map-${order.id}`}
-                                            width="100%" 
-                                            height="100%" 
-                                            style={{ border: 0 }} 
+                                            width="100%"
+                                            height="100%"
+                                            style={{ border: 0 }}
                                             src={`https://www.openstreetmap.org/export/embed.html?bbox=${order.delivery_lng - 0.003}%2C${order.delivery_lat - 0.0015}%2C${order.delivery_lng + 0.003}%2C${order.delivery_lat + 0.0015}&layer=mapnik&marker=${order.delivery_lat}%2C${order.delivery_lng}`}
                                           />
                                           <div className="absolute top-2 right-2 bg-white/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[8px] font-mono shadow-sm">OSM Preview</div>
@@ -594,18 +596,18 @@ export const AdminOrders: React.FC = () => {
                                     {(['Nuevo', 'Preparando', 'Listo', 'En Camino', 'Entregado'] as const)
                                       .filter(s => (s !== 'En Camino' || order.method === 'Envío') && (s !== 'Listo' || order.method !== 'Envío'))
                                       .map(s => (
-                                      <PermissionGuard permission="orders.update_status" key={s}>
-                                        <button
-                                          onClick={() => updateOrderStatus(order.id, s)}
-                                          className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${order.status === s
-                                            ? 'bg-primary text-white border-primary'
-                                            : 'bg-white border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
-                                            }`}
-                                        >
-                                          {s}
-                                        </button>
-                                      </PermissionGuard>
-                                    ))}
+                                        <PermissionGuard permission="orders.update_status" key={s}>
+                                          <button
+                                            onClick={() => updateOrderStatus(order.id, s)}
+                                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all ${order.status === s
+                                              ? 'bg-primary text-white border-primary'
+                                              : 'bg-white border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
+                                              }`}
+                                          >
+                                            {s}
+                                          </button>
+                                        </PermissionGuard>
+                                      ))}
                                   </div>
                                 </div>
                                 {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
@@ -682,7 +684,7 @@ export const AdminOrders: React.FC = () => {
                           <p className="text-[10px] text-on-surface-variant font-medium truncate">{order.phone || 'Sin teléfono'}</p>
                         </div>
                       </div>
-                      
+
                       {/* Total */}
                       <div className="text-right leading-tight flex-shrink-0">
                         <p className="font-black text-primary text-base">
@@ -890,9 +892,9 @@ export const AdminOrders: React.FC = () => {
 
                               {/* Mobile actions */}
                               <div className="flex gap-2 pt-1 flex-wrap">
-                                <a 
-                                  href={`https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`} 
-                                  target="_blank" 
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`}
+                                  target="_blank"
                                   rel="noopener noreferrer"
                                   className="bg-primary hover:bg-primary/95 text-white font-bold px-3 py-2.5 rounded-xl text-[10px] flex items-center justify-center gap-1 shadow-sm flex-1 text-center"
                                 >
@@ -914,11 +916,11 @@ export const AdminOrders: React.FC = () => {
 
                               {/* Embedded mini-map */}
                               <div className="mt-2 w-full h-[130px] rounded-xl overflow-hidden border border-outline-variant/20 shadow-sm relative">
-                                <iframe 
+                                <iframe
                                   title={`map-mobile-${order.id}`}
-                                  width="100%" 
-                                  height="100%" 
-                                  style={{ border: 0 }} 
+                                  width="100%"
+                                  height="100%"
+                                  style={{ border: 0 }}
                                   src={`https://www.openstreetmap.org/export/embed.html?bbox=${order.delivery_lng - 0.003}%2C${order.delivery_lat - 0.0015}%2C${order.delivery_lng + 0.003}%2C${order.delivery_lat + 0.0015}&layer=mapnik&marker=${order.delivery_lat}%2C${order.delivery_lng}`}
                                 />
                               </div>
@@ -1005,20 +1007,20 @@ export const AdminOrders: React.FC = () => {
                             {(['Nuevo', 'Preparando', 'En Camino', 'Entregado'] as const)
                               .filter(s => s !== 'En Camino' || order.method === 'Envío')
                               .map(s => (
-                              <PermissionGuard permission="orders.update_status" key={s}>
-                                <button
-                                  onClick={() => updateOrderStatus(order.id, s)}
-                                  className={`w-full py-2 rounded-xl text-[10px] font-bold border transition-all text-center ${order.status === s
-                                    ? 'bg-primary text-white border-primary shadow-sm'
-                                    : 'bg-white border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
-                                    }`}
-                                >
-                                  {s}
-                                </button>
-                              </PermissionGuard>
-                            ))}
+                                <PermissionGuard permission="orders.update_status" key={s}>
+                                  <button
+                                    onClick={() => updateOrderStatus(order.id, s)}
+                                    className={`w-full py-2 rounded-xl text-[10px] font-bold border transition-all text-center ${order.status === s
+                                      ? 'bg-primary text-white border-primary shadow-sm'
+                                      : 'bg-white border-outline-variant/20 text-on-surface-variant hover:border-primary/50'
+                                      }`}
+                                  >
+                                    {s}
+                                  </button>
+                                </PermissionGuard>
+                              ))}
                           </div>
-                          
+
                           {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
                             <PermissionGuard permission="orders.cancel">
                               <div className="pt-2 border-t border-outline-variant/10 flex gap-2">

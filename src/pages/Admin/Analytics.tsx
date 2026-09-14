@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
-import type { Offer, CashClose, CashMovement } from '../../context/AdminContext';
+import type { Offer, CashClose, CashMovement, Product } from '../../context/AdminContext';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
 import { TicketPrinter, TicketData } from '../../components/TicketPrinter';
 import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
@@ -40,7 +41,7 @@ const getCategoryColor = (categoryName: string): string => {
 
 export const Analytics: React.FC = () => {
   const {
-    adminProducts, adminCategories, orders, totalRevenue, activeOffers, offers,
+    adminProducts, adminCategories, adminSubcategories, adminTags, orders, totalRevenue, activeOffers, offers,
     addOffer, deleteOffer, cashCloses, performCashClose, getCashCloseMovements,
     getTopSellingProducts, getRevenueByCategory, getRevenueByDay, getOrderTimestamp,
     formatCurrency, customers, cashMovements, offerRedemptions, expenses, isCashRegisterOpen
@@ -65,9 +66,18 @@ export const Analytics: React.FC = () => {
   
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [showCloseResult, setShowCloseResult] = useState<CashClose | null>(null);
+
+  // Bloquear scroll de fondo cuando haya algún modal abierto en Analytics
+  const hasAnalyticsModalOpen = showOfferModal || !!showCloseResult;
+  useScrollLock(hasAnalyticsModalOpen);
+
   const [offerForm, setOfferForm] = useState({
     scope: 'product' as Offer['scope'],
     targetId: '',
+    targetIds: [] as string[],
+    subcategoryId: '',
+    tagFilter: '',
+    requiredTier: '',
     discountType: 'percent' as Offer['discountType'],
     discountValue: '',
     maxDiscountAmount: '',
@@ -77,6 +87,13 @@ export const Analytics: React.FC = () => {
     per_customer_daily_limit: '',
     total_quantity_limit: ''
   });
+  const [productSearch, setProductSearch] = useState('');
+  const [selectedProductCategoryFilter, setSelectedProductCategoryFilter] = useState('');
+  const [productLimit, setProductLimit] = useState(100);
+
+  useEffect(() => {
+    setProductLimit(100);
+  }, [selectedProductCategoryFilter, productSearch]);
   const [closeSortOrder, setCloseSortOrder] = useState<'date-desc' | 'date-asc' | 'revenue-desc' | 'revenue-asc'>('date-desc');
 
   // Cash close modal activity state (default to 'todos', separated into 'local' and 'pedidos')
@@ -399,19 +416,160 @@ export const Analytics: React.FC = () => {
     };
   }, [orders, cashMovements, analyticsParams, getOrderTimestamp]);
 
+  // Filter and rank products for offer modal search with batches of 100 and no image lag
+  const { filteredProductsForOffer, totalMatchingProductsCount } = useMemo(() => {
+    if (offerForm.scope !== 'product') return { filteredProductsForOffer: [], totalMatchingProductsCount: 0 };
+    const term = productSearch.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+    // 1. Si no hay búsqueda ni categoría seleccionada, mostramos los primeros 30 para no saturar el DOM
+    if (!term && !selectedProductCategoryFilter) {
+      return {
+        filteredProductsForOffer: adminProducts.slice(0, 30),
+        totalMatchingProductsCount: adminProducts.length
+      };
+    }
+
+    // 2. Filtrar por categoría si está seleccionada
+    let baseList = adminProducts;
+    if (selectedProductCategoryFilter) {
+      baseList = baseList.filter(p => p.categoryId === selectedProductCategoryFilter);
+    }
+
+    // Si hay categoría pero no texto de búsqueda, mostrar en tandas de a 100
+    if (!term) {
+      return {
+        filteredProductsForOffer: baseList.slice(0, productLimit),
+        totalMatchingProductsCount: baseList.length
+      };
+    }
+
+    // 3. Búsqueda por texto con ranking inteligente y normalización de acentos
+    const scored: { product: Product; score: number }[] = [];
+    for (const p of baseList) {
+      const barcode = (p.barcode || '').trim().toLowerCase();
+      const name = (p.name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const brand = (p.brand || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+      let score = -1;
+      if (barcode === term) {
+        score = 100; // Código exacto
+      } else if (barcode.startsWith(term)) {
+        score = 90;  // Prefijo de código
+      } else if (name.startsWith(term)) {
+        score = 80;  // Nombre empieza con lo buscado (ej: "Leche...")
+      } else {
+        const words = name.split(/\s+/);
+        if (words.some(w => w.startsWith(term))) {
+          score = 70; // Alguna palabra interna empieza con la búsqueda (ej: "Dulce de Leche")
+        } else if (name.includes(term)) {
+          score = 50; // Nombre contiene la búsqueda
+        } else if (brand.startsWith(term)) {
+          score = 40; // Marca empieza con la búsqueda
+        } else if (brand.includes(term)) {
+          score = 30; // Marca contiene la búsqueda
+        } else if (barcode.includes(term)) {
+          score = 20; // Código contiene los dígitos
+        }
+      }
+
+      if (score > 0) {
+        scored.push({ product: p, score });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return {
+      filteredProductsForOffer: scored.slice(0, productLimit).map(s => s.product),
+      totalMatchingProductsCount: scored.length
+    };
+  }, [adminProducts, offerForm.scope, productSearch, selectedProductCategoryFilter, productLimit]);
+
+  const toggleProductSelection = (productId: string) => {
+    setOfferForm(prev => {
+      const exists = prev.targetIds.includes(productId);
+      const nextIds = exists 
+        ? prev.targetIds.filter(id => id !== productId)
+        : [...prev.targetIds, productId];
+      return {
+        ...prev,
+        targetIds: nextIds,
+        targetId: nextIds[0] || ''
+      };
+    });
+  };
+
+  const selectAllVisibleProducts = () => {
+    const visibleIds = filteredProductsForOffer.map(p => p.id);
+    setOfferForm(prev => {
+      const newIds = Array.from(new Set([...prev.targetIds, ...visibleIds]));
+      return {
+        ...prev,
+        targetIds: newIds,
+        targetId: newIds[0] || ''
+      };
+    });
+  };
+
+  const clearProductSelection = () => {
+    setOfferForm(prev => ({
+      ...prev,
+      targetIds: [],
+      targetId: ''
+    }));
+  };
+
+  const isOfferFormValid = () => {
+    if (!offerForm.discountValue || !offerForm.endDate) return false;
+    if (offerForm.scope === 'product') {
+      return offerForm.targetIds.length > 0 || !!offerForm.targetId;
+    }
+    if (offerForm.scope === 'category') {
+      return !!offerForm.targetId;
+    }
+    if (offerForm.scope === 'subcategory') {
+      return !!offerForm.subcategoryId || !!offerForm.targetId;
+    }
+    if (offerForm.scope === 'tag') {
+      return !!offerForm.tagFilter || !!offerForm.targetId;
+    }
+    if (offerForm.scope === 'tier') {
+      return !!offerForm.targetId;
+    }
+    if (offerForm.scope === 'customer') {
+      return !!offerForm.targetId;
+    }
+    return true; // 'all' or 'birthday'
+  };
+
   const handleAddOffer = () => {
-    if (!offerForm.discountValue || !offerForm.endDate) return;
+    if (!isOfferFormValid()) return;
     const discountVal = parseFloat(offerForm.discountValue);
     
     // Determine the name based on the scope if empty
     let calculatedName = offerForm.label || 'Oferta';
     if (!offerForm.label) {
       if (offerForm.scope === 'product') {
-        const prod = adminProducts.find(p => p.id === offerForm.targetId);
-        calculatedName = prod ? `Descuento ${prod.name}` : 'Descuento Producto';
+        const count = offerForm.targetIds.length;
+        if (count > 1) {
+          calculatedName = `Descuento ${count} Productos`;
+        } else {
+          const singleId = offerForm.targetIds[0] || offerForm.targetId;
+          const prod = adminProducts.find(p => p.id === singleId);
+          calculatedName = prod ? `Descuento ${prod.name}` : 'Descuento Producto';
+        }
       } else if (offerForm.scope === 'category') {
         const cat = adminCategories.find(c => c.id === offerForm.targetId);
         calculatedName = `Descuento Categoría ${cat ? cat.title : offerForm.targetId}`;
+      } else if (offerForm.scope === 'subcategory') {
+        const subId = offerForm.subcategoryId || offerForm.targetId;
+        const sub = adminSubcategories.find(s => s.id === subId);
+        calculatedName = `Descuento Subcategoría ${sub ? (sub.title || (sub as any).name) : subId}`;
+      } else if (offerForm.scope === 'tag') {
+        const tag = offerForm.tagFilter || offerForm.targetId;
+        calculatedName = `Descuento Etiqueta "${tag}"`;
+      } else if (offerForm.scope === 'tier') {
+        const tierName = offerForm.targetId === 'Gold' ? 'Oro' : offerForm.targetId === 'Silver' ? 'Plata' : offerForm.targetId === 'Bronze' ? 'Bronce' : offerForm.targetId;
+        calculatedName = `Descuento Exclusivo Nivel ${tierName}`;
       } else if (offerForm.scope === 'customer') {
         const cust = customers.find(c => c.dni === offerForm.targetId || c.phone === offerForm.targetId);
         calculatedName = `Descuento Especial ${cust ? cust.name : 'Cliente'}`;
@@ -422,13 +580,34 @@ export const Analytics: React.FC = () => {
       }
     }
 
+    if (offerForm.requiredTier && offerForm.requiredTier !== 'all' && offerForm.scope !== 'tier') {
+      const tierShort = offerForm.requiredTier === 'Gold' ? 'Oro' : offerForm.requiredTier === 'Silver' ? 'Plata' : offerForm.requiredTier === 'Bronze' ? 'Bronce' : 'Regular';
+      calculatedName += ` [Nivel ${tierShort}]`;
+    }
+
+    const effectiveTargetIds = offerForm.scope === 'product'
+      ? (offerForm.targetIds.length > 0 ? offerForm.targetIds : (offerForm.targetId ? [offerForm.targetId] : []))
+      : undefined;
+    const effectiveTargetId = offerForm.scope === 'product'
+      ? (effectiveTargetIds && effectiveTargetIds.length > 0 ? effectiveTargetIds[0] : '')
+      : offerForm.scope === 'subcategory'
+        ? (offerForm.subcategoryId || offerForm.targetId)
+        : offerForm.scope === 'tag'
+          ? (offerForm.tagFilter || offerForm.targetId)
+          : offerForm.targetId;
+
     const offer: Offer = {
       id: 'OF_' + Date.now(),
       name: calculatedName,
       description: '',
       scope: offerForm.scope,
-      targetId: offerForm.targetId,
-      productId: offerForm.scope === 'product' ? offerForm.targetId : undefined,
+      targetId: effectiveTargetId,
+      targetIds: effectiveTargetIds,
+      productId: offerForm.scope === 'product' ? effectiveTargetId : undefined,
+      subcategoryId: offerForm.scope === 'subcategory' ? effectiveTargetId : undefined,
+      requiredTier: offerForm.scope === 'tier'
+        ? offerForm.targetId
+        : (offerForm.requiredTier && offerForm.requiredTier !== 'all' ? offerForm.requiredTier : undefined),
       discountType: offerForm.discountType,
       discountPercent: offerForm.discountType === 'percent' ? discountVal : 0, // legacy
       discountValue: discountVal,
@@ -449,6 +628,10 @@ export const Analytics: React.FC = () => {
     setOfferForm({
       scope: 'product',
       targetId: '',
+      targetIds: [],
+      subcategoryId: '',
+      tagFilter: '',
+      requiredTier: '',
       discountType: 'percent',
       discountValue: '',
       maxDiscountAmount: '',
@@ -458,6 +641,8 @@ export const Analytics: React.FC = () => {
       per_customer_daily_limit: '',
       total_quantity_limit: ''
     });
+    setProductSearch('');
+    setSelectedProductCategoryFilter('');
     setShowOfferModal(false);
   };
 
@@ -883,8 +1068,16 @@ export const Analytics: React.FC = () => {
               let imageSrc = '';
 
               if (offer.scope === 'product') {
-                const product = adminProducts.find(p => p.id === (offer.targetId || offer.productId));
-                if (product) {
+                const isMulti = offer.targetIds && offer.targetIds.length > 1;
+                const primaryId = (offer.targetIds && offer.targetIds[0]) || offer.targetId || offer.productId;
+                const product = adminProducts.find(p => p.id === primaryId);
+                if (isMulti) {
+                  title = offer.name || (product ? `${product.name} (+${offer.targetIds!.length - 1} más)` : `${offer.targetIds!.length} Productos`);
+                  subtitle = `${offer.targetIds!.length} productos seleccionados`;
+                  imageSrc = product?.image || '';
+                  icon = 'inventory_2';
+                  badgeColor = 'bg-emerald-100 text-emerald-700';
+                } else if (product) {
                   title = product.name;
                   subtitle = `Producto · ${product.brand || 'General'}`;
                   imageSrc = product.image;
@@ -895,6 +1088,24 @@ export const Analytics: React.FC = () => {
                 subtitle = 'Aplica a toda la sección';
                 icon = 'folder_open';
                 badgeColor = 'bg-blue-100 text-blue-600';
+              } else if (offer.scope === 'subcategory') {
+                const sub = adminSubcategories.find(s => s.id === (offer.subcategoryId || offer.targetId));
+                title = sub ? `Subcategoría: ${sub.title || (sub as any).name}` : `Subcategoría ${offer.targetId}`;
+                subtitle = 'Aplica a toda la subcategoría';
+                icon = 'account_tree';
+                badgeColor = 'bg-cyan-100 text-cyan-700';
+              } else if (offer.scope === 'tag') {
+                const tag = offer.tagFilter || offer.targetId;
+                title = `Etiqueta: "${tag}"`;
+                subtitle = 'Aplica a productos con esta etiqueta';
+                icon = 'label';
+                badgeColor = 'bg-indigo-100 text-indigo-700';
+              } else if (offer.scope === 'tier') {
+                const tierName = offer.targetId === 'Gold' ? 'Oro' : offer.targetId === 'Silver' ? 'Plata' : offer.targetId === 'Bronze' ? 'Bronce' : (offer.targetId || 'Cliente');
+                title = `Exclusivo Nivel ${tierName}`;
+                subtitle = 'Aplica a clientes de este rango';
+                icon = 'military_tech';
+                badgeColor = 'bg-amber-100 text-amber-700';
               } else if (offer.scope === 'all') {
                 title = 'Descuento General';
                 subtitle = 'Aplica a todo el local';
@@ -930,7 +1141,15 @@ export const Analytics: React.FC = () => {
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col justify-between">
                     <div>
-                      <p className="font-bold text-sm text-on-background line-clamp-1 truncate">{title}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-bold text-sm text-on-background line-clamp-1 truncate">{title}</p>
+                        {offer.requiredTier && offer.scope !== 'tier' && (
+                          <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shrink-0" title={`Restringido a nivel ${offer.requiredTier}`}>
+                            <span className="material-symbols-outlined text-[11px]">military_tech</span>
+                            {offer.requiredTier === 'Gold' ? 'Oro' : offer.requiredTier === 'Silver' ? 'Plata' : offer.requiredTier === 'Bronze' ? 'Bronce' : offer.requiredTier}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-on-surface-variant font-semibold mt-0.5">{subtitle}</p>
                       {/* Quota Indicators */}
                       {(offer.daily_quantity_limit || offer.total_quantity_limit) && (
@@ -1085,110 +1304,535 @@ export const Analytics: React.FC = () => {
 
       {/* Add Offer Modal */}
       {showOfferModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={() => setShowOfferModal(false)} />
-          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 overflow-hidden flex flex-col">
-            <div className="p-6 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest">
-              <div>
-                <h3 className="text-xl font-bold">Crear Nueva Oferta</h3>
-                <p className="text-xs text-on-surface-variant font-medium">Configurá promociones dinámicas por producto, categoría o cliente</p>
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl relative z-10 animate-in zoom-in-95 duration-300 overflow-hidden flex flex-col my-auto">
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-[24px]">local_offer</span>
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-black text-on-background">Crear Nueva Oferta</h3>
+                  <p className="text-xs text-on-surface-variant font-medium">Configurá promociones dinámicas por producto, categoría, subcategoría o nivel</p>
+                </div>
               </div>
-              <button onClick={() => setShowOfferModal(false)} className="w-10 h-10 rounded-full hover:bg-black/5 flex items-center justify-center transition-all">
+              <button 
+                onClick={() => setShowOfferModal(false)} 
+                className="w-9 h-9 rounded-full hover:bg-black/5 flex items-center justify-center transition-all text-on-surface-variant"
+              >
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
             
-            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto no-scrollbar">
+            {/* Modal Scrollable Body */}
+            <div className="p-5 sm:p-6 space-y-6 overflow-y-auto no-scrollbar flex-1">
+              {/* Notice: Registered & Tier Rule */}
+              <div className="bg-primary/5 border border-primary/20 rounded-2xl p-3.5 flex items-start gap-3">
+                <span className="material-symbols-outlined text-primary text-[20px] shrink-0 mt-0.5" aria-hidden="true">verified_user</span>
+                <div className="text-xs text-on-surface-variant leading-relaxed">
+                  <p className="font-bold text-on-background">Promoción para Clientes Registrados</p>
+                  <p className="mt-0.5 text-on-surface-variant/80">
+                    Las ofertas relámpago aplican a clientes registrados. Si asignás un nivel específico (ej. <strong>Oro</strong>), únicamente los clientes con ese nivel podrán ver y acceder al beneficio; los demás clientes y visitantes no lo visualizarán.
+                  </p>
+                </div>
+              </div>
+
               {/* Scope Selection */}
               <div>
-                <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2.5 block ml-1 tracking-wider">¿A quién aplica la oferta?</label>
-                <div className="grid grid-cols-5 gap-1.5 bg-surface-container-low p-1.5 rounded-2xl border border-outline-variant/10">
+                <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1 tracking-wider">
+                  ¿A qué aplica esta oferta?
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-1.5 bg-surface-container-low p-1.5 rounded-2xl border border-outline-variant/10">
                   {([
-                    { id: 'product', label: 'Producto', icon: 'package' },
+                    { id: 'product', label: 'Productos', icon: 'package' },
                     { id: 'category', label: 'Categoría', icon: 'folder' },
-                    { id: 'all', label: 'Todo', icon: 'store' },
+                    { id: 'subcategory', label: 'Subcategoría', icon: 'account_tree' },
+                    { id: 'tag', label: 'Etiqueta', icon: 'label' },
+                    { id: 'all', label: 'Todo Local', icon: 'store' },
                     { id: 'tier', label: 'Nivel', icon: 'military_tech' },
                     { id: 'birthday', label: 'Cumple', icon: 'cake' }
                   ] as const).map(sc => (
                     <button
                       key={sc.id}
                       type="button"
-                      onClick={() => setOfferForm({ ...offerForm, scope: sc.id, targetId: '' })}
-                      className={`py-2.5 px-1 rounded-xl flex flex-col items-center gap-1 font-bold text-[9px] transition-all ${offerForm.scope === sc.id ? 'bg-primary text-white shadow' : 'text-on-surface-variant hover:bg-surface-container-lowest'}`}
+                      onClick={() => {
+                        setOfferForm({
+                          ...offerForm,
+                          scope: sc.id,
+                          targetId: '',
+                          targetIds: [],
+                          subcategoryId: '',
+                          tagFilter: ''
+                        });
+                        setProductSearch('');
+                      }}
+                      className={`py-2 px-1 rounded-xl flex flex-col items-center justify-center gap-1 font-bold text-[10px] transition-all ${
+                        offerForm.scope === sc.id
+                          ? 'bg-primary text-white shadow-md'
+                          : 'text-on-surface-variant hover:bg-surface-container-lowest'
+                      }`}
                     >
                       <span className="material-symbols-outlined text-[18px]">{sc.icon}</span>
-                      <span>{sc.label}</span>
+                      <span className="truncate w-full text-center leading-tight">{sc.label}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Target Details based on scope */}
+              {/* Scope: PRODUCT (Multi-select + text search) */}
               {offerForm.scope === 'product' && (
-                <div className="animate-in slide-in-from-top duration-200">
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Seleccionar Producto</label>
-                  <select
-                    value={offerForm.targetId}
-                    onChange={e => setOfferForm({ ...offerForm, targetId: e.target.value })}
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-2xl px-4 py-3 font-bold outline-none transition-all"
-                  >
-                    <option value="">Seleccioná un producto...</option>
-                    {adminProducts.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} — ${formatCurrency(p.price)}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                <div className="space-y-3 bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant/10 animate-in slide-in-from-top-2 duration-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider">
+                      Seleccionar Productos ({offerForm.targetIds.length} seleccionados)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {filteredProductsForOffer.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={selectAllVisibleProducts}
+                          className="text-[10px] font-bold text-primary hover:underline"
+                        >
+                          Seleccionar visibles ({filteredProductsForOffer.length})
+                        </button>
+                      )}
+                      {offerForm.targetIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={clearProductSelection}
+                          className="text-[10px] font-bold text-rose-600 hover:underline"
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
-              {offerForm.scope === 'category' && (
-                <div className="animate-in slide-in-from-top duration-200">
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Seleccionar Categoría</label>
-                  <select
-                    value={offerForm.targetId}
-                    onChange={e => setOfferForm({ ...offerForm, targetId: e.target.value })}
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-2xl px-4 py-3 font-bold outline-none transition-all capitalize"
-                  >
-                    <option value="">Seleccioná una sección...</option>
+                  {/* Search Input (Continuous text search) */}
+                  <div className="relative">
+                    <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-[20px]">
+                      search
+                    </span>
+                    <input
+                      type="text"
+                      value={productSearch}
+                      onChange={e => setProductSearch(e.target.value)}
+                      placeholder="Escribí para buscar (ej: aceite, leche, carne)..."
+                      className="w-full bg-surface-container-low border border-outline-variant/20 focus:border-primary rounded-xl pl-10 pr-9 py-2.5 font-bold text-xs sm:text-sm outline-none transition-all"
+                    />
+                    {productSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setProductSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant/50 hover:text-on-surface-variant"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">close</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Optional Category Pills Filter */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProductCategoryFilter('')}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 transition-all ${
+                        selectedProductCategoryFilter === ''
+                          ? 'bg-primary text-white'
+                          : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+                      }`}
+                    >
+                      Todas
+                    </button>
                     {adminCategories.map(c => (
-                      <option key={c.id} value={c.id}>{c.title}</option>
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setSelectedProductCategoryFilter(selectedProductCategoryFilter === c.id ? '' : c.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 transition-all ${
+                          selectedProductCategoryFilter === c.id
+                            ? 'bg-primary text-white'
+                            : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-lowest'
+                        }`}
+                      >
+                        {c.title}
+                      </button>
                     ))}
-                  </select>
+                  </div>
+
+                  {/* Selected Products Chips Bar */}
+                  {offerForm.targetIds.length > 0 && (
+                    <div className="p-2.5 bg-primary/5 rounded-xl border border-primary/20 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-primary">
+                        <span>Productos añadidos a la oferta:</span>
+                        <span>{offerForm.targetIds.length} ítem(s)</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto no-scrollbar">
+                        {offerForm.targetIds.map(pId => {
+                          const p = adminProducts.find(prod => prod.id === pId);
+                          return (
+                            <span
+                              key={pId}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-primary/20 text-xs font-bold text-on-background shadow-xs"
+                            >
+                              <span className="truncate max-w-[150px]">{p ? p.name : pId}</span>
+                              <span className="text-[10px] text-primary">${p ? formatCurrency(p.price) : ''}</span>
+                              <button
+                                type="button"
+                                onClick={() => toggleProductSelection(pId)}
+                                className="text-on-surface-variant/60 hover:text-error ml-0.5"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">close</span>
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Scrollable Product List (No images for maximum speed, batched in 100s) */}
+                  <div className="max-h-60 overflow-y-auto rounded-xl border border-outline-variant/10 divide-y divide-outline-variant/5 bg-white no-scrollbar">
+                    {filteredProductsForOffer.length > 0 ? (
+                      <>
+                        {filteredProductsForOffer.map(p => {
+                          const isSelected = offerForm.targetIds.includes(p.id);
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => toggleProductSelection(p.id)}
+                              className={`p-2.5 px-3 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                                isSelected
+                                  ? 'bg-primary/10 hover:bg-primary/15'
+                                  : 'hover:bg-surface-container-low'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition-all shrink-0 ${
+                                  isSelected ? 'bg-primary border-primary text-white' : 'border-outline-variant/40 bg-white'
+                                }`}>
+                                  {isSelected && (
+                                    <span className="material-symbols-outlined text-[14px]">check</span>
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-bold text-xs text-on-background truncate">{p.name}</p>
+                                  <div className="flex items-center gap-1.5 text-[10px] text-on-surface-variant">
+                                    <span className="capitalize">{p.categoryId}</span>
+                                    {p.barcode && <span className="text-on-surface-variant/70">· Cód: {p.barcode}</span>}
+                                    {p.badge && (
+                                      <span className="bg-surface-container-low px-1 rounded text-[9px] font-semibold">{p.badge}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <span className="text-xs font-black text-primary shrink-0">
+                                ${formatCurrency(p.price)}
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {filteredProductsForOffer.length < totalMatchingProductsCount && (
+                          <div className="p-3 bg-surface-container-lowest border-t border-outline-variant/10 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setProductLimit(prev => prev + 100)}
+                              className="px-4 py-2 bg-primary/10 hover:bg-primary/15 text-primary text-xs font-bold rounded-xl transition-all inline-flex items-center gap-1.5"
+                            >
+                              <span className="material-symbols-outlined text-[16px]">expand_more</span>
+                              <span>Cargar 100 más ({totalMatchingProductsCount - filteredProductsForOffer.length} restantes)</span>
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="p-8 text-center text-on-surface-variant/60">
+                        <span className="material-symbols-outlined text-3xl mb-1 block">search_off</span>
+                        <p className="text-xs font-bold">No se encontraron productos con "{productSearch}"</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
+              {/* Scope: CATEGORY */}
+              {offerForm.scope === 'category' && (
+                <div className="space-y-2.5 animate-in slide-in-from-top-2 duration-200">
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block ml-1 tracking-wider">
+                    Seleccionar Categoría
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {adminCategories.map(c => {
+                      const isSelected = offerForm.targetId === c.id;
+                      const count = adminProducts.filter(p => p.categoryId === c.id).length;
+                      return (
+                        <div
+                          key={c.id}
+                          onClick={() => setOfferForm({ ...offerForm, targetId: c.id })}
+                          className={`p-3 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
+                            isSelected
+                              ? 'border-primary bg-primary/5 shadow-sm'
+                              : 'border-outline-variant/10 bg-surface-container-lowest hover:border-primary/40'
+                          }`}
+                        >
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                            isSelected ? 'bg-primary text-white' : 'bg-surface-container-low text-on-surface-variant'
+                          }`}>
+                            <span className="material-symbols-outlined text-[20px]">{(c as any).icon || 'folder'}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-bold text-xs text-on-background capitalize truncate">{c.title}</p>
+                            <p className="text-[10px] text-on-surface-variant">{count} productos</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Scope: SUBCATEGORY (NEW!) */}
+              {offerForm.scope === 'subcategory' && (
+                <div className="space-y-2.5 animate-in slide-in-from-top-2 duration-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block ml-1 tracking-wider">
+                      Seleccionar Subcategoría ({adminSubcategories.length} disponibles)
+                    </label>
+                  </div>
+                  {adminSubcategories.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto no-scrollbar p-1">
+                      {adminSubcategories.map(sub => {
+                        const isSelected = offerForm.subcategoryId === sub.id || offerForm.targetId === sub.id;
+                        const parentCat = adminCategories.find(c => c.id === sub.categoryId);
+                        const prodCount = adminProducts.filter(p => (p as any).subcategoryId === sub.id).length;
+                        return (
+                          <div
+                            key={sub.id}
+                            onClick={() => setOfferForm({
+                              ...offerForm,
+                              subcategoryId: sub.id,
+                              targetId: sub.id
+                            })}
+                            className={`p-3 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
+                              isSelected
+                                ? 'border-primary bg-primary/5 shadow-sm'
+                                : 'border-outline-variant/10 bg-surface-container-lowest hover:border-primary/40'
+                            }`}
+                          >
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                              isSelected ? 'bg-primary text-white' : 'bg-cyan-50 text-cyan-700'
+                            }`}>
+                              <span className="material-symbols-outlined text-[20px]">account_tree</span>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-bold text-xs text-on-background truncate">{sub.title || (sub as any).name}</p>
+                              <div className="flex items-center gap-1.5 text-[10px] text-on-surface-variant">
+                                <span className="capitalize">{parentCat ? parentCat.title : sub.categoryId}</span>
+                                <span>·</span>
+                                <span>{prodCount} productos</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-6 bg-surface-container-low rounded-2xl text-center text-on-surface-variant">
+                      <span className="material-symbols-outlined text-3xl mb-1 block">account_tree</span>
+                      <p className="text-xs font-bold">No hay subcategorías registradas todavía.</p>
+                      <p className="text-[10px] mt-1">Podés crearlas desde la sección Inventario.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Scope: TAG (NEW! Linked to adminTags) */}
+              {offerForm.scope === 'tag' && (
+                <div className="space-y-2.5 animate-in slide-in-from-top-2 duration-200">
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block ml-1 tracking-wider">
+                    Seleccionar Etiqueta de Productos
+                  </label>
+                  <p className="text-xs text-on-surface-variant font-medium">
+                    Aplica a todos los productos que tengan asignada esta etiqueta / badge en el inventario.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                    {adminTags.map(tag => {
+                      const isSelected = offerForm.tagFilter === tag || offerForm.targetId === tag;
+                      const prodCount = adminProducts.filter(p => p.badge?.toLowerCase().trim() === tag.toLowerCase().trim()).length;
+                      return (
+                        <div
+                          key={tag}
+                          onClick={() => setOfferForm({
+                            ...offerForm,
+                            tagFilter: tag,
+                            targetId: tag
+                          })}
+                          className={`p-3 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
+                            isSelected
+                              ? 'border-indigo-600 bg-indigo-50/50 shadow-sm'
+                              : 'border-outline-variant/10 bg-surface-container-lowest hover:border-indigo-300'
+                          }`}
+                        >
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                            isSelected ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700'
+                          }`}>
+                            <span className="material-symbols-outlined text-[20px]">label</span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-xs text-on-background truncate">"{tag}"</p>
+                            <p className="text-[10px] text-on-surface-variant">{prodCount} productos</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Scope: TIER (Gold, Silver, Bronze, Regular) */}
               {offerForm.scope === 'tier' && (
-                <div className="animate-in slide-in-from-top duration-200">
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Seleccionar Nivel de Cliente</label>
-                  <select
-                    value={offerForm.targetId}
-                    onChange={e => setOfferForm({ ...offerForm, targetId: e.target.value })}
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-2xl px-4 py-3 font-bold outline-none transition-all"
-                  >
-                    <option value="">Seleccioná un nivel...</option>
-                    <option value="Gold">Oro (Más de $200.000 mensuales)</option>
-                    <option value="Silver">Plata (Más de $100.000 mensuales)</option>
-                    <option value="Bronze">Bronce (Más de $50.000 mensuales)</option>
-                    <option value="Regular">Regular (Inicial)</option>
-                  </select>
+                <div className="space-y-2.5 animate-in slide-in-from-top-2 duration-200">
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block ml-1 tracking-wider">
+                    Seleccionar Nivel de Cliente
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {[
+                      { id: 'Gold', name: 'Oro (Gold)', desc: 'Compras > $200.000 / mes', icon: 'military_tech', color: 'text-amber-500 bg-amber-50 border-amber-200' },
+                      { id: 'Silver', name: 'Plata (Silver)', desc: 'Compras > $100.000 / mes', icon: 'military_tech', color: 'text-slate-500 bg-slate-50 border-slate-200' },
+                      { id: 'Bronze', name: 'Bronce (Bronze)', desc: 'Compras > $50.000 / mes', icon: 'military_tech', color: 'text-amber-800 bg-amber-50/50 border-amber-300' },
+                      { id: 'Regular', name: 'Regular', desc: 'Todos los clientes registrados', icon: 'person', color: 'text-primary bg-primary/5 border-primary/20' }
+                    ].map(t => {
+                      const isSelected = offerForm.targetId === t.id;
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => setOfferForm({ ...offerForm, targetId: t.id })}
+                          className={`p-3.5 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
+                            isSelected
+                              ? 'border-primary bg-primary/5 shadow-sm'
+                              : 'border-outline-variant/10 bg-surface-container-lowest hover:border-primary/40'
+                          }`}
+                        >
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${t.color}`}>
+                            <span className="material-symbols-outlined text-[24px]">{t.icon}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-bold text-xs text-on-background">{t.name}</p>
+                            <p className="text-[10px] text-on-surface-variant">{t.desc}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Scope: BIRTHDAY */}
+              {offerForm.scope === 'birthday' && (
+                <div className="p-4 bg-pink-50 border border-pink-100 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-200">
+                  <span className="material-symbols-outlined text-[28px] text-pink-600">cake</span>
+                  <div>
+                    <p className="text-xs font-bold text-pink-900">Descuento de Cumpleaños</p>
+                    <p className="text-[11px] text-pink-700/90 font-medium">
+                      Se aplicará de forma automática a los clientes registrados cuando hagan una compra el día de su cumpleaños.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Scope: ALL */}
+              {offerForm.scope === 'all' && (
+                <div className="p-4 bg-purple-50 border border-purple-100 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 duration-200">
+                  <span className="material-symbols-outlined text-[28px] text-purple-600">store</span>
+                  <div>
+                    <p className="text-xs font-bold text-purple-900">Descuento Global a Todo el Local</p>
+                    <p className="text-[11px] text-purple-700/90 font-medium">
+                      Aplica a todas las ventas en carrito y POS durante el período de vigencia de la oferta.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* ⭐ COMBINATION: CUSTOMER TIER RESTRICTION (For all scopes except tier) */}
+              {offerForm.scope !== 'tier' && (
+                <div className="bg-amber-50/60 border border-amber-200/70 rounded-2xl p-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[18px] text-amber-700">military_tech</span>
+                      <label className="text-[10px] font-black text-amber-950 uppercase tracking-wider">
+                        Restringir por Rango / Nivel de Cliente (Opcional)
+                      </label>
+                    </div>
+                    {offerForm.requiredTier && offerForm.requiredTier !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => setOfferForm({ ...offerForm, requiredTier: '' })}
+                        className="text-[10px] font-bold text-amber-700 hover:text-amber-900 underline"
+                      >
+                        Quitar restricción
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-amber-900/80 font-medium">
+                    Permite combinar la oferta (ej: descuento en bebidas o en productos) para que aplique <b>únicamente a clientes de cierto rango</b>.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
+                    {[
+                      { id: '', label: 'Cualquier Cliente', icon: 'group' },
+                      { id: 'Gold', label: 'Solo Oro (VIP)', icon: 'military_tech' },
+                      { id: 'Silver', label: 'Solo Plata', icon: 'military_tech' },
+                      { id: 'Bronze', label: 'Solo Bronce', icon: 'military_tech' },
+                    ].map(t => {
+                      const isSelected = (offerForm.requiredTier || '') === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setOfferForm({ ...offerForm, requiredTier: t.id })}
+                          className={`py-2 px-2.5 rounded-xl flex items-center justify-center gap-1.5 font-bold text-xs transition-all border ${
+                            isSelected
+                              ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                              : 'bg-white text-on-surface-variant border-amber-200/70 hover:bg-amber-100/50'
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-[15px]">{t.icon}</span>
+                          <span className="truncate">{t.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
               {/* Discount Type Selector & Discount Value */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-outline-variant/10 pt-4">
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Tipo de Descuento</label>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1 tracking-wider">
+                    Tipo de Descuento
+                  </label>
                   <div className="flex bg-surface-container-low p-1 rounded-xl border border-outline-variant/10">
                     <button
                       type="button"
                       onClick={() => setOfferForm({ ...offerForm, discountType: 'percent' })}
-                      className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${offerForm.discountType === 'percent' ? 'bg-white text-on-background shadow' : 'text-on-surface-variant'}`}
+                      className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${
+                        offerForm.discountType === 'percent'
+                          ? 'bg-white text-on-background shadow-xs'
+                          : 'text-on-surface-variant'
+                      }`}
                     >
                       Porcentaje (%)
                     </button>
                     <button
                       type="button"
                       onClick={() => setOfferForm({ ...offerForm, discountType: 'fixed' })}
-                      className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${offerForm.discountType === 'fixed' ? 'bg-white text-on-background shadow' : 'text-on-surface-variant'}`}
+                      className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${
+                        offerForm.discountType === 'fixed'
+                          ? 'bg-white text-on-background shadow-xs'
+                          : 'text-on-surface-variant'
+                      }`}
                     >
                       Fijo ($)
                     </button>
@@ -1196,7 +1840,7 @@ export const Analytics: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1 tracking-wider">
                     {offerForm.discountType === 'percent' ? 'Descuento (%)' : 'Monto de Rebaja ($)'}
                   </label>
                   <div className="relative">
@@ -1208,16 +1852,16 @@ export const Analytics: React.FC = () => {
                       value={offerForm.discountValue}
                       onChange={e => setOfferForm({ ...offerForm, discountValue: e.target.value })}
                       placeholder={offerForm.discountType === 'percent' ? '15' : '100'}
-                      className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl pl-9 pr-4 py-2.5 font-bold outline-none text-error"
+                      className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl pl-9 pr-4 py-2.5 font-bold outline-none text-error text-sm"
                       min="1"
                     />
                   </div>
                 </div>
 
                 {offerForm.discountType === 'percent' && (
-                  <div className="col-span-2 mt-2">
-                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">
-                      Tope de Descuento (Opcional)
+                  <div className="sm:col-span-2">
+                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1 tracking-wider">
+                      Tope de Descuento en Pesos (Opcional)
                     </label>
                     <div className="relative">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-on-surface-variant">$</span>
@@ -1225,88 +1869,111 @@ export const Analytics: React.FC = () => {
                         type="number"
                         value={offerForm.maxDiscountAmount || ''}
                         onChange={e => setOfferForm({ ...offerForm, maxDiscountAmount: e.target.value })}
-                        placeholder="Sin límite"
-                        className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl pl-9 pr-4 py-2.5 font-bold outline-none text-on-surface"
+                        placeholder="Sin límite máximo"
+                        className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl pl-9 pr-4 py-2.5 font-bold outline-none text-on-surface text-sm"
                         min="1"
                       />
                     </div>
-                    <p className="text-[10px] text-on-surface-variant/70 ml-1 mt-1 font-medium">Si dejás esto en blanco, el descuento en % no tendrá un límite máximo.</p>
+                    <p className="text-[10px] text-on-surface-variant/70 ml-1 mt-1 font-medium">
+                      Si dejás esto en blanco, el porcentaje se aplicará sin ningún tope en pesos.
+                    </p>
                   </div>
                 )}
               </div>
 
               {/* Label and EndDate */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Etiqueta POS (Opcional)</label>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1 tracking-wider">
+                    Etiqueta / Nombre en Ticket (Opcional)
+                  </label>
                   <input
                     type="text"
                     value={offerForm.label}
                     onChange={e => setOfferForm({ ...offerForm, label: e.target.value })}
-                    placeholder="Ej: Oferta, Cumple, VIP"
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none"
+                    placeholder="Ej: Promo Verano, VIP Oro, 20% OFF"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-xs sm:text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Válida hasta</label>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1 tracking-wider">
+                    Válida hasta
+                  </label>
                   <input
                     type="date"
                     value={offerForm.endDate}
                     onChange={e => setOfferForm({ ...offerForm, endDate: e.target.value })}
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-xs sm:text-sm"
                     min={new Date().toISOString().split('T')[0]}
                   />
                 </div>
               </div>
 
               {/* Quotas / Limits */}
-              <div className="grid grid-cols-3 gap-4 border-t border-outline-variant/10 pt-4 mt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-outline-variant/10 pt-4">
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Límite Diario Global</label>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1.5 block ml-1 tracking-wider">
+                    Límite Diario Global
+                  </label>
                   <input
                     type="number"
                     value={offerForm.daily_quantity_limit}
                     onChange={e => setOfferForm({ ...offerForm, daily_quantity_limit: e.target.value })}
                     placeholder="Ej: 50"
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-on-surface"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2 font-bold outline-none text-xs"
                     min="1"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Límite Diario por Cliente</label>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1.5 block ml-1 tracking-wider">
+                    Límite Diario / Cliente
+                  </label>
                   <input
                     type="number"
                     value={offerForm.per_customer_daily_limit}
                     onChange={e => setOfferForm({ ...offerForm, per_customer_daily_limit: e.target.value })}
                     placeholder="Ej: 2"
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-on-surface"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2 font-bold outline-none text-xs"
                     min="1"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-2 block ml-1">Límite Total Oferta</label>
+                  <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1.5 block ml-1 tracking-wider">
+                    Límite Total Oferta
+                  </label>
                   <input
                     type="number"
                     value={offerForm.total_quantity_limit}
                     onChange={e => setOfferForm({ ...offerForm, total_quantity_limit: e.target.value })}
                     placeholder="Ej: 500"
-                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2.5 font-bold outline-none text-on-surface"
+                    className="w-full bg-surface-container-low border-2 border-outline-variant/10 focus:border-primary rounded-xl px-4 py-2 font-bold outline-none text-xs"
                     min="1"
                   />
                 </div>
-                <p className="col-span-3 text-[10px] text-on-surface-variant/70 ml-1 mt-1 font-medium text-amber-700">Dejá en blanco si no querés poner límite de cupos.</p>
+                <p className="sm:col-span-3 text-[10px] text-on-surface-variant/70 ml-1 font-medium">
+                  Dejá en blanco si no querés poner límite de cupos.
+                </p>
               </div>
             </div>
 
-            <div className="p-6 border-t border-outline-variant/10 bg-surface-container-lowest flex justify-end gap-3 flex-shrink-0">
-              <button onClick={() => setShowOfferModal(false)} className="px-6 py-3 rounded-xl hover:bg-black/5 font-bold text-sm">Cancelar</button>
+            {/* Modal Footer */}
+            <div className="p-4 sm:p-6 border-t border-outline-variant/10 bg-surface-container-lowest flex justify-end gap-3 shrink-0">
               <button
-                onClick={handleAddOffer}
-                disabled={!offerForm.discountValue || !offerForm.endDate || (offerForm.scope !== 'all' && offerForm.scope !== 'birthday' && !offerForm.targetId)}
-                className="bg-primary text-white font-black px-6 py-3.5 rounded-xl hover:scale-[1.02] transition-all shadow-lg shadow-primary/10 text-sm disabled:opacity-50 disabled:pointer-events-none"
+                type="button"
+                onClick={() => setShowOfferModal(false)}
+                className="px-5 py-2.5 rounded-xl hover:bg-black/5 font-bold text-xs sm:text-sm text-on-surface-variant transition-colors"
               >
-                Crear Oferta
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleAddOffer}
+                disabled={!isOfferFormValid()}
+                className="bg-primary text-white font-black px-6 py-3 rounded-xl hover:scale-[1.02] transition-all shadow-lg shadow-primary/20 text-xs sm:text-sm disabled:opacity-40 disabled:pointer-events-none flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[18px]">add</span>
+                <span>Crear Oferta</span>
               </button>
             </div>
           </div>

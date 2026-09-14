@@ -8,10 +8,10 @@ import { useProductStore } from '../stores/useProductStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
 import { supabase } from '../lib/supabase';
-import { 
+import {
   fetchOrders, insertOrder, updateOrderInDb, updateOrderItemsInDb,
-  fetchCashMovements, insertCashMovement, 
-  fetchCashCloses, insertCashClose, 
+  fetchCashMovements, insertCashMovement,
+  fetchCashCloses, insertCashClose,
   fetchOffers, insertOffer, updateOfferInDb, deleteOfferInDb,
   fetchCustomerProfiles, upsertCustomerProfile,
   fetchSetting, saveSetting,
@@ -42,18 +42,18 @@ export interface AdminOrder {
   estimatedTotal?: number; // Total original estimado antes de pesar
   weightAdjusted?: boolean; // Flag si fue ajustado por balanza
   paidAmount?: number; // Amount already paid for this order (useful for partial payments)
-  items: { 
-    id: string; 
-    name: string; 
-    image: string; 
-    price: number; 
-    quantity: number; 
+  items: {
+    id: string;
+    name: string;
+    image: string;
+    price: number;
+    quantity: number;
     originalQuantity?: number; // Cantidad pedida originalmente
-    originalPrice?: number; 
-    offerId?: string; 
-    lineDiscount?: number; 
-    discountedQuantity?: number; 
-    saleType?: 'unit' | 'weight' 
+    originalPrice?: number;
+    offerId?: string;
+    lineDiscount?: number;
+    discountedQuantity?: number;
+    saleType?: 'unit' | 'weight'
   }[];
   source?: 'pos' | 'whatsapp' | 'web';
   discount?: number;
@@ -195,11 +195,15 @@ export interface Offer {
   id: string;
   name: string;
   description: string;
-  // Scope: product | category | all | customer | birthday | tier
-  scope: 'product' | 'category' | 'all' | 'customer' | 'birthday' | 'tier';
-  targetId?: string; // productId, categoryId, customerDni, or tier name depending on scope
+  // Scope: product | category | subcategory | tag | all | customer | birthday | tier
+  scope: 'product' | 'category' | 'subcategory' | 'tag' | 'all' | 'customer' | 'birthday' | 'tier';
+  targetId?: string; // productId, categoryId, subcategoryId, tag, customerDni, or tier name depending on scope
+  targetIds?: string[]; // for multi-product selection when scope is 'product'
   // Legacy field kept for backward compatibility
   productId?: string;
+  subcategoryId?: string;
+  tagFilter?: string;
+  requiredTier?: string; // optional restriction to customer tier e.g. 'Gold' | 'Silver' | 'Bronze' | 'Regular'
   discountType: 'percent' | 'fixed';
   discountPercent: number; // kept for backward compat, use discountValue
   discountValue: number;
@@ -318,8 +322,8 @@ export interface AdminContextType {
   // Stock
   stockMap: Record<string, number>;
   updateStock: (productId: string, newStock: number) => void;
-  getStock: (productId: string) => number;
-  deductStockForOrder: (items: { id: string; quantity: number }[]) => { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] };
+  getStock: (productId: string, fallbackStock?: number) => number;
+  deductStockForOrder: (items: { id: string; quantity: number; stock?: number }[]) => { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] };
   lowStockProducts: (Product & { stock: number })[];
 
   // Barcode
@@ -354,6 +358,7 @@ export interface AdminContextType {
   // Current Account Limits
   currentAccountConfig: CurrentAccountConfig;
   updateCurrentAccountConfig: (config: Partial<CurrentAccountConfig>) => void;
+  loadAdminData: () => Promise<void>;
 
   // Offers
   offers: Offer[];
@@ -361,7 +366,7 @@ export interface AdminContextType {
   updateOffer: (offerId: string, updates: Partial<Offer>) => void;
   deleteOffer: (offerId: string) => void;
   activeOffers: Offer[];
-  applyOffersToCartItem: (item: { productId: string; categoryId?: string; price: number; quantity: number }, customer?: AdminCustomer | null) => { finalPrice: number; discountAmount: number; offerLabel: string | null; offerId: string | null; discountedQuantity: number };
+  applyOffersToCartItem: (item: { productId: string; categoryId?: string; price: number; quantity: number }, customer?: AdminCustomer | null, options?: { forDisplay?: boolean }) => { finalPrice: number; discountAmount: number; offerLabel: string | null; offerId: string | null; discountedQuantity: number; originalPrice?: number };
   applyOrderOffers: (subtotalAfterItemDiscounts: number, customer?: AdminCustomer | null) => { discountAmount: number; offerLabel: string | null; offerId: string | null };
   offerRedemptions: OfferRedemption[];
   addOfferRedemption: (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => void;
@@ -574,9 +579,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const storeProducts = useProductStore((state) => state.products);
   const storeLoading = useProductStore((state) => state.loading);
   const storeFetch = useProductStore((state) => state.fetchProducts);
-
+  // Optimización de Egress: NO descargamos todo el catálogo en el inicio de la app.
+  // Solo se solicita si se ingresa específicamente al Punto de Venta (/admin/pos).
   useEffect(() => {
-    storeFetch();
+    const isPOSRoute = typeof window !== 'undefined' && window.location.pathname.includes('/admin/pos');
+    if (isPOSRoute && storeProducts.length === 0) {
+      storeFetch();
+    }
   }, []);
 
   useEffect(() => {
@@ -632,7 +641,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const profile = profileRaw as any;
       const firstName = profile.nombre || profile.name;
       const lastName = profile.apellido || profile.last_name;
-      
+
       if (firstName === 'Invitado') return; // Hide guest profiles from Admin panel
 
       const fullName = firstName && lastName
@@ -700,7 +709,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (o.paymentMethod === 'cuenta_corriente' && o.paymentStatus !== 'Pagado') {
         const debtAmount = o.total - (o.paidAmount || 0);
         c.currentDebt += debtAmount;
-        
+
         // Calculate oldest debt days
         if (debtAmount > 0 && o.timestamp) {
           const daysOld = Math.floor((Date.now() - o.timestamp) / (1000 * 60 * 60 * 24));
@@ -775,12 +784,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 2. Update profiles (DNI, birthday, and CC status)
     setCustomerProfiles(prev => {
       const newProfiles = { ...prev };
-      const currentProfile = newProfiles[oldPhone] || { phone: oldPhone, hasCurrentAccount: false };
-      const updatedProfile = { 
-        ...currentProfile, 
+      const currentProfile = newProfiles[oldPhone] || { phone: oldPhone, hasCurrentAccount: targetCustomer.hasCurrentAccount ?? false };
+      const updatedProfile = {
+        ...currentProfile,
         ...updates,
+        hasCurrentAccount: currentProfile.hasCurrentAccount ?? targetCustomer.hasCurrentAccount ?? false,
         nombre: updates.name || currentProfile.nombre || '',
-        phone: newPhone 
+        phone: newPhone
       };
 
       if (newPhone !== oldPhone) {
@@ -797,7 +807,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const settleCurrentAccount = (phone: string, method: string, amount?: number) => {
     let movementToRecord: any = null;
     let whatsappData: any = null;
-    let ordersToUpdate: {id: string, updates: any}[] = [];
+    let ordersToUpdate: { id: string, updates: any }[] = [];
 
     const clean = (p?: string) => (p || '').replace(/\D/g, '');
     const targetPhone = clean(phone);
@@ -924,86 +934,116 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     allowBrowsingWhilePaused: true
   });
 
-  useEffect(() => {
-    // 1. Fetch initial data from Supabase
-    const loadAllData = async () => {
-    const [_orders, _cashMovements, _cashCloses, _offers, _profiles, _ticketCfg, _accCfg, _cashReg, _invoices, _billing, _lastCloseTs, _categories, _subcategories, _tags, _expenses, _autoCashClose, _generalCfg, _heroBanners] = await Promise.all([
+  const [isAdminDataLoaded, setIsAdminDataLoaded] = useState(false);
+
+  // Carga de datos exclusivos para el panel administrativo (NO se transfieren a clientes comunes de la tienda)
+  const loadAdminData = async () => {
+    if (isAdminDataLoaded) return;
+    try {
+      const [
+        _orders, _cashMovements, _cashCloses, _profiles, _accCfg,
+        _cashReg, _invoices, _billing, _lastCloseTs, _expenses, _autoCashClose
+      ] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
         fetchCashCloses(),
-        fetchOffers(),
         fetchCustomerProfiles(),
-        fetchSetting('ticket_config', defaultTicketConfig),
         fetchSetting('current_account_config', defaultCurrentAccountConfig),
         fetchSetting('cash_register', { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' } as CashRegister),
         fetchSetting('invoices', [] as Invoice[]),
         fetchSetting('billing_customers', [] as BillingCustomer[]),
         fetchSetting('last_pos_close_timestamp', 0),
-        fetchCategories(),
-        fetchSubcategories(),
-        fetchSetting<string[]>('admin_tags', initialTags),
         fetchExpenses(),
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }),
-        fetchSetting<GeneralConfig>('general_config', {
-          suspendEmployeeNotifications: false,
-          deliveryRadiusKm: 5,
-          storeLat: -33.459009,
-          storeLng: -67.551826,
-          blockedPhones: [],
-          shippingBaseCost: 1000,
-          shippingCostPerKm: 400,
-          freeShippingMinAmount: 0
-        }),
-        fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners)
       ]);
 
       setOrders(_orders);
       setCashMovements(_cashMovements);
       setCashCloses(_cashCloses);
-      setOffers(_offers);
       setCustomerProfiles(_profiles);
-      setTicketConfig(_ticketCfg);
       setCurrentAccountConfig(_accCfg);
       setCashRegister(_cashReg);
       setInvoices(_invoices);
       setBillingCustomers(_billing);
       setLastPOSCloseTimestamp(_lastCloseTs);
-      setAdminTags(_tags);
       setExpenses(_expenses);
       setAutoCashCloseConfig(_autoCashClose);
-      setGeneralConfig({
-        ..._generalCfg,
-        shippingBaseCost: _generalCfg.shippingBaseCost ?? 1000,
-        shippingCostPerKm: _generalCfg.shippingCostPerKm ?? 400,
-        freeShippingMinAmount: _generalCfg.freeShippingMinAmount ?? 0
-      });
-      setHeroBanners(_heroBanners || defaultHeroBanners);
+      setIsAdminDataLoaded(true);
 
-      // Seed categories if empty
-      let finalCategories = _categories;
-      if (_categories.length === 0) {
-        console.log('🌱 No se encontraron categorías en Supabase. Sembrando categorías...');
-        for (const cat of catalogCategories) {
-          await insertCategory(cat);
+      // Cargar alertas de bajo stock solo para el panel de administración
+      useProductStore.getState().fetchLowStockDashboardProducts({ page: 1, limit: 50 });
+    } catch (err) {
+      console.error('Error cargando datos de administración:', err);
+    }
+  };
+
+  useEffect(() => {
+    // 1. Cargar datos esenciales para la tienda pública (Liviano, con caché y proyección de columnas)
+    const loadStorefrontData = async () => {
+      try {
+        const [_offers, _ticketCfg, _categories, _subcategories, _tags, _generalCfg, _heroBanners] = await Promise.all([
+          fetchOffers(),
+          fetchSetting('ticket_config', defaultTicketConfig),
+          fetchCategories(),
+          fetchSubcategories(),
+          fetchSetting<string[]>('admin_tags', initialTags),
+          fetchSetting<GeneralConfig>('general_config', {
+            suspendEmployeeNotifications: false,
+            deliveryRadiusKm: 5,
+            storeLat: -33.459009,
+            storeLng: -67.551826,
+            blockedPhones: [],
+            shippingBaseCost: 1000,
+            shippingCostPerKm: 400,
+            freeShippingMinAmount: 0
+          }),
+          fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners)
+        ]);
+
+        setOffers(_offers);
+        setTicketConfig(_ticketCfg);
+        setAdminTags(_tags);
+        setGeneralConfig({
+          ..._generalCfg,
+          shippingBaseCost: _generalCfg?.shippingBaseCost ?? 1000,
+          shippingCostPerKm: _generalCfg?.shippingCostPerKm ?? 400,
+          freeShippingMinAmount: _generalCfg?.freeShippingMinAmount ?? 0
+        });
+        setHeroBanners(_heroBanners || defaultHeroBanners);
+
+        // Seed categories if empty
+        let finalCategories = _categories;
+        if (_categories.length === 0) {
+          console.log('🌱 No se encontraron categorías en Supabase. Sembrando categorías...');
+          for (const cat of catalogCategories) {
+            await insertCategory(cat);
+          }
+          finalCategories = await fetchCategories();
         }
-        finalCategories = await fetchCategories();
-      }
-      setAdminCategories(finalCategories);
-      setAdminSubcategories(_subcategories || []);
+        setAdminCategories(finalCategories);
+        console.log('📦 Subcategorías cargadas desde Supabase:', _subcategories?.length, _subcategories?.slice(0, 3));
+        setAdminSubcategories(_subcategories || []);
 
-      // Store Status
-      supabase.from('settings').select('value').eq('key', 'store_status').maybeSingle().then(({ data }) => {
-        if (data?.value) setStoreStatusState(data.value as StoreStatus);
-      });
-      // Offer Redemptions
-      supabase.from('offer_redemptions').select('*').then(({ data }) => {
-        if (data) setOfferRedemptions(data);
-      });
-      // Fetch low stock summary for alerts
-      useProductStore.getState().fetchLowStockDashboardProducts({ page: 1, limit: 100 });
+        // Store Status
+        supabase.from('settings').select('value').eq('key', 'store_status').maybeSingle().then(({ data }) => {
+          if (data?.value) setStoreStatusState(data.value as StoreStatus);
+        });
+        // Offer Redemptions
+        supabase.from('offer_redemptions').select('*').then(({ data }) => {
+          if (data) setOfferRedemptions(data);
+        });
+      } catch (err) {
+        console.error('❌ Error cargando datos del storefront:', err);
+      }
     };
 
-    loadAllData();
+    loadStorefrontData();
+
+    // Si la ruta actual es del panel administrativo, cargar inmediatamente datos de admin
+    const isAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+    if (isAdminRoute) {
+      loadAdminData();
+    }
 
     // 2. Real-time subscriptions for critical sync
     const statusSub = supabase.channel('store_status_channel')
@@ -1019,7 +1059,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setOfferRedemptions(prev => [...prev, payload.new as OfferRedemption]);
       })
       .subscribe();
-      
+
     // Sync new orders from other devices
     const ordersSub = supabase.channel('orders_channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
@@ -1056,6 +1096,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting<string[]>('admin_tags', initialTags).then(setAdminTags);
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }).then(setAutoCashCloseConfig);
         fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners).then(setHeroBanners);
+        fetchOffers().then(setOffers);
       })
       .subscribe();
 
@@ -1086,6 +1127,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
       .subscribe();
 
+    const offersSub = supabase.channel('offers_channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'offers' }, () => {
+        console.log('🔔 Cambio en tabla offers detectado, re-fecheando...');
+        fetchOffers().then(setOffers);
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(statusSub);
       supabase.removeChannel(redemptionsSub);
@@ -1098,6 +1146,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       supabase.removeChannel(categoriesSub);
       supabase.removeChannel(subcategoriesSub);
       supabase.removeChannel(expensesSub);
+      supabase.removeChannel(offersSub);
     };
   }, []);
 
@@ -1176,7 +1225,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const defaultTicketConfig: TicketConfig = {
     blankLinesTop: 0,
     blankLinesBottom: 2,
-    headerText: 'La Martina',
+    headerText: 'Martina Supermercado',
     businessName: 'Minimarket & Supermercado',
     businessAddress: 'La Paz, Mendoza',
     businessPhone: '',
@@ -1526,10 +1575,18 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setStockMap(prev => ({ ...prev, [pid]: newStock }));
     useProductStore.getState().updateStock(pid, newStock).catch(console.error);
   };
-  const getStock = (pid: string): number => {
+  const getStock = (pid: string, fallbackStock?: number): number => {
     let stockVal: any;
     if (stockMap[pid] !== undefined && stockMap[pid] !== null) {
-      stockVal = stockMap[pid];
+      // Si stockMap tiene 0 pero fallbackStock tiene un stock válido > 0 (ej. traído de base de datos),
+      // priorizamos fallbackStock para no pisar productos disponibles con datos en 0 desactualizados
+      if (Number(stockMap[pid]) === 0 && fallbackStock !== undefined && fallbackStock !== null && Number(fallbackStock) > 0) {
+        stockVal = fallbackStock;
+      } else {
+        stockVal = stockMap[pid];
+      }
+    } else if (fallbackStock !== undefined && fallbackStock !== null) {
+      stockVal = fallbackStock;
     } else {
       const prod = adminProducts.find(p => p.id === pid);
       stockVal = prod ? prod.stock : 0;
@@ -1538,26 +1595,26 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return isNaN(num) ? 0 : num;
   };
 
-  const deductStockForOrder = (orderItems: { id: string; quantity: number }[]): { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] } => {
+  const deductStockForOrder = (orderItems: { id: string; quantity: number; stock?: number }[]): { success: boolean; insufficientItems: { id: string; name: string; requested: number; available: number }[] } => {
     // ESTA FUNCION SE MANTIENE SINCRONA POR AHORA PARA NO ROMPER CHECKOUT
     // Pero asume que el stock fue cargado o se permite sobreventa si no se encuentra.
     const insufficient: { id: string; name: string; requested: number; available: number }[] = [];
     for (const item of orderItems) {
-      const available = getStock(item.id);
+      const available = getStock(item.id, item.stock);
       if (item.quantity > available && available > 0) { // Solo bloquear si sabemos que hay stock, pero es menor
         const prod = adminProducts.find(p => p.id === item.id);
         insufficient.push({ id: item.id, name: prod?.name || item.id, requested: item.quantity, available });
       }
     }
     if (insufficient.length > 0) return { success: false, insufficientItems: insufficient };
-    
+
     setStockMap(prev => {
       const next = { ...prev };
       for (const item of orderItems) {
-        const currentStock = next[item.id] !== undefined ? next[item.id] : getStock(item.id);
+        const currentStock = next[item.id] !== undefined ? next[item.id] : getStock(item.id, item.stock);
         const newStock = Math.max(0, currentStock - item.quantity);
         next[item.id] = newStock;
-        
+
         if (item.id !== 'PRODUCTO_COMUN' && !item.id.startsWith('GENERICO-')) {
           useProductStore.getState().updateStock(item.id, newStock).catch(console.error);
         }
@@ -1567,11 +1624,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { success: true, insufficientItems: [] };
   };
 
-  const restoreStockForOrder = (orderItems: { id: string; quantity: number }[]) => {
+  const restoreStockForOrder = (orderItems: { id: string; quantity: number; stock?: number }[]) => {
     setStockMap(prev => {
       const next = { ...prev };
       for (const item of orderItems) {
-        const currentStock = next[item.id] !== undefined ? next[item.id] : getStock(item.id);
+        const currentStock = next[item.id] !== undefined ? next[item.id] : getStock(item.id, item.stock);
         const newStock = currentStock + item.quantity;
         next[item.id] = newStock;
 
@@ -1662,12 +1719,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (i.id !== 'PRODUCTO_COMUN' && !i.id.startsWith('GENERICO-')) {
         let currentStock = getStock(i.id);
         if (currentStock === 0) {
-           // Si no lo teniamos en memoria (o era 0), consultamos a la DB real para evitar mandar a 0 algo que tiene
-           try {
-             const { supabase } = await import('../lib/supabase');
-             const { data } = await supabase.from('products').select('stock').eq('id', i.id).single();
-             if (data) currentStock = data.stock;
-           } catch(e) {}
+          // Si no lo teniamos en memoria (o era 0), consultamos a la DB real para evitar mandar a 0 algo que tiene
+          try {
+            const { supabase } = await import('../lib/supabase');
+            const { data } = await supabase.from('products').select('stock').eq('id', i.id).single();
+            if (data) currentStock = data.stock;
+          } catch (e) { }
         }
         if (currentStock > 0) {
           updateStock(i.id, Math.max(0, currentStock - i.quantity));
@@ -1712,8 +1769,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const debtAmount = o.total - (o.paidAmount || 0);
       const newDebt = currentDebt + debtAmount;
 
-      const methodLabel = (o.method?.toLowerCase() === 'envío' || o.delivery_method === 'envio') 
-        ? 'Envío a domicilio' 
+      const methodLabel = (o.method?.toLowerCase() === 'envío' || o.delivery_method === 'envio')
+        ? 'Envío a domicilio'
         : (o.method?.toLowerCase() === 'retiro' || o.delivery_method === 'retiro')
           ? 'Retiro en sucursal'
           : 'Compra en local';
@@ -1746,8 +1803,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
 
       // Alerta de límite superado
-      const effectiveAmountLimit = activeCustomer?.useCustomAccountLimits 
-        ? (activeCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount) 
+      const effectiveAmountLimit = activeCustomer?.useCustomAccountLimits
+        ? (activeCustomer.customDebtLimit ?? currentAccountConfig.maxDebtAmount)
         : currentAccountConfig.maxDebtAmount;
 
       if (currentAccountConfig.warnOnAmountLimit && newDebt > effectiveAmountLimit) {
@@ -1901,22 +1958,38 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const lowStockCount = useProductStore((state) => state.lowStockDashboardTotal);
   const totalCustomers = customers.length;
 
+  // Helper to match customer tiers flexibly (Gold/Oro, Silver/Plata, Bronze/Bronce, Regular)
+  const isTierMatch = (customerTier?: string, requiredTier?: string) => {
+    if (!requiredTier || requiredTier === 'all' || requiredTier === '') return true;
+    if (!customerTier) return false;
+    const c = customerTier.toLowerCase().trim();
+    const r = requiredTier.toLowerCase().trim();
+    if (c === r) return true;
+    if ((r === 'oro' && c === 'gold') || (r === 'gold' && c === 'oro')) return true;
+    if ((r === 'plata' && c === 'silver') || (r === 'silver' && c === 'plata')) return true;
+    if ((r === 'bronce' && c === 'bronze') || (r === 'bronze' && c === 'bronce')) return true;
+    return false;
+  };
+
   // ─── Offers ───────────────────────────────────────────────
   const addOffer = (o: Offer) => {
     setOffers(prev => [...prev, o]);
     insertOffer(o);
-    // Apply discount to product price only for product-scoped percent offers (legacy behavior)
-    if (o.scope === 'product' && o.targetId && o.active && o.discountType === 'percent') {
-      const prod = adminProducts.find(p => p.id === o.targetId);
-      if (prod) {
-        const discountedPrice = Math.round(prod.price * (1 - o.discountValue / 100));
-        updateProduct(o.targetId, {
-          originalPrice: prod.originalPrice || prod.price,
-          price: discountedPrice,
-          discount: `-${o.discountValue}%`,
-          badge: o.label || 'Oferta'
-        });
-      }
+    // Apply discount to product price only for product-scoped percent offers without tier restriction
+    if (o.scope === 'product' && o.active && o.discountType === 'percent' && (!o.requiredTier || o.requiredTier === 'all')) {
+      const idsToUpdate = o.targetIds && o.targetIds.length > 0 ? o.targetIds : (o.targetId ? [o.targetId] : []);
+      idsToUpdate.forEach(pId => {
+        const prod = adminProducts.find(p => p.id === pId);
+        if (prod) {
+          const discountedPrice = Math.round(prod.price * (1 - o.discountValue / 100));
+          updateProduct(pId, {
+            originalPrice: prod.originalPrice || prod.price,
+            price: discountedPrice,
+            discount: o.discountValue,
+            badge: o.label || 'Oferta'
+          });
+        }
+      });
     }
   };
   const updateOffer = (id: string, up: Partial<Offer>) => {
@@ -1925,13 +1998,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
   const deleteOffer = (id: string) => {
     const offer = offers.find(o => o.id === id);
-    if (offer && offer.scope === 'product' && offer.targetId) {
-      const prod = adminProducts.find(p => p.id === offer.targetId);
-      if (prod && prod.originalPrice) {
-        updateProduct(offer.targetId, { price: prod.originalPrice, originalPrice: undefined, discount: undefined, badge: '' });
-      }
+    if (offer && offer.scope === 'product') {
+      const idsToRestore = offer.targetIds && offer.targetIds.length > 0 ? offer.targetIds : (offer.targetId ? [offer.targetId] : []);
+      idsToRestore.forEach(pId => {
+        const prod = adminProducts.find(p => p.id === pId);
+        if (prod && prod.originalPrice) {
+          updateProduct(pId, { price: prod.originalPrice, originalPrice: undefined, discount: undefined, badge: '' });
+        }
+      });
     }
     setOffers(prev => prev.filter(o => o.id !== id));
+    deleteOfferInDb(id);
   };
 
   const activeOffers = useMemo(() => {
@@ -1949,37 +2026,72 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   }, [offers]);
 
-  // Apply offers to a cart item at POS time (only product and category level)
+  // Apply offers to a cart item at POS/Cart time (product, category, subcategory, tag level)
   const applyOffersToCartItem = (
     item: { productId: string; categoryId?: string; price: number; quantity: number },
-    customer?: AdminCustomer | null
+    customer?: AdminCustomer | null,
+    options?: { forDisplay?: boolean }
   ) => {
     const todayStr = (() => {
       const d = new Date();
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     })();
+
+    const prod = adminProducts.find(p => p.id === item.productId);
+    const itemCategoryId = item.categoryId || prod?.categoryId;
+    const itemSubcategoryId = (prod as any)?.subcategoryId || (prod as any)?.subcategory_id;
+    const itemBadge = prod?.badge;
+
     const applicable = offers.filter(o => {
       if (!o.active) return false;
       const startStr = (o.startDate || '').split('T')[0];
       const endStr = (o.endDate || '').split('T')[0];
       if (startStr && startStr > todayStr) return false;
       if (endStr && endStr < todayStr) return false;
-      if (o.scope === 'product') return o.targetId === item.productId || o.productId === item.productId;
-      if (o.scope === 'category') {
-        const prod = item.categoryId ? { categoryId: item.categoryId } : adminProducts.find(p => p.id === item.productId);
-        return prod?.categoryId === o.targetId;
+
+      // Tier requirement check (combinable with any scope)
+      // When options?.forDisplay is true (e.g. for storefront catalog showcases / flash offers),
+      // we allow displaying the promotion so customers know about it!
+      if (o.requiredTier && o.requiredTier !== 'all' && !options?.forDisplay) {
+        if (!customer) return false;
+        if (!isTierMatch(customer.tier, o.requiredTier)) return false;
       }
+
+      if (o.scope === 'product') {
+        if (o.targetIds && Array.isArray(o.targetIds) && o.targetIds.length > 0) {
+          return o.targetIds.includes(item.productId);
+        }
+        if (o.targetId && o.targetId.includes(',')) {
+          return o.targetId.split(',').map(s => s.trim()).includes(item.productId);
+        }
+        return o.targetId === item.productId || o.productId === item.productId;
+      }
+
+      if (o.scope === 'category') {
+        return Boolean(itemCategoryId && itemCategoryId === o.targetId);
+      }
+
+      if (o.scope === 'subcategory') {
+        const targetSub = o.subcategoryId || o.targetId;
+        return Boolean(itemSubcategoryId && itemSubcategoryId === targetSub);
+      }
+
+      if (o.scope === 'tag') {
+        const targetTag = (o.tagFilter || o.targetId || '').toLowerCase().trim();
+        return Boolean(itemBadge && itemBadge.toLowerCase().trim() === targetTag);
+      }
+
       return false;
     });
 
-    if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null, offerId: null, discountedQuantity: 0 };
+    if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null, offerId: null, discountedQuantity: 0, originalPrice: item.price };
 
     // Use the best (highest discount) applicable offer, respecting quotas
     let bestDiscount = 0;
     let bestLabel: string | null = null;
     let bestOfferId: string | null = null;
     let finalDiscountedQuantity = 0;
-    
+
     applicable.forEach(o => {
       // Validate quota before considering this offer
       let allowedQuantity = item.quantity;
@@ -1987,15 +2099,15 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const todayRedemptions = offerRedemptions.filter(r => r.offer_id === o.id && r.redemption_date === todayStr);
         const usedTodayTotal = todayRedemptions.reduce((s, r) => s + r.quantity, 0);
         const usedTodayCustomer = customer ? todayRedemptions.filter(r => {
-          const clean1 = (r.customer_phone || '').replace(/\\D/g, '');
-          const clean2 = (customer.phone || '').replace(/\\D/g, '');
+          const clean1 = (r.customer_phone || '').replace(/\D/g, '');
+          const clean2 = (customer.phone || '').replace(/\D/g, '');
           return clean1 === clean2 && clean1 !== '';
         }).reduce((s, r) => s + r.quantity, 0) : 0;
-        
+
         let remainingGlobal = o.daily_quantity_limit ? Math.max(0, o.daily_quantity_limit - usedTodayTotal) : Infinity;
-        let remainingTotal = o.total_quantity_limit ? Math.max(0, o.total_quantity_limit - offerRedemptions.filter(r => r.offer_id === o.id).reduce((s,r) => s+r.quantity, 0)) : Infinity;
+        let remainingTotal = o.total_quantity_limit ? Math.max(0, o.total_quantity_limit - offerRedemptions.filter(r => r.offer_id === o.id).reduce((s, r) => s + r.quantity, 0)) : Infinity;
         let remainingCustomer = o.per_customer_daily_limit ? Math.max(0, o.per_customer_daily_limit - usedTodayCustomer) : Infinity;
-        
+
         const strictLimit = Math.min(remainingGlobal, remainingTotal, remainingCustomer);
         allowedQuantity = Math.min(item.quantity, strictLimit);
       }
@@ -2013,7 +2125,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else {
         discVal = Math.min(o.discountValue * allowedQuantity, item.price * allowedQuantity);
       }
-      
+
       if (discVal > bestDiscount) {
         bestDiscount = discVal;
         bestLabel = o.label || o.name || 'Oferta';
@@ -2031,7 +2143,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   };
 
-  // Apply order-scoped offers (all, customer, birthday) once to the entire subtotal
+  // Apply order-scoped offers (all, customer, birthday, tier) once to the entire subtotal
   const applyOrderOffers = (
     subtotalAfterItemDiscounts: number,
     customer?: AdminCustomer | null
@@ -2046,10 +2158,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const endStr = (o.endDate || '').split('T')[0];
       if (startStr && startStr > todayStr) return false;
       if (endStr && endStr < todayStr) return false;
+
+      // Tier requirement check (combinable with any order scope)
+      if (o.requiredTier && o.requiredTier !== 'all') {
+        if (!customer) return false;
+        if (!isTierMatch(customer.tier, o.requiredTier)) return false;
+      }
+
       if (o.scope === 'all') return true;
       if (o.scope === 'tier') {
         if (!customer) return false;
-        return customer.tier.toLowerCase() === (o.targetId || '').toLowerCase();
+        return isTierMatch(customer.tier, o.targetId);
       }
       if (o.scope === 'customer') {
         if (!customer) return false;
@@ -2103,7 +2222,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const clean2 = (customer.phone || '').replace(/\\D/g, '');
           return clean1 === clean2 && clean1 !== '';
         }).length : 0;
-        
+
         if (o.daily_quantity_limit && usedTodayTotal >= o.daily_quantity_limit) isValid = false;
         if (o.per_customer_daily_limit && usedTodayCustomer >= o.per_customer_daily_limit) isValid = false;
         const totalRedemptions = offerRedemptions.filter(r => r.offer_id === o.id).length;
@@ -2492,7 +2611,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       posRevenue,
       totalDebtInStreet,
       activeOrdersCount, lowStockCount, totalCustomers,
-      currentAccountConfig, updateCurrentAccountConfig,
+      currentAccountConfig, updateCurrentAccountConfig, loadAdminData,
       storeStatus, updateStoreStatus,
       autoCashCloseConfig, updateAutoCashCloseConfig,
       generalConfig, updateGeneralConfig, blockPhone, unblockPhone, isPhoneBlocked,

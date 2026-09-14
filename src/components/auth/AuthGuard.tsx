@@ -11,11 +11,11 @@ interface AuthGuardProps {
 export const AuthGuard: React.FC<AuthGuardProps> = ({ children, requiredPermission }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { session, initialized, loading, hasPermission, employeeProfile } = useAuthStore();
+  const { session, initialized, loading, hasPermission, employeeProfile, signOut } = useAuthStore();
 
   useEffect(() => {
     if (initialized && !loading && !session) {
-      // Redirigir al login guardando la ruta intentada (opcional para UX avanzado)
+      // Redirigir al login guardando la ruta intentada
       navigate('/admin/login', { replace: true, state: { from: location.pathname } });
     }
   }, [initialized, loading, session, navigate, location.pathname]);
@@ -39,19 +39,88 @@ export const AuthGuard: React.FC<AuthGuardProps> = ({ children, requiredPermissi
     );
   }
 
+  // 1. Sin sesión activa
   if (!session) {
     return null;
   }
 
-  // Verificación de permiso específico para una ruta
-  if (requiredPermission && employeeProfile && employeeProfile.role !== 'owner' && employeeProfile.role !== 'super_admin') {
-    // Bloquear acceso absoluto a clientes para empleados comunes
+  // 2. PROTECCIÓN CRÍTICA DE ACCESO A ADMIN:
+  // Si el usuario tiene sesión en Supabase (ej. cliente registrado) pero NO es un empleado registrado,
+  // se le deniega el acceso a todo el panel administrativo.
+  if (!employeeProfile) {
+    return (
+      <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center font-sans p-6">
+        <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-red-100 flex flex-col items-center gap-4 text-center max-w-md">
+          <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500">
+            <span className="material-symbols-outlined text-[32px]">admin_panel_settings</span>
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-on-background">Acceso Restringido</h3>
+            <p className="text-sm text-on-surface-variant mt-2 leading-relaxed">
+              El panel administrativo es de uso exclusivo para el personal autorizado de <strong>Martina Supermercado</strong>. Tu cuenta actual no posee un perfil de empleado activo asignado.
+            </p>
+          </div>
+          <div className="flex gap-3 mt-4 w-full">
+            <button
+              onClick={() => navigate('/', { replace: true })}
+              className="flex-1 px-5 py-2.5 bg-surface-container text-on-surface rounded-xl font-bold text-xs hover:bg-surface-container-high transition-all cursor-pointer"
+            >
+              Ir a la Tienda
+            </button>
+            <button
+              onClick={async () => {
+                await signOut();
+                navigate('/admin/login', { replace: true });
+              }}
+              className="flex-1 px-5 py-2.5 bg-primary text-white rounded-xl font-bold text-xs shadow-md shadow-primary/20 hover:bg-primary/90 transition-all cursor-pointer"
+            >
+              Cambiar Cuenta
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Empleado con cuenta desactivada
+  if (!employeeProfile.active) {
+    return (
+      <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center font-sans p-8">
+        <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-amber-100 flex flex-col items-center gap-4 text-center max-w-md">
+          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600">
+            <span className="material-symbols-outlined text-[32px]">person_off</span>
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-on-background">Cuenta Inactiva</h3>
+            <p className="text-sm text-on-surface-variant mt-2">
+              Tu cuenta de empleado ha sido desactivada por la administración. Comunícate con tu encargado.
+            </p>
+          </div>
+          <button
+            onClick={async () => {
+              await signOut();
+              navigate('/admin/login', { replace: true });
+            }}
+            className="mt-4 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-xs shadow-md shadow-primary/20 hover:bg-primary/90 transition-all cursor-pointer"
+          >
+            Cerrar Sesión / Cambiar Cuenta
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 4. Verificación de permisos específicos de la ruta
+  const isPrivileged = employeeProfile.role === 'owner' || employeeProfile.role === 'super_admin';
+
+  if (!isPrivileged && requiredPermission) {
+    // Restricción especial para empleados comunes sobre clientes
     if (employeeProfile.role === 'employee' && requiredPermission.startsWith('customers.')) {
       return (
         <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center font-sans p-8">
           <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-red-100 flex flex-col items-center gap-4 text-center max-w-md">
-            <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center">
-              <span className="material-symbols-outlined text-red-500 text-[32px]">block</span>
+            <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500">
+              <span className="material-symbols-outlined text-[32px]">block</span>
             </div>
             <div>
               <h3 className="text-xl font-black text-on-background">Acceso Denegado</h3>
@@ -59,9 +128,9 @@ export const AuthGuard: React.FC<AuthGuardProps> = ({ children, requiredPermissi
                 No tienes los permisos necesarios para acceder a este módulo. Contacta con tu administrador.
               </p>
             </div>
-            <button 
+            <button
               onClick={() => navigate('/admin', { replace: true })}
-              className="mt-4 px-6 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+              className="mt-4 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-xs shadow-md shadow-primary/20 hover:bg-primary/90 transition-all cursor-pointer"
             >
               Volver al Dashboard
             </button>
@@ -74,18 +143,18 @@ export const AuthGuard: React.FC<AuthGuardProps> = ({ children, requiredPermissi
       return (
         <div className="min-h-screen bg-[#f8f9fa] flex items-center justify-center font-sans p-8">
           <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-red-100 flex flex-col items-center gap-4 text-center max-w-md">
-            <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center">
-              <span className="material-symbols-outlined text-red-500 text-[32px]">block</span>
+            <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500">
+              <span className="material-symbols-outlined text-[32px]">lock</span>
             </div>
             <div>
-              <h3 className="text-xl font-black text-on-background">Acceso Denegado</h3>
+              <h3 className="text-xl font-black text-on-background">Módulo Restringido</h3>
               <p className="text-sm text-on-surface-variant mt-2">
-                No tienes los permisos necesarios para acceder a este módulo. Contacta con tu administrador.
+                Tu rol no dispone de autorización para la acción <code className="text-xs bg-surface-container px-1.5 py-0.5 rounded font-mono">{requiredPermission}</code>.
               </p>
             </div>
-            <button 
+            <button
               onClick={() => navigate('/admin', { replace: true })}
-              className="mt-4 px-6 py-3 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
+              className="mt-4 px-6 py-2.5 bg-primary text-white rounded-xl font-bold text-xs shadow-md shadow-primary/20 hover:bg-primary/90 transition-all cursor-pointer"
             >
               Volver al Dashboard
             </button>

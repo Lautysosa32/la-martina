@@ -16,6 +16,7 @@ export interface Product {
   stock: number;
   subcategoryId?: string | null;
   saleType?: 'unit' | 'weight';
+  isPaused?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -42,6 +43,7 @@ export interface SupabaseProduct {
   barcode: string | null;
   stock: number;
   sale_type?: 'unit' | 'weight';
+  is_paused?: boolean;
   created_at: string;
   updated_at: string;
 }

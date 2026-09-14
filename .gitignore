@@ -6,9 +6,18 @@ coverage/
 *.log
 .env*
 !.env.example
+*.pem
+*.key
+*.cert
+*.pfx
+credentials.json
+serviceAccount*.json
+.vercel
 
 # WhatsApp Worker - browser session data & auth
 whatsapp-worker/session/
 whatsapp-worker/.wwebjs_auth/
 whatsapp-worker/.wwebjs_cache/
 whatsapp-worker/node_modules/
+whatsapp-worker/.env*
+!whatsapp-worker/.env.example

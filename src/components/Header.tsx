@@ -7,10 +7,13 @@ import { useAdmin } from '../context/AdminContext';
 import { useAuth } from '../stores/useAuthStore';
 import { useFavorites } from '../context/FavoritesContext';
 import { categories } from '../data/mockData';
+import { useDebounce } from '../utils/useDebounce';
+import { productsService } from '../services/products.service';
+import { Product } from '../types/product.types';
 import logo from '../logo.png';
 
 export const Header: React.FC = () => {
-  const { adminProducts, adminCategories, adminSubcategories } = useAdmin();
+  const { adminCategories, adminSubcategories } = useAdmin();
   const categoriesList = adminCategories.length > 0 ? adminCategories : categories;
   const { user, isAuthenticated } = useAuth();
   const { favorites } = useFavorites();
@@ -28,13 +31,22 @@ export const Header: React.FC = () => {
   const deliveryMethod = (localStorage.getItem('la-martina-delivery-method') as 'retiro' | 'envio') || 'envio';
   const isPickup = deliveryMethod === 'retiro';
 
-  const filteredProducts = searchQuery.trim() === ''
-    ? []
-    : adminProducts.filter(product =>
-      product.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.brand?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (product.categoryId && product.categoryId.toLowerCase().includes(searchQuery.toLowerCase()))
-    ).slice(0, 6);
+  // Debounce de 350ms para evitar peticiones por cada tecla ingresada (Ahorro de Egress)
+  const debouncedSearch = useDebounce(searchQuery, 350);
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const clean = debouncedSearch.trim();
+    if (clean.length >= 2) {
+      productsService.searchProductsQuick(clean, 6).then(results => {
+        if (isMounted) setFilteredProducts(results);
+      }).catch(console.error);
+    } else {
+      setFilteredProducts([]);
+    }
+    return () => { isMounted = false; };
+  }, [debouncedSearch]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -69,7 +81,7 @@ export const Header: React.FC = () => {
   return (
     <>
       <header className="fixed top-0 left-0 w-full z-50 transition-all duration-300 ease-in-out bg-primary shadow-md">
-        
+
         {/* Barra superior de información (Solo Desktop) */}
         <div className="hidden lg:block bg-[#99000d] text-white/90 text-[11px] py-1 border-b border-white/10 font-medium">
           <div className="w-full max-w-[1920px] mx-auto px-4 lg:px-8 xl:px-10 flex items-center justify-between">
@@ -104,7 +116,7 @@ export const Header: React.FC = () => {
 
         {/* Barra Principal (Main Header) */}
         <div className="h-16 flex items-center justify-between px-3 sm:px-4 lg:px-8 xl:px-10 w-full max-w-7xl lg:max-w-[1920px] mx-auto">
-          
+
           {/* Izquierda: Menú Hamburguesa + Logo + Selector de Entrega Desktop */}
           <div className="flex items-center gap-2 sm:gap-4 lg:gap-5 shrink-0">
             <button
@@ -117,11 +129,10 @@ export const Header: React.FC = () => {
 
             <Link
               to="/"
-              className={`transition-all duration-300 ease-in-out overflow-hidden flex items-center shrink-0 ${
-                isSearchActive ? 'max-w-0 opacity-0 pointer-events-none ml-0 md:max-w-[160px] md:opacity-100' : 'max-w-[160px] opacity-100'
-              } hover:opacity-90`}
+              className={`transition-all duration-300 ease-in-out overflow-hidden flex items-center shrink-0 ${isSearchActive ? 'max-w-0 opacity-0 pointer-events-none ml-0 md:max-w-[160px] md:opacity-100' : 'max-w-[160px] opacity-100'
+                } hover:opacity-90`}
             >
-              <img src={logo} alt="La Martina" className="h-9 sm:h-10 w-auto object-contain" />
+              <img src={logo} alt="Martina Supermercado" className="h-9 sm:h-10 w-auto object-contain" />
             </Link>
 
             {/* Píldora de Método de Entrega (Desktop) */}
@@ -146,7 +157,7 @@ export const Header: React.FC = () => {
           </div>
 
           {/* Centro: Buscador Inteligente */}
-          <div className="flex-1 max-w-xl lg:max-w-2xl xl:max-w-3xl mx-2 sm:mx-6 lg:mx-8 relative" ref={searchRef}>
+          <div className="flex-1 max-w-xl lg:max-w-2xl xl:max-w-3xl mx-1 sm:mx-6 lg:mx-8 relative min-w-0" ref={searchRef}>
             <form onSubmit={handleSearchSubmit} className="relative w-full">
               <input
                 ref={inputRef}
@@ -161,9 +172,8 @@ export const Header: React.FC = () => {
                   setIsSearchOpen(true);
                 }}
                 placeholder="¿Qué estás buscando hoy? Ej: Leche, Carne, Bebidas..."
-                className={`w-full h-10 bg-white text-[#1c1b1b] placeholder-gray-400 border-none rounded-full pl-4 ${
-                  searchQuery.length > 0 ? 'pr-16' : 'pr-10'
-                } outline-none text-xs sm:text-sm shadow-[0_2px_8px_rgba(0,0,0,0.12)] transition-all duration-300 focus:ring-2 focus:ring-secondary-container/80`}
+                className={`w-full h-10 bg-white text-[#1c1b1b] placeholder-gray-400 border-none rounded-full pl-3.5 sm:pl-4 ${searchQuery.length > 0 ? 'pr-16' : 'pr-9 sm:pr-10'
+                  } outline-none text-xs sm:text-sm shadow-[0_2px_8px_rgba(0,0,0,0.12)] transition-all duration-300 focus:ring-2 focus:ring-secondary-container/80`}
               />
               {searchQuery.length > 0 && (
                 <button
@@ -179,9 +189,9 @@ export const Header: React.FC = () => {
               )}
               <button
                 type="submit"
-                className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 text-primary hover:opacity-80 transition-opacity cursor-pointer"
+                className="absolute right-0.5 sm:right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-8 h-8 text-primary hover:opacity-80 transition-opacity cursor-pointer"
               >
-                <span className="material-symbols-outlined font-bold text-[22px]" aria-hidden="true" translate="no">search</span>
+                <span className="material-symbols-outlined font-bold text-[20px] sm:text-[22px]" aria-hidden="true" translate="no">search</span>
               </button>
             </form>
 
@@ -232,18 +242,17 @@ export const Header: React.FC = () => {
           </div>
 
           {/* Derecha: Acciones (Favoritos, Mi Cuenta, Carrito) */}
-          <div className="flex items-center gap-1 sm:gap-2 lg:gap-4 shrink-0">
-            
+          <div className="flex items-center gap-0.5 sm:gap-2 lg:gap-4 shrink-0">
+
             {/* Favoritos */}
             <Link
               to="/favorites"
-              className={`hover:bg-white/10 px-2.5 py-1.5 rounded-xl transition-colors flex items-center gap-2 text-white relative ${
-                isSearchActive ? 'hidden md:flex' : 'flex'
-              }`}
+              className={`hover:bg-white/10 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl transition-colors flex items-center gap-2 text-white relative ${isSearchActive ? 'hidden md:flex' : 'flex'
+                }`}
               title="Mis Favoritos"
             >
               <div className="relative flex items-center justify-center">
-                <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">favorite</span>
+                <span className="material-symbols-outlined text-[21px] sm:text-[22px]" aria-hidden="true" translate="no">favorite</span>
                 {favorites.length > 0 && (
                   <span className="absolute -top-1.5 -right-1.5 bg-secondary-container text-on-secondary-container text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-primary">
                     {favorites.length}
@@ -256,18 +265,17 @@ export const Header: React.FC = () => {
             {/* Mi Cuenta */}
             <Link
               to="/profile"
-              className={`hover:bg-white/10 px-2.5 py-1.5 rounded-xl transition-colors flex items-center gap-2 text-white ${
-                isSearchActive ? 'hidden md:flex' : 'flex'
-              }`}
+              className={`hover:bg-white/10 p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl transition-colors flex items-center gap-2 text-white ${isSearchActive ? 'hidden md:flex' : 'flex'
+                }`}
               title="Mi Cuenta"
             >
-              <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">person</span>
+              <span className="material-symbols-outlined text-[21px] sm:text-[22px]" aria-hidden="true" translate="no">person</span>
               <div className="hidden xl:flex flex-col text-left leading-tight">
                 <span className="text-[9px] text-white/70 font-normal">
                   {isAuthenticated ? 'Bienvenido' : 'Ingresar'}
                 </span>
                 <span className="text-xs font-semibold truncate max-w-[90px]">
-                  {user?.name ? user.name.split(' ')[0] : 'Mi Cuenta'}
+                  {isAuthenticated && user?.name ? user.name.split(' ')[0] : 'Mi Cuenta'}
                 </span>
               </div>
             </Link>
@@ -275,7 +283,7 @@ export const Header: React.FC = () => {
             {/* Carrito */}
             <Link
               to="/cart"
-              className="bg-secondary-container text-on-secondary-container hover:brightness-95 transition-all px-3 py-1.5 rounded-full flex items-center gap-2 shadow-xs ml-1"
+              className="bg-secondary-container text-on-secondary-container hover:brightness-95 transition-all p-2 sm:px-3 sm:py-1.5 rounded-full flex items-center gap-2 shadow-xs ml-0.5 sm:ml-1"
               title="Ver Carrito de Compras"
             >
               <div className="relative flex items-center justify-center">
@@ -376,8 +384,8 @@ export const Header: React.FC = () => {
         </nav>
       </header>
 
-      <NavigationDrawer 
-        isOpen={isDrawerOpen} 
+      <NavigationDrawer
+        isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onOpenZones={() => {
           setIsDrawerOpen(false);

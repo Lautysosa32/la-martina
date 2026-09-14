@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { useAdmin } from '../context/AdminContext';
+import { useScrollLock } from '../utils/useScrollLock';
 
 export interface TicketItem {
   name: string;
@@ -39,47 +40,45 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 export const TicketPrinter: React.FC<TicketPrinterProps> = ({ ticket, onClose }) => {
+  useScrollLock(true);
   const ticketRef = useRef<HTMLDivElement>(null);
   const { ticketConfig } = useAdmin();
 
   const handlePrint = () => {
-    const content = ticketRef.current?.innerHTML;
-    if (!content) return;
+    if (!ticketRef.current) return;
     const win = window.open('', '_blank', 'width=380,height=600');
     if (!win) return;
-    win.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-          <title>Ticket ${ticket.ticketNumber}</title>
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 8px; width: 300px; }
-            .blank-line { height: 14px; }
-            .header { text-align: center; border-bottom: 1px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
-            .store-name { font-size: 18px; font-weight: bold; }
-            .ticket-num { font-size: 11px; margin-top: 4px; }
-            .date { font-size: 10px; color: #555; }
-            .items { margin: 8px 0; border-bottom: 1px dashed #000; padding-bottom: 8px; }
-            .item { margin-bottom: 4px; }
-            .item-name { font-weight: bold; font-size: 11px; }
-            .item-detail { display: flex; justify-content: space-between; font-size: 10px; color: #333; }
-            .offer-line { font-size: 9px; color: #666; font-style: italic; }
-            .totals { margin-top: 8px; }
-            .total-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
-            .total-row.grand { font-weight: bold; font-size: 14px; border-top: 1px solid #000; padding-top: 6px; margin-top: 6px; }
-            .discount-row { color: #c00; }
-            .footer { text-align: center; margin-top: 12px; font-size: 10px; color: #666; border-top: 1px dashed #000; padding-top: 8px; }
-            @media print { body { width: 80mm; } }
-          </style>
-        </head>
-        <body>
-          ${content}
-        </body>
-      </html>
-    `);
-    win.document.close();
+
+    win.document.title = `Ticket ${ticket.ticketNumber.replace(/[^\w\s-]/g, '')}`;
+
+    // Inyectar estilos seguros
+    const style = win.document.createElement('style');
+    style.textContent = `
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; padding: 8px; width: 300px; }
+      .blank-line { height: 14px; }
+      .header { text-align: center; border-bottom: 1px dashed #000; padding-bottom: 8px; margin-bottom: 8px; }
+      .store-name { font-size: 18px; font-weight: bold; }
+      .ticket-num { font-size: 11px; margin-top: 4px; }
+      .date { font-size: 10px; color: #555; }
+      .items { margin: 8px 0; border-bottom: 1px dashed #000; padding-bottom: 8px; }
+      .item { margin-bottom: 4px; }
+      .item-name { font-weight: bold; font-size: 11px; }
+      .item-detail { display: flex; justify-content: space-between; font-size: 10px; color: #333; }
+      .offer-line { font-size: 9px; color: #666; font-style: italic; }
+      .totals { margin-top: 8px; }
+      .total-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
+      .total-row.grand { font-weight: bold; font-size: 14px; border-top: 1px solid #000; padding-top: 6px; margin-top: 6px; }
+      .discount-row { color: #c00; }
+      .footer { text-align: center; margin-top: 12px; font-size: 10px; color: #666; border-top: 1px dashed #000; padding-top: 8px; }
+      @media print { body { width: 80mm; } }
+    `;
+    win.document.head.appendChild(style);
+
+    // Clonar el contenido de forma segura sin document.write
+    const clone = ticketRef.current.cloneNode(true);
+    win.document.body.appendChild(clone);
+
     win.focus();
     setTimeout(() => { win.print(); win.close(); }, 400);
   };
@@ -111,7 +110,7 @@ export const TicketPrinter: React.FC<TicketPrinterProps> = ({ ticket, onClose })
 
             {/* Ticket body – this is also what gets printed */}
             <div className="header">
-              <div className="store-name">{ticketConfig.headerText || 'La Martina'}</div>
+              <div className="store-name">{ticketConfig.headerText || 'Martina Supermercado'}</div>
               <div className="date">{ticketConfig.businessName || 'Minimarket & Supermercado'}</div>
               {ticketConfig.businessAddress && <div className="date">{ticketConfig.businessAddress}</div>}
               {ticketConfig.businessPhone && <div className="date">Tel: {ticketConfig.businessPhone}</div>}
@@ -165,7 +164,7 @@ export const TicketPrinter: React.FC<TicketPrinterProps> = ({ ticket, onClose })
 
             <div className="footer">
               <div>{ticketConfig.footerMessage || '¡Gracias por su compra!'}</div>
-              <div>{ticketConfig.headerText || 'La Martina'} — {ticketConfig.businessAddress || 'La Paz, Mendoza'}</div>
+              <div>{ticketConfig.headerText || 'Martina Supermercado'} — {ticketConfig.businessAddress || 'La Paz, Mendoza'}</div>
             </div>
 
             {/* Blank lines bottom */}

@@ -66,7 +66,8 @@ export const HeroCarousel: React.FC = () => {
     const isExternal = banner.linkExternal || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('www.');
 
     if (isExternal) {
-      const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`;
+      const secureUrl = url.replace(/^http:\/\//i, 'https://');
+      const fullUrl = secureUrl.startsWith('https://') ? secureUrl : `https://${secureUrl}`;
       window.open(fullUrl, '_blank', 'noopener,noreferrer');
     } else {
       navigate(url);
@@ -137,14 +138,13 @@ export const HeroCarousel: React.FC = () => {
             <div
               key={banner.id}
               onClick={(e) => hasLink && handleBannerClick(banner, e)}
-              className={`absolute inset-0 w-full h-full transition-opacity duration-700 ease-in-out ${
-                isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
-              } ${hasLink ? 'cursor-pointer' : ''}`}
+              className={`absolute inset-0 w-full h-full transition-opacity duration-700 ease-in-out ${isActive ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'
+                } ${hasLink ? 'cursor-pointer' : ''}`}
             >
               {/* Imagen de Fondo */}
               <img
                 src={banner.imageUrl}
-                alt={banner.title || 'Banner La Martina'}
+                alt={banner.title || 'Banner Martina Supermercado'}
                 className="absolute inset-0 w-full h-full object-cover z-0 transition-transform duration-1000 ease-out"
                 style={{
                   transform: isActive ? 'scale(1)' : 'scale(1.04)',
@@ -154,11 +154,10 @@ export const HeroCarousel: React.FC = () => {
 
               {/* Degradado Overlay (solo si tiene texto o para contraste sutil) */}
               <div
-                className={`absolute inset-0 z-10 transition-opacity duration-500 ${
-                  hasContent
+                className={`absolute inset-0 z-10 transition-opacity duration-500 ${hasContent
                     ? 'bg-gradient-to-r from-black/90 via-black/55 to-black/10 sm:from-black/85 sm:via-black/45 sm:to-transparent'
                     : 'bg-black/10'
-                }`}
+                  }`}
               />
 
               {/* Contenido Textual Overlay */}
@@ -200,7 +199,6 @@ export const HeroCarousel: React.FC = () => {
                       </button>
                     )}
 
-                    {/* Botón secundario fijo de envíos si es el slide principal */}
                     {index === 0 && !banner.linkLabel && (
                       <Link
                         to="/category/almacen"
@@ -209,17 +207,6 @@ export const HeroCarousel: React.FC = () => {
                       >
                         <span>Comprar Ahora</span>
                         <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-                      </Link>
-                    )}
-
-                    {index === 0 && (
-                      <Link
-                        to="/delivery"
-                        onClick={(e) => e.stopPropagation()}
-                        className="bg-white/20 backdrop-blur-xs text-white border border-white/30 font-label-sm px-4 py-2.5 sm:px-6 sm:py-3 rounded-full hover:bg-white hover:text-on-surface transition-all flex items-center space-x-1.5 text-xs sm:text-sm font-bold"
-                      >
-                        <span className="material-symbols-outlined text-[16px] sm:text-[18px]">local_shipping</span>
-                        <span>Envíos</span>
                       </Link>
                     )}
                   </div>
@@ -271,11 +258,10 @@ export const HeroCarousel: React.FC = () => {
                     goToSlide(idx);
                   }}
                   aria-label={`Ir al banner ${idx + 1}`}
-                  className={`h-2 sm:h-2.5 rounded-full transition-all duration-300 cursor-pointer ${
-                    isCurrent
+                  className={`h-2 sm:h-2.5 rounded-full transition-all duration-300 cursor-pointer ${isCurrent
                       ? 'w-6 sm:w-8 bg-white shadow-sm'
                       : 'w-2 sm:w-2.5 bg-white/50 hover:bg-white/80'
-                  }`}
+                    }`}
                 />
               );
             })}

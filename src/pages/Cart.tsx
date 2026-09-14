@@ -7,9 +7,9 @@ import { WeightInputModal } from '../components/WeightInputModal';
 import { calculateDistanceKm, calculateShippingCost } from '../utils/shipping';
 
 export const Cart: React.FC = () => {
-  const { items, updateQuantity, removeItem, totalPrice, totalItems, originalPriceSum, discountApplied, getStock, stockWarnings } = useCart();
+  const { items, updateQuantity, removeItem, totalPrice, totalItems, originalPriceSum, discountApplied, potentialDiscount, getStock, stockWarnings } = useCart();
   const { generalConfig } = useAdmin();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [activeWeightItem, setActiveWeightItem] = React.useState<any>(null);
   
   const deliveryMethod = localStorage.getItem('la-martina-delivery-method') || 'envio';
@@ -109,10 +109,35 @@ export const Cart: React.FC = () => {
             </div>
           </div>
         )}
+        {/* Banner para motivar registro si hay descuentos relámpago disponibles */}
+        {!isAuthenticated && potentialDiscount > 0 && (
+          <div className="mb-6 p-4 sm:p-5 bg-gradient-to-r from-primary/10 via-primary/5 to-white border border-primary/20 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-300">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-primary text-white flex items-center justify-center shrink-0 shadow-md shadow-primary/20">
+                <span className="material-symbols-outlined text-[24px]">loyalty</span>
+              </div>
+              <div>
+                <p className="text-xs sm:text-sm font-bold text-on-surface">
+                  ¡Ahorrá <span className="text-primary font-black text-sm sm:text-base">${potentialDiscount.toLocaleString('es-AR')}</span> en este pedido registrándote gratis!
+                </p>
+                <p className="text-[11px] text-on-surface-variant mt-0.5 leading-snug">
+                  Tenés productos con Ofertas Relámpago en tu carrito. Los descuentos son exclusivos para clientes registrados.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/profile"
+              className="shrink-0 w-full sm:w-auto px-4 py-2.5 bg-primary text-white text-xs font-bold rounded-xl text-center shadow-md shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">person_add</span>
+              <span>Registrarme y Ahorrar</span>
+            </Link>
+          </div>
+        )}
 
         <div className="flex flex-col gap-4">
           {items.map(item => {
-            const stock = getStock(item.id);
+            const stock = getStock(item.id, item.stock);
             const isOverStock = item.quantity > stock;
             const canAddMore = item.quantity < stock;
 
@@ -158,14 +183,27 @@ export const Cart: React.FC = () => {
 
                   {/* Price and selector row */}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-outline-variant/5 w-full">
-                    <div className="font-price-display flex items-center gap-1.5">
-                      {item.finalPrice && item.finalPrice < item.price ? (
-                        <>
-                          <span className="text-[11px] sm:text-xs text-on-surface-variant/50 line-through">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
-                          <span className="text-primary font-bold text-sm sm:text-base">${item.finalPrice.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
-                        </>
-                      ) : (
-                        <span className="text-primary font-bold text-sm sm:text-base">${item.price.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                    <div className="font-price-display flex flex-col">
+                      <div className="flex items-center gap-1.5">
+                        {isAuthenticated && item.finalPrice && item.finalPrice < (item.regularPrice ?? item.price) ? (
+                          <>
+                            <span className="text-[11px] sm:text-xs text-on-surface-variant/50 line-through">
+                              ${(item.regularPrice ?? item.price).toLocaleString('es-AR', { maximumFractionDigits: 0 })}
+                            </span>
+                            <span className="text-primary font-bold text-sm sm:text-base">
+                              ${item.finalPrice.toLocaleString('es-AR', { maximumFractionDigits: 0 })}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-primary font-bold text-sm sm:text-base">
+                            ${(item.finalPrice ?? item.regularPrice ?? item.price).toLocaleString('es-AR', { maximumFractionDigits: 0 })}
+                          </span>
+                        )}
+                      </div>
+                      {!isAuthenticated && (item.potentialDiscount || 0) > 0 && item.memberPrice && (
+                        <span className="text-[10px] text-green-700 font-bold mt-0.5">
+                          ✨ ${item.memberPrice.toLocaleString('es-AR', { maximumFractionDigits: 0 })} con registro
+                        </span>
                       )}
                     </div>
 
@@ -269,10 +307,23 @@ export const Cart: React.FC = () => {
               )}
             </span>
           </div>
-          {discountApplied > 0 && (
+          {isAuthenticated && discountApplied > 0 && (
             <div className="flex justify-between text-error font-bold">
               <span>Descuento aplicado</span>
               <span>-$ {discountApplied.toLocaleString('es-AR')}</span>
+            </div>
+          )}
+          {!isAuthenticated && potentialDiscount > 0 && (
+            <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-1 my-1">
+              <div className="flex justify-between text-xs font-black text-primary">
+                <span>Descuento con registro:</span>
+                <span>-$ {potentialDiscount.toLocaleString('es-AR')}</span>
+              </div>
+              <p className="text-[10px] text-on-surface-variant leading-tight">
+                <Link to="/profile" className="text-primary font-bold underline hover:opacity-80">
+                  Registrate gratis
+                </Link> para aplicar este ahorro al total.
+              </p>
             </div>
           )}
         </div>

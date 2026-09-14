@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { employeesService } from '../../services/employees.service';
 import { Employee } from '../../types/permissions.types';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 type FilterType = 'todos' | 'activos' | 'inactivos' | 'administradores' | 'empleados' | 'dueños';
 type SortField = 'name' | 'role' | 'active' | 'created_at';
@@ -17,6 +18,7 @@ export const Employees: React.FC = () => {
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
+  useScrollLock(showModal);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [portalNode, setPortalNode] = useState<HTMLElement | null>(null);
 

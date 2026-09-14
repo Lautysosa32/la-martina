@@ -7,18 +7,18 @@ export const Footer: React.FC = () => {
     <footer className="bg-surface-container-lowest text-on-surface border-t border-outline-variant/20 w-full py-10 sm:py-12 mt-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-12 mb-8">
-          
+
           {/* Columna 1: Marca y Canales directos */}
           <div className="flex flex-col items-start space-y-3">
             <Link to="/">
               <img
                 src={logoNegativo}
-                alt="La Martina Supermercado"
+                alt="Martina Supermercado"
                 className="h-10 md:h-12 object-contain"
               />
             </Link>
             <p className="text-xs sm:text-sm text-on-surface-variant/80 max-w-sm leading-relaxed">
-              Supermercado La Martina. Frescura, variedad y los mejores precios para tu hogar todos los días.
+              Martina Supermercado. Frescura, variedad y los mejores precios para tu hogar todos los días.
             </p>
             <div className="pt-2 flex items-center gap-3 text-on-surface-variant">
               <a
@@ -76,29 +76,29 @@ export const Footer: React.FC = () => {
                 ¿Tenés consultas sobre tus pedidos, pagos o entregas? Estamos para ayudarte.
               </p>
               <div className="space-y-2 pt-1">
-                <Link 
-                  to="/faq" 
+                <Link
+                  to="/faq"
                   className="flex items-center gap-2 text-primary font-bold hover:underline"
                 >
                   <span className="material-symbols-outlined text-[16px]">help</span>
                   <span>Preguntas Frecuentes</span>
                 </Link>
-                <Link 
-                  to="/about" 
+                <Link
+                  to="/about"
                   className="flex items-center gap-2 text-primary font-bold hover:underline"
                 >
                   <span className="material-symbols-outlined text-[16px]">storefront</span>
                   <span>Sobre Nosotros e Historia</span>
                 </Link>
-                <Link 
-                  to="/terms" 
+                <Link
+                  to="/terms"
                   className="flex items-center gap-2 text-primary font-bold hover:underline"
                 >
                   <span className="material-symbols-outlined text-[16px]">gavel</span>
                   <span>Términos y Condiciones</span>
                 </Link>
-                <Link 
-                  to="/privacy" 
+                <Link
+                  to="/privacy"
                   className="flex items-center gap-2 text-primary font-bold hover:underline"
                 >
                   <span className="material-symbols-outlined text-[16px]">shield</span>
@@ -112,7 +112,21 @@ export const Footer: React.FC = () => {
 
         {/* Barra inferior de copyright */}
         <div className="pt-6 border-t border-outline-variant/15 flex flex-col sm:flex-row justify-between items-center gap-3 text-[11px] text-on-surface-variant/60">
-          <p>© {new Date().getFullYear()} La Martina Supermercado. Todos los derechos reservados.</p>
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 text-center sm:text-left">
+            <p>© {new Date().getFullYear()} Martina Supermercado. Todos los derechos reservados.</p>
+            <span className="hidden sm:inline opacity-40">•</span>
+            <p>
+              Creado y diseñado por:{' '}
+              <a
+                href="https://lautarososa.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-on-surface hover:text-primary transition-colors"
+              >
+                <strong className="font-bold">Lautarososa.com</strong>
+              </a>
+            </p>
+          </div>
           <div className="flex items-center gap-3">
             <Link to="/terms" className="hover:text-on-surface transition-colors">Términos y Condiciones</Link>
             <span className="opacity-40">|</span>

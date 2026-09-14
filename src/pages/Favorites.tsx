@@ -20,9 +20,9 @@ export const Favorites: React.FC = () => {
             <span className="material-symbols-outlined text-4xl text-on-surface-variant/40">lock</span>
           </div>
           <p className="text-on-surface font-bold text-lg">Iniciá sesión para ver tus favoritos</p>
-          <p className="text-on-surface-variant text-xs mt-1 mb-6">Unite a La Martina Club gratis para guardar y acceder a tus productos preferidos desde cualquier dispositivo.</p>
-          <Link 
-            to="/profile" 
+          <p className="text-on-surface-variant text-xs mt-1 mb-6">Unite a Martina Supermercado Club gratis para guardar y acceder a tus productos preferidos desde cualquier dispositivo.</p>
+          <Link
+            to="/profile"
             className="bg-primary text-white px-8 py-3 rounded-full font-bold hover:bg-primary/90 transition-all inline-flex items-center gap-2 text-xs sm:text-sm shadow-md"
           >
             <span className="material-symbols-outlined text-[18px]">person</span>
@@ -58,8 +58,8 @@ export const Favorites: React.FC = () => {
           </div>
           <p className="text-on-surface font-bold text-lg">Todavía no tenés productos favoritos.</p>
           <p className="text-on-surface-variant text-xs mt-1 mb-6">¡Hacé clic en el corazón de cualquier producto para guardarlo acá!</p>
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="bg-primary text-white px-8 py-3 rounded-full font-bold hover:bg-primary/90 transition-all inline-flex items-center gap-2 text-xs sm:text-sm shadow-md"
           >
             <span className="material-symbols-outlined text-[18px]">storefront</span>

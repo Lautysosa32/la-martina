@@ -11,8 +11,18 @@ import { shoppingSessionService } from '../../services/shopping-session.service'
 import { whatsappMessageService, cleanAndFormatPhone } from '../../services/whatsapp-message.service';
 import { checkCustomerOverdueDebt } from '../../utils/billing-cycle';
 import { parseScaleBarcode } from '../../utils/scale-barcode';
+import { useScrollLock } from '../../utils/useScrollLock';
+import { supabase } from '../../lib/supabase';
+import { saleRepository } from '../../offline/repositories/saleRepository';
+import { cashRepository } from '../../offline/repositories/cashRepository';
+import { syncEngine } from '../../offline/syncEngine';
+import { useConnectionStatus } from '../../offline/hooks/useConnectionStatus';
+import { cajaManager } from '../../offline/cajaManager';
+import { syncQueue } from '../../offline/syncQueue';
+import { OfflineSaleItem } from '../../offline/types';
+import { usePOSShortcuts } from '../../hooks/usePOSShortcuts';
 
-export const generateTicketWhatsAppText = (ticket: TicketData, storeName = 'La Martina', footerMsg = '¡Gracias por su compra!'): string => {
+export const generateTicketWhatsAppText = (ticket: TicketData, storeName = 'Martina Supermercado', footerMsg = '¡Gracias por su compra!'): string => {
   const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   let text = `*${storeName} 🛒*\n`;
@@ -116,6 +126,7 @@ export const POS: React.FC = () => {
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
   const cashierName = employeeProfile ? employeeProfile.name : 'Admin';
+  const { isHealthy, cajaId } = useConnectionStatus();
 
   const [headerPortal, setHeaderPortal] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -335,8 +346,69 @@ export const POS: React.FC = () => {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const ccInputRef = useRef<HTMLInputElement>(null);
+  const posCustomerDniRef = useRef<HTMLInputElement>(null);
   const discountRef = useRef<HTMLInputElement>(null);
   const priceRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
+
+  // Hook global de atajos de teclado POS (F1, F2, F3, F4, F5, F6, F8, F9, ESC, Ctrl+P)
+  usePOSShortcuts({
+    enabled: showModal,
+    searchInputRef: inputRef,
+    customerDniInputRef: posCustomerDniRef,
+    quantityInputRef: qtyInputRef,
+    onCheckout: () => {
+      if (cart.length > 0 && !showPaymentModal && !showDiscountModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal) {
+        inputRef.current?.blur();
+        setShowPaymentModal(true);
+      }
+    },
+    onClearCart: () => {
+      if (!showPaymentModal && !showDiscountModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal) {
+        setCart([]);
+        setGlobalDiscount(0);
+        updateTab({ shoppingSessionId: null });
+        setSearchQty(1);
+        setSearchQtyStr('1');
+      }
+    },
+    onNewTab: () => {
+      if (tabs.length < 4) {
+        const newTab = createTab(tabs.length + 1);
+        setTabs(prev => [...prev, newTab]);
+        setActiveTabId(newTab.id);
+      }
+    },
+    onToggleTab: () => {
+      if (tabs.length > 1) {
+        const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+        const nextIndex = (currentIndex + 1) % tabs.length;
+        setActiveTabId(tabs[nextIndex].id);
+      }
+    },
+    onOpenDiscount: () => {
+      if (!showPaymentModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal) {
+        setDiscountInput(globalDiscount.toString());
+        setShowDiscountModal(true);
+      }
+    },
+    onCloseModalsOrBlur: () => {
+      if (showWhatsAppTicketModal) { setShowWhatsAppTicketModal(null); return; }
+      if (showSuccessModal) { setShowSuccessModal(null); return; }
+      if (showDiscountModal) { setShowDiscountModal(false); return; }
+      if (showPriceModal) { setShowPriceModal(null); return; }
+      if (showPaymentModal) { setShowPaymentModal(false); return; }
+      if (showCloseConfirm) { setShowCloseConfirm(false); return; }
+      if (showGenericModal) { setShowGenericModal(false); return; }
+      if (showPrePurchaseModal) { setShowPrePurchaseModal(false); return; }
+      if (showSuggestions) { setShowSuggestions(false); return; }
+    },
+    onReprintLastTicket: () => {
+      if (lastSaleTicket) {
+        setShowTicket(lastSaleTicket);
+      }
+    }
+  });
 
   // --- LIVE SEARCH STATE ---
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -344,13 +416,46 @@ export const POS: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     if (!searchCode.trim()) return [];
-    const search = searchCode.trim().toLowerCase();
-    return adminProducts.filter(p => {
-      const barcodeStr = p.barcode ? String(p.barcode).toLowerCase() : '';
-      const idStr = p.id ? String(p.id).toLowerCase() : '';
-      const nameStr = p.name ? String(p.name).toLowerCase() : '';
-      return barcodeStr.includes(search) || idStr.includes(search) || nameStr.includes(search);
-    }).slice(0, 8);
+    const search = searchCode.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (!search) return [];
+
+    const scored: { product: Product; score: number }[] = [];
+    for (const p of adminProducts) {
+      const barcode = (p.barcode || '').trim().toLowerCase();
+      const name = (p.name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const brand = (p.brand || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+      let score = -1;
+      if (barcode === search) {
+        score = 100; // Coincidencia exacta de código de barras
+      } else if (barcode.startsWith(search)) {
+        score = 90;  // Prefijo de código de barras
+      } else if (name.startsWith(search)) {
+        score = 80;  // El nombre empieza exactamente con lo buscado (ej: "Leche...")
+      } else {
+        const words = name.split(/\s+/);
+        if (words.some(w => w.startsWith(search))) {
+          score = 70; // Alguna palabra interna empieza con la búsqueda (ej: "Dulce de Leche")
+        } else if (name.includes(search)) {
+          score = 50; // Contenido en alguna parte del nombre
+        } else if (brand.startsWith(search)) {
+          score = 40; // Marca empieza con la búsqueda
+        } else if (brand.includes(search)) {
+          score = 30; // Marca contiene la búsqueda
+        } else if (barcode.includes(search)) {
+          score = 20; // Código contiene los dígitos
+        }
+      }
+
+      if (score > 0) {
+        scored.push({ product: p, score });
+      }
+    }
+
+    return scored
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map(s => s.product);
   }, [searchCode, adminProducts]);
 
   // Stats
@@ -454,9 +559,35 @@ export const POS: React.FC = () => {
       .sort((a, b) => b.timestamp - a.timestamp);
   }, [cashMovements, lastPOSCloseTimestamp]);
 
-  const handleCashClose = () => {
+  const handleCashClose = async () => {
     // Register withdrawals as movements before close
     withdrawals.forEach(w => addCashWithdrawal(w));
+
+    // Conteo de operaciones pendientes en este momento
+    const pendingCount = await syncQueue.getPendingCount();
+
+    // Registrar en cashRepository (IndexedDB + cola de sync)
+    try {
+      await cashRepository.createCashClose({
+        date: new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        period: 'diario',
+        total_sales: stats.totalToday,
+        total_orders: 0,
+        cash_payments: stats.cash,
+        card_payments: stats.card,
+        transfer_payments: stats.transfer,
+        cuenta_corriente_payments: 0,
+        initial_amount: stats.initialAmount,
+        total_withdrawals: totalWithdrawals,
+        closed_at: new Date().toISOString(),
+        closed_by: cashierName,
+        pending_sync_count: pendingCount,
+        withdrawals: withdrawals.map(w => ({ amount: w.amount, reason: w.reason, timestamp: w.timestamp }))
+      });
+    } catch (err) {
+      console.warn('Error saving cash close to local repository:', err);
+    }
+
     const result = performCashClose(withdrawals);
     if (result === null) {
       // Register was already closed — show feedback and abort
@@ -466,6 +597,12 @@ export const POS: React.FC = () => {
       alert('La caja ya se encuentra cerrada.');
       return;
     }
+
+    // Si hay conexión, sincronizar de inmediato
+    if (isHealthy) {
+      syncEngine.syncNow().catch(e => console.warn('Background sync after cash close:', e));
+    }
+
     setShowCloseConfirm(false);
     setWithdrawals([]);
     setShowWithdrawalModal(false);
@@ -722,6 +859,36 @@ export const POS: React.FC = () => {
 
   const handleCompleteSale = async (override = false) => {
     if (cart.length === 0) return;
+
+    // Validación defensiva de seguridad: total de venta y descuentos
+    if (cartTotal <= 0) {
+      alert('Error de seguridad: El total de la venta debe ser mayor a $0.');
+      return;
+    }
+
+    if (globalDiscount < 0 || globalDiscount > 100) {
+      alert('Error de seguridad: El porcentaje de descuento no es válido (debe estar entre 0% y 100%).');
+      return;
+    }
+
+    // Validación de estado de caja registradora
+    if (selectedPaymentMethod === 'cash' && !isCashRegisterOpen) {
+      alert('Caja cerrada: Debe realizar la apertura de caja antes de cobrar en efectivo.');
+      return;
+    }
+
+    // Validar que ningún ítem tenga cantidad o precio anómalo
+    for (const item of cartWithDiscounts) {
+      if (item.quantity <= 0 || isNaN(item.quantity)) {
+        alert(`Error en producto "${item.name}": Cantidad inválida (${item.quantity}).`);
+        return;
+      }
+      if (item.price < 0 || isNaN(item.price)) {
+        alert(`Error en producto "${item.name}": Precio base negativo.`);
+        return;
+      }
+    }
+
     if (selectedPaymentMethod === 'cuenta_corriente') {
       if (!validatedCustomer) {
         alert('Por favor asocie un cliente al principio de la venta.');
@@ -756,8 +923,7 @@ export const POS: React.FC = () => {
       }
     }
 
-    const orderId = `LOC-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-    const total = cartTotal;
+    let total = cartTotal;
     const customerName = validatedCustomer ? validatedCustomer.name : 'Cliente Local';
     const customerPhone = validatedCustomer ? validatedCustomer.phone : '';
     const dateStr = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -767,37 +933,93 @@ export const POS: React.FC = () => {
       ? `${orderOfferCalc.offerLabel}${globalDiscount > 0 ? ` + Descuento ${globalDiscount}%` : ''}`
       : (globalDiscount > 0 ? `Descuento ${globalDiscount}%` : undefined);
 
-    await addAdminOrder({
-      id: orderId,
-      date: dateStr,
-      timestamp: Date.now(),
-      customer: customerName,
-      phone: customerPhone,
-      dni: validatedCustomer ? validatedCustomer.dni : '',
-      address: 'Compra en local',
-      deliveryTime: 'Inmediato',
-      method: 'Caja Fija',
-      paymentMethod: selectedPaymentMethod,
-      paymentStatus: selectedPaymentMethod === 'cuenta_corriente' ? 'Pendiente' : 'Pagado',
-      status: 'Entregado',
-      total: total,
-      items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId || undefined, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity, saleType: i.saleType })),
-      source: 'pos',
-      discount: totalOrderDiscount,
-      discountLabel: totalOrderDiscountLabel,
-      was_limit_override: override,
-      override_reason: override ? 'Aprobado manualmente en caja' : undefined
+    // 1. REGISTRO ATÓMICO OFFLINE-FIRST (IndexedDB)
+    // Genera el sale_id canónico e inmutable (POS-CAJA01-...), persiste la venta,
+    // descuenta stock local y encola para Supabase.
+    const offlineItems: OfflineSaleItem[] = cartWithDiscounts.map(i => ({
+      productId: i.productId,
+      productCode: i.productCode || i.productId,
+      name: i.name,
+      price: i.price,
+      originalPrice: i.price,
+      quantity: i.quantity,
+      saleType: i.saleType || 'unit',
+      image: i.image,
+      discount: i.lineDiscount,
+      lineDiscount: i.lineDiscount,
+      total: (i.finalPrice || i.price) * i.quantity
+    }));
+
+    const localSale = await saleRepository.createSale({
+      employee_id: employeeProfile?.id,
+      employee_name: cashierName,
+      customer_id: validatedCustomer?.id,
+      customer_name: customerName,
+      customer_phone: customerPhone,
+      customer_dni: validatedCustomer?.dni,
+      payment_method: selectedPaymentMethod as 'cash' | 'card' | 'transfer' | 'cuenta_corriente',
+      items: offlineItems,
+      subtotal,
+      discount_amount: totalOrderDiscount,
+      discount_label: totalOrderDiscountLabel,
+      total,
+      is_offline: !isHealthy
     });
 
-    // Registramos el movimiento en la caja, incluso para cuenta corriente (para que figure en historial)
-    // El cálculo de stats (currentBox) ignora las ventas por cuenta corriente.
-    addCashMovement({
-      type: 'Ingreso',
-      description: `Venta Local (${getPaymentMethodDisplay(selectedPaymentMethod)}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
-      cashier: cashierName,
-      amount: total,
-      orderId: orderId
-    });
+    const orderId = localSale.sale_id;
+
+    // 2. Si hay conexión activa, disparar sincronización inmediata hacia Supabase
+    if (isHealthy) {
+      syncEngine.syncNow().catch(e => console.warn('Sync en segundo plano:', e));
+
+      // Sincronizar con el estado en memoria de AdminContext
+      try {
+        await addAdminOrder({
+          id: orderId,
+          date: dateStr,
+          timestamp: Date.now(),
+          customer: customerName,
+          phone: customerPhone,
+          dni: validatedCustomer ? validatedCustomer.dni : '',
+          address: 'Compra en local',
+          deliveryTime: 'Inmediato',
+          method: 'Caja Fija',
+          paymentMethod: selectedPaymentMethod,
+          paymentStatus: selectedPaymentMethod === 'cuenta_corriente' ? 'Pendiente' : 'Pagado',
+          status: 'Entregado',
+          total: total,
+          items: cartWithDiscounts.map(i => ({ id: i.productId, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId || undefined, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity, saleType: i.saleType })),
+          source: 'pos',
+          discount: totalOrderDiscount,
+          discountLabel: totalOrderDiscountLabel,
+          was_limit_override: override,
+          override_reason: override ? 'Aprobado manualmente en caja' : undefined
+        });
+
+        if (selectedPaymentMethod === 'cash') {
+          addCashMovement({
+            type: 'Ingreso',
+            description: `Venta Local (${getPaymentMethodDisplay(selectedPaymentMethod)}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
+            cashier: cashierName,
+            amount: total,
+            orderId: orderId
+          });
+        }
+      } catch (e) {
+        console.warn('Error sincronizando estado en memoria de AdminContext (venta segura en IndexedDB):', e);
+      }
+    } else {
+      // Si estamos offline, registrar también el movimiento localmente para balance de caja del día
+      if (selectedPaymentMethod === 'cash') {
+        addCashMovement({
+          type: 'Ingreso',
+          description: `Venta Local (${getPaymentMethodDisplay(selectedPaymentMethod)}) - ${cartWithDiscounts.length} ítems${validatedCustomer ? ` - ${validatedCustomer.name}` : ''}`,
+          cashier: cashierName,
+          amount: total,
+          orderId: orderId
+        });
+      }
+    }
 
     // Build ticket data for printing
     const ticketData: TicketData = {
@@ -867,7 +1089,7 @@ export const POS: React.FC = () => {
 
     try {
       const ticket = showWhatsAppTicketModal.ticket;
-      const storeName = ticketConfig.headerText || 'La Martina';
+      const storeName = ticketConfig.headerText || 'Martina Supermercado';
       const footerMsg = ticketConfig.footerMessage || '¡Gracias por su compra!';
       const message = generateTicketWhatsAppText(ticket, storeName, footerMsg);
 
@@ -952,6 +1174,9 @@ export const POS: React.FC = () => {
     window.addEventListener('keydown', handleSuccessKeyDown);
     return () => window.removeEventListener('keydown', handleSuccessKeyDown);
   }, [showSuccessModal]);
+
+  const hasPosOpenModal = showModal || showCloseConfirm || !!selectedMovement || !!showTicket || showCashOpenModal || showGenericModal || !!showLimitWarning || showPrePurchaseModal || !!showWhatsAppTicketModal;
+  useScrollLock(hasPosOpenModal);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 flex flex-col pb-20">
@@ -1175,7 +1400,7 @@ export const POS: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    <div className="w-36"><label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Cant.</label><div className="flex bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl overflow-hidden h-[60px]"><button type="button" onClick={() => { const n = Math.max(0.01, parseFloat((searchQty - (searchQty > 1 ? 1 : 0.1)).toFixed(2))); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">-</button><input type="text" inputMode="decimal" className="flex-1 w-full text-center font-bold text-xl bg-transparent outline-none" value={searchQtyStr} onChange={e => { const raw = e.target.value.replace(',', '.'); if (/^\d*\.?\d{0,2}$/.test(raw)) { setSearchQtyStr(raw); const n = parseFloat(raw); if (!isNaN(n) && n > 0) setSearchQty(n); } }} onBlur={() => { if (!searchQtyStr || isNaN(parseFloat(searchQtyStr))) { setSearchQtyStr('1'); setSearchQty(1); } }} /><button type="button" onClick={() => { const n = parseFloat((searchQty + 1).toFixed(2)); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">+</button></div></div>
+                    <div className="w-36"><label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Cant. (F8/*)</label><div className="flex bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl overflow-hidden h-[60px]"><button type="button" onClick={() => { const n = Math.max(0.01, parseFloat((searchQty - (searchQty > 1 ? 1 : 0.1)).toFixed(2))); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">-</button><input ref={qtyInputRef} type="text" inputMode="decimal" className="flex-1 w-full text-center font-bold text-xl bg-transparent outline-none" value={searchQtyStr} onChange={e => { const raw = e.target.value.replace(',', '.'); if (/^\d*\.?\d{0,2}$/.test(raw)) { setSearchQtyStr(raw); const n = parseFloat(raw); if (!isNaN(n) && n > 0) setSearchQty(n); } }} onBlur={() => { if (!searchQtyStr || isNaN(parseFloat(searchQtyStr))) { setSearchQtyStr('1'); setSearchQty(1); } }} /><button type="button" onClick={() => { const n = parseFloat((searchQty + 1).toFixed(2)); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">+</button></div></div>
                   </form>
                 </div>
                 <div className="flex-1 mt-2 border border-outline-variant/20 rounded-2xl overflow-hidden flex flex-col bg-white shadow-sm min-h-0 relative">
@@ -1273,7 +1498,99 @@ export const POS: React.FC = () => {
                     </table>
                   </div>
                 </div>
-                <div className="flex gap-4 mt-6 flex-shrink-0"><button onClick={() => { setDiscountInput(globalDiscount.toString()); setShowDiscountModal(true); }} className={`flex items-center gap-2 border border-outline-variant/20 px-6 py-3 rounded-xl font-bold text-sm transition-all ${globalDiscount > 0 ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-lowest'}`}><span className="material-symbols-outlined text-[18px]">percent</span> {globalDiscount > 0 ? `Descuento ${globalDiscount}%` : 'Aplicar Descuento'}</button><div className="flex-1"></div><p className="text-[10px] text-on-surface-variant font-bold uppercase self-center tracking-widest">Flechas ↑↓ para navegar • Del para borrar</p></div>
+                <div className="flex items-center gap-3 mt-6 flex-shrink-0 flex-wrap">
+                  <button onClick={() => { setDiscountInput(globalDiscount.toString()); setShowDiscountModal(true); }} className={`flex items-center gap-2 border border-outline-variant/20 px-4 py-2.5 rounded-xl font-bold text-xs transition-all shrink-0 ${globalDiscount > 0 ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-lowest'}`}><span className="material-symbols-outlined text-[16px]">percent</span> {globalDiscount > 0 ? `Descuento ${globalDiscount}% (F9)` : 'Aplicar Descuento (F9)'}</button>
+
+                  {/* F-Keys Shortcuts Bar */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => { inputRef.current?.focus(); inputRef.current?.select(); }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/15 text-[11px] font-semibold text-on-surface-variant hover:border-primary/40 hover:text-primary transition-all cursor-pointer shadow-2xs"
+                      title="Foco en buscador o escáner de productos"
+                    >
+                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-on-surface border border-outline-variant/25 rounded shadow-2xs">F1</kbd>
+                      <span>Buscar</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer shadow-2xs ${cart.length > 0 ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100' : 'bg-surface-container-lowest border-outline-variant/15 text-on-surface-variant opacity-60'}`}
+                      title="Abrir ventana de cobro"
+                    >
+                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-amber-900 border border-amber-300 rounded shadow-2xs">F2</kbd>
+                      <span>Cobrar</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { posCustomerDniRef.current?.focus(); posCustomerDniRef.current?.select(); }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/15 text-[11px] font-semibold text-on-surface-variant hover:border-primary/40 hover:text-primary transition-all cursor-pointer shadow-2xs"
+                      title="Foco en buscar cliente por DNI"
+                    >
+                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-on-surface border border-outline-variant/25 rounded shadow-2xs">F3</kbd>
+                      <span>Cliente</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (tabs.length < 4) {
+                          const newTab = createTab(tabs.length + 1);
+                          setTabs(prev => [...prev, newTab]);
+                          setActiveTabId(newTab.id);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/15 text-[11px] font-semibold text-on-surface-variant hover:border-primary/40 hover:text-primary transition-all cursor-pointer shadow-2xs"
+                      title="Crear nueva hoja de venta en espera"
+                    >
+                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-on-surface border border-outline-variant/25 rounded shadow-2xs">F5</kbd>
+                      <span>Nueva Hoja</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (tabs.length > 1) {
+                          const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+                          const nextIndex = (currentIndex + 1) % tabs.length;
+                          setActiveTabId(tabs[nextIndex].id);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/15 text-[11px] font-semibold text-on-surface-variant hover:border-primary/40 hover:text-primary transition-all cursor-pointer shadow-2xs"
+                      title="Alternar entre hojas de venta"
+                    >
+                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-on-surface border border-outline-variant/25 rounded shadow-2xs">F6</kbd>
+                      <span>Cambiar Hoja</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => { qtyInputRef.current?.focus(); qtyInputRef.current?.select(); }}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/15 text-[11px] font-semibold text-on-surface-variant hover:border-primary/40 hover:text-primary transition-all cursor-pointer shadow-2xs"
+                      title="Editar cantidad del producto"
+                    >
+                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-on-surface border border-outline-variant/25 rounded shadow-2xs">F8 / *</kbd>
+                      <span>Cant.</span>
+                    </button>
+
+                    {lastSaleTicket && (
+                      <button
+                        type="button"
+                        onClick={() => setShowTicket(lastSaleTicket)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-lowest border border-outline-variant/15 text-[11px] font-semibold text-on-surface-variant hover:border-primary/40 hover:text-primary transition-all cursor-pointer shadow-2xs"
+                        title="Reimprimir ticket de la última venta"
+                      >
+                        <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-on-surface border border-outline-variant/25 rounded shadow-2xs">Ctrl+P</kbd>
+                        <span>Reimprimir</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex-1"></div>
+                  <p className="text-[10px] text-on-surface-variant font-bold uppercase self-center tracking-widest shrink-0">↑↓ navegar • Del borrar</p>
+                </div>
               </div>{/* close tab content wrapper */}
             </div>
 
@@ -1323,8 +1640,9 @@ export const POS: React.FC = () => {
                   ) : (
                     <div className="flex gap-2">
                       <input
+                        ref={posCustomerDniRef}
                         type="text"
-                        placeholder="Buscar por DNI..."
+                        placeholder="Buscar por DNI... (F3)"
                         value={ccDni}
                         onChange={e => setCcDni(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleValidatePOSCustomer(); } }}
@@ -1400,17 +1718,25 @@ export const POS: React.FC = () => {
                       }
                     </div>
                     {selectedPaymentMethod === 'cuenta_corriente' && validatedCustomer && (
-                      <div className="mt-4 p-4 bg-green-50 rounded-xl border border-green-100 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="material-symbols-outlined text-green-600">check_circle</span>
-                          <div>
-                            <p className="text-xs font-bold text-green-800">{validatedCustomer.name}</p>
-                            <p className="text-[10px] text-green-600 font-medium tracking-tight">DNI: {validatedCustomer.dni} • Cuenta Corriente Habilitada</p>
+                      <div className="mt-4 space-y-2">
+                        {!isHealthy && (
+                          <div className="p-3.5 bg-amber-500/15 border border-amber-500/30 rounded-xl flex items-center gap-2.5 text-xs text-amber-800 dark:text-amber-300 font-semibold animate-pulse shadow-sm">
+                            <span className="material-symbols-outlined text-amber-600 text-lg shrink-0">warning</span>
+                            <span>Modo offline: el límite de crédito podría no estar actualizado.</span>
                           </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[10px] font-bold text-on-surface-variant uppercase">Deuda Actual</p>
-                          <p className="text-sm font-black text-primary">${formatCurrency(validatedCustomer.currentDebt)}</p>
+                        )}
+                        <div className="p-4 bg-green-50 rounded-xl border border-green-100 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className="material-symbols-outlined text-green-600">check_circle</span>
+                            <div>
+                              <p className="text-xs font-bold text-green-800">{validatedCustomer.name}</p>
+                              <p className="text-[10px] text-green-600 font-medium tracking-tight">DNI: {validatedCustomer.dni} • Cuenta Corriente Habilitada</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-bold text-on-surface-variant uppercase">Deuda Actual</p>
+                            <p className="text-sm font-black text-primary">${formatCurrency(validatedCustomer.currentDebt)}</p>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2082,7 +2408,7 @@ export const POS: React.FC = () => {
                   {/* Header Preview */}
                   <div className="text-center pb-3 border-b border-dashed border-outline-variant/30">
                     <p className="font-black text-sm text-[#2d2828] uppercase tracking-wide">
-                      {ticketConfig.headerText || 'La Martina'}
+                      {ticketConfig.headerText || 'Martina Supermercado'}
                     </p>
                     <p className="font-bold text-[#5d5454] text-[11px]">
                       Ticket: #{showWhatsAppTicketModal.ticket.ticketNumber}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PermissionGuard } from './auth/PermissionGuard';
 import { Product } from '../types/product.types';
+import { useScrollLock } from '../utils/useScrollLock';
 
 interface ScanResultPanelProps {
   open: boolean;
@@ -25,6 +26,7 @@ export const ScanResultPanel: React.FC<ScanResultPanelProps> = ({
   onCreateProduct,
   onScanAgain,
 }) => {
+  useScrollLock(open);
   const [stockInput, setStockInput] = useState<number>(0);
   const [isUpdatingStock, setIsUpdatingStock] = useState<boolean>(false);
   const [stockSuccess, setStockSuccess] = useState<boolean>(false);

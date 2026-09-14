@@ -4,6 +4,8 @@ import { useAdmin } from '../../context/AdminContext';
 import { products } from '../../data/mockData';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { AdminNotificationCenter } from '../../components/AdminNotificationCenter';
+import { ConnectionIndicator } from '../../components/ConnectionIndicator';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 import { PermissionKey } from '../../types/permissions.types';
 
@@ -32,12 +34,16 @@ const navItems: NavItem[] = [
 export const AdminLayout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { orders, lowStockCount, privacyMode, togglePrivacyMode, formatCurrency } = useAdmin();
+  const { orders, lowStockCount, privacyMode, togglePrivacyMode, formatCurrency, loadAdminData } = useAdmin();
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    loadAdminData();
+  }, [loadAdminData]);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
@@ -50,6 +56,7 @@ export const AdminLayout: React.FC = () => {
   const loading = useAuthStore((state) => state.loading);
   const signOut = useAuthStore((state) => state.signOut);
   const hasPermission = useAuthStore((state) => state.hasPermission);
+  const permissions = useAuthStore((state) => state.permissions);
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
 
   // Guard: while auth is not ready, don't filter nav items
@@ -58,6 +65,9 @@ export const AdminLayout: React.FC = () => {
 
   const visibleNavItems = navItems.filter(item => {
     if (!authReady) return true; // show all while loading, skeleton will cover it
+    // Failsafe: if user is authenticated in Supabase but employeeProfile or permissions are momentarily unresolved,
+    // show nav items as safe fallback rather than rendering an empty blank sidebar!
+    if (session?.user && (!employeeProfile || permissions.length === 0)) return true;
     if (!item.requiredPermission) return true;
     if (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner') return true;
     if (employeeProfile?.role === 'employee' && item.requiredPermission.startsWith('customers.')) return false;
@@ -71,6 +81,16 @@ export const AdminLayout: React.FC = () => {
     return location.pathname.startsWith(item.path);
   });
   const pageTitle = activeNavItem ? activeNavItem.label : 'Admin';
+
+  const roleLabel = employeeProfile?.role === 'super_admin' ? 'Super Admin' :
+    employeeProfile?.role === 'owner' ? 'Dueño' :
+    employeeProfile?.role === 'admin' ? 'Admin' :
+    employeeProfile?.role === 'employee' ? 'Empleado' : 'Dueño';
+
+  const userDisplayName = employeeProfile?.name ||
+    session?.user?.user_metadata?.name ||
+    session?.user?.user_metadata?.full_name ||
+    'Lautaro';
 
   // Bottom nav: show first 4 accessible items (most important)
   const bottomNavItems = visibleNavItems.slice(0, 4);
@@ -101,14 +121,7 @@ export const AdminLayout: React.FC = () => {
   }, [location.pathname]);
 
   // Prevent body scroll when mobile menu open
-  useEffect(() => {
-    if (isMobileMenuOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => { document.body.style.overflow = ''; };
-  }, [isMobileMenuOpen]);
+  useScrollLock(isMobileMenuOpen);
 
   const q = searchQuery.toLowerCase().trim();
 
@@ -220,7 +233,7 @@ export const AdminLayout: React.FC = () => {
         <div className="p-6 border-b border-outline-variant/10">
           <div className="flex items-center justify-between">
             <Link to="/" className="flex flex-col" onClick={() => setIsMobileMenuOpen(false)}>
-              <span className="text-[20px] font-bold text-primary leading-tight">La Martina</span>
+              <span className="text-[20px] font-bold text-primary leading-tight">Martina Supermercado</span>
               <span className="text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-[0.2em]">Admin Suite</span>
             </Link>
             <button
@@ -243,6 +256,10 @@ export const AdminLayout: React.FC = () => {
                     employeeProfile?.role === 'admin' ? 'Administrador' : 'Empleado'}
               </p>
             </div>
+          </div>
+          {/* Estado de caja / conexión accesible desde el menú */}
+          <div className="mt-3 flex justify-start">
+            <ConnectionIndicator />
           </div>
         </div>
 
@@ -298,23 +315,41 @@ export const AdminLayout: React.FC = () => {
       <main className="flex-1 lg:ml-[180px] min-w-0 overflow-x-hidden flex flex-col">
 
         {/* ── MOBILE TOP HEADER (hidden on desktop) ── */}
-        <header className="lg:hidden sticky top-0 z-20 bg-white border-b border-outline-variant/10 flex items-center justify-between px-4 h-14 shrink-0">
-          <button
-            onClick={() => setIsMobileMenuOpen(true)}
-            className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-surface-container-low transition-all"
-          >
-            <span className="material-symbols-outlined text-[24px]" aria-hidden="true" translate="no">menu</span>
-          </button>
-          <span className="text-base font-black text-[#e3001b] tracking-wider">La Martina</span>
-          <div className="flex items-center gap-2">
-            <button className="w-10 h-10 rounded-xl flex items-center justify-center relative hover:bg-surface-container-low transition-all">
-              <span className="material-symbols-outlined text-[22px]" aria-hidden="true" translate="no">notifications</span>
-              {newOrdersCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-error rounded-full text-white text-[9px] font-bold flex items-center justify-center">
-                  {newOrdersCount}
-                </span>
-              )}
+        <header className="lg:hidden sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-outline-variant/10 flex items-center justify-between px-3 sm:px-4 h-14 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-surface-container-low transition-all text-on-surface shrink-0 cursor-pointer"
+              aria-label="Abrir menú"
+            >
+              <span className="material-symbols-outlined text-[24px]" aria-hidden="true" translate="no">menu</span>
             </button>
+            <span className="text-base font-black text-[#e3001b] tracking-wider shrink-0">Martina</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* User display badge */}
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 bg-surface-container-low hover:bg-surface-container rounded-full border border-outline-variant/15 text-xs transition-colors shadow-2xs text-left cursor-pointer"
+              title="Perfil de usuario"
+            >
+              <div className="w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center font-bold text-[11px] shrink-0">
+                {userDisplayName.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex items-center gap-1 min-w-0">
+                <span className="font-bold text-on-surface text-xs truncate max-w-[80px] sm:max-w-[120px]">
+                  {userDisplayName}
+                </span>
+                <span className="text-[10px] text-on-surface-variant font-medium lowercase shrink-0">
+                  {roleLabel.toLowerCase()}
+                </span>
+              </div>
+            </button>
+
+            {/* Notifications */}
+            <AdminNotificationCenter compact={true} />
           </div>
         </header>
 
@@ -329,72 +364,9 @@ export const AdminLayout: React.FC = () => {
           )}
 
           <div className="flex items-center gap-4 min-w-0 shrink">
-            {/* Search */}
-            {location.pathname !== '/admin/expenses' && (
-              <div className="relative" ref={searchRef}>
-                <input
-                  type="text"
-                  placeholder="Buscar pedidos, productos..."
-                  value={searchQuery}
-                  onChange={(e) => { setSearchQuery(e.target.value); setIsSearchOpen(true); }}
-                  onFocus={() => setIsSearchOpen(true)}
-                  className="bg-surface-container-low border-none rounded-2xl px-6 py-3 pl-12 w-[220px] lg:w-[280px] text-sm outline-none focus:ring-2 ring-primary/20 transition-all"
-                />
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" aria-hidden="true" translate="no">search</span>
 
-                {isSearchOpen && q.length >= 2 && (
-                  <div className="absolute top-full mt-2 left-0 w-full bg-white rounded-2xl shadow-2xl border border-outline-variant/10 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
-                    {hasResults ? (
-                      <>
-                        {matchedProducts.length > 0 && (
-                          <div>
-                            <p className="px-4 pt-4 pb-2 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Productos</p>
-                            {matchedProducts.map(p => (
-                              <button
-                                key={p.id}
-                                onClick={() => { navigate('/admin/inventory'); setSearchQuery(''); setIsSearchOpen(false); }}
-                                className="flex items-center gap-3 w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors text-left"
-                              >
-                                <img src={p.image} alt="" className="w-8 h-8 object-contain rounded-lg bg-surface-container-low p-0.5" />
-                                <div>
-                                  <p className="text-sm font-bold line-clamp-1">{p.name}</p>
-                                  <p className="text-[11px] text-on-surface-variant">${formatCurrency(p.price)}</p>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {matchedOrders.length > 0 && (
-                          <div className="border-t border-outline-variant/10">
-                            <p className="px-4 pt-4 pb-2 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Pedidos</p>
-                            {matchedOrders.map(o => (
-                              <button
-                                key={o.id}
-                                onClick={() => { navigate('/admin/orders'); setSearchQuery(''); setIsSearchOpen(false); }}
-                                className="flex items-center justify-between w-full px-4 py-3 hover:bg-surface-container-lowest transition-colors"
-                              >
-                                <div className="flex items-center gap-3">
-                                  <span className="material-symbols-outlined text-on-surface-variant text-[20px]" aria-hidden="true" translate="no">receipt_long</span>
-                                  <div className="text-left">
-                                    <p className="text-sm font-bold">#{o.id}</p>
-                                    <p className="text-[11px] text-on-surface-variant">{o.customer}</p>
-                                  </div>
-                                </div>
-                                <span className="text-sm font-bold text-primary">${formatCurrency(o.total)}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="p-6 text-center">
-                        <p className="text-sm text-on-surface-variant">No se encontraron resultados para "{q}"</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Connection & Caja Indicator */}
+            <ConnectionIndicator />
 
             {/* Notifications */}
             <AdminNotificationCenter />

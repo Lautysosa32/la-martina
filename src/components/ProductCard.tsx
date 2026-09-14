@@ -16,7 +16,7 @@ export const ProductCard: React.FC<{ product: Product, showQuantity?: boolean }>
   const cartItem = items.find(item => item.id === product.id);
   const quantity = cartItem ? cartItem.quantity : 0;
   const isFav = isFavorite(product.id);
-  const stock = getStock(product.id);
+  const stock = getStock(product.id, product.stock);
   const isOutOfStock = stock <= 0;
   const canAddMore = quantity < stock;
 

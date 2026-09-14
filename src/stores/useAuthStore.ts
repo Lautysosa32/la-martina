@@ -102,14 +102,39 @@ const loadGuestProfile = (): GuestProfile => {
   return { name: '', phone: '', address: '', orders: [] };
 };
 
+// Initialize cached employee profile and permissions from localStorage
+const loadCachedEmployeeProfile = (): Employee | null => {
+  try {
+    const saved = localStorage.getItem('la-martina-employee-profile');
+    if (saved) return JSON.parse(saved);
+  } catch (_) {}
+  return null;
+};
+
+const loadCachedPermissions = (): PermissionKey[] => {
+  try {
+    const saved = localStorage.getItem('la-martina-permissions');
+    if (saved) return JSON.parse(saved);
+  } catch (_) {}
+  return [];
+};
+
+const loadCachedCustomerProfile = (): CustomerProfile | null => {
+  try {
+    const saved = localStorage.getItem('la-martina-customer-profile');
+    if (saved) return JSON.parse(saved);
+  } catch (_) {}
+  return null;
+};
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   session: null,
   loading: true,
   initialized: false,
-  employeeProfile: null,
-  customerProfile: null,
-  permissions: [],
+  employeeProfile: loadCachedEmployeeProfile(),
+  customerProfile: loadCachedCustomerProfile(),
+  permissions: loadCachedPermissions(),
 
   hasPermission: (permission) => {
     return get().permissions.includes(permission);
@@ -150,12 +175,46 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       let permissions: PermissionKey[] = [];
       
       if (session?.user) {
-        employeeProfile = await employeesService.getCurrentEmployeeProfile(session.user.id);
-        if (employeeProfile) {
-          permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+        const isCustomerEmail = session.user.email?.endsWith('@lamartina.com') && /^\d+@lamartina\.com$/.test(session.user.email);
+        const fallbackPhone = session.user.phone || session.user.user_metadata?.phone || (isCustomerEmail ? session.user.email?.split('@')[0] : undefined);
+
+        if (isCustomerEmail) {
+          const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
+          if (cust) {
+            customerProfile = cust;
+            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+          } else {
+            customerProfile = loadCachedCustomerProfile();
+          }
+          employeeProfile = null;
+          permissions = [];
         } else {
-          // If not employee, it's a storefront customer
-          customerProfile = await customersService.getProfileByUserId(session.user.id);
+          const fetchedProfile = await employeesService.getCurrentEmployeeProfile(session.user.id);
+          if (fetchedProfile) {
+            employeeProfile = fetchedProfile;
+            permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+            try {
+              localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
+              localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
+            } catch (_) {}
+            customerProfile = null;
+          } else {
+            const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
+            if (cust) {
+              customerProfile = cust;
+              employeeProfile = null;
+              permissions = [];
+              try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+            } else {
+              const cachedEmp = loadCachedEmployeeProfile();
+              if (cachedEmp && cachedEmp.user_id === session.user.id) {
+                employeeProfile = cachedEmp;
+                permissions = loadCachedPermissions();
+              } else {
+                customerProfile = loadCachedCustomerProfile();
+              }
+            }
+          }
         }
       }
 
@@ -187,15 +246,48 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       if (session?.user) {
-        // Resolve role
-        if (!employeeProfile || employeeProfile.user_id !== session.user.id) {
-          employeeProfile = await employeesService.getCurrentEmployeeProfile(session.user.id);
-          if (employeeProfile) {
-            permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
-            customerProfile = null;
+        const isCustomerEmail = session.user.email?.endsWith('@lamartina.com') && /^\d+@lamartina\.com$/.test(session.user.email);
+        const fallbackPhone = session.user.phone || session.user.user_metadata?.phone || (isCustomerEmail ? session.user.email?.split('@')[0] : undefined);
+
+        if (isCustomerEmail) {
+          const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
+          if (cust) {
+            customerProfile = cust;
+            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
           } else {
-            permissions = [];
-            customerProfile = await customersService.getProfileByUserId(session.user.id);
+            customerProfile = loadCachedCustomerProfile();
+          }
+          employeeProfile = null;
+          permissions = [];
+        } else {
+          if (!employeeProfile || employeeProfile.user_id !== session.user.id) {
+            const fetchedProfile = await employeesService.getCurrentEmployeeProfile(session.user.id);
+            if (fetchedProfile) {
+              employeeProfile = fetchedProfile;
+              permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+              customerProfile = null;
+              try {
+                localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
+                localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
+              } catch (_) {}
+            } else {
+              const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
+              if (cust) {
+                customerProfile = cust;
+                employeeProfile = null;
+                permissions = [];
+                try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+              } else {
+                const cached = loadCachedEmployeeProfile();
+                if (cached && cached.user_id === session.user.id) {
+                  employeeProfile = cached;
+                  permissions = loadCachedPermissions();
+                  customerProfile = null;
+                } else {
+                  customerProfile = loadCachedCustomerProfile();
+                }
+              }
+            }
           }
         }
       } else {
@@ -234,6 +326,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       let permissions: PermissionKey[] = [];
       if (employeeProfile) {
         permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+        try {
+          localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
+          localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
+        } catch (_) {}
       }
       set({ employeeProfile, permissions, loading: false });
     }
@@ -243,6 +339,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     console.log("⏳ Cerrando sesión...");
+    try {
+      localStorage.removeItem('la-martina-employee-profile');
+      localStorage.removeItem('la-martina-permissions');
+    } catch (_) {}
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error("❌ Error al cerrar sesión:", error.message);
@@ -355,8 +455,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { cleanPhone } = formatArgentinePhone(phone);
     const syntheticEmail = `${cleanPhone}@lamartina.com`;
 
-    console.log(`🔑 Intentando login -> Email: "${syntheticEmail}"`);
-
     const { data, error } = await supabase.auth.signInWithPassword({
       email: syntheticEmail,
       password
@@ -369,12 +467,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     if (data.user && data.session) {
-      // Buscar perfil usando supabase directamente (no axios) para evitar problemas de token
-      const { data: profileData } = await supabase
-        .from('customer_profiles')
-        .select('*')
-        .eq('user_id', data.user.id)
-        .maybeSingle();
+      try {
+        localStorage.removeItem('la-martina-employee-profile');
+        localStorage.removeItem('la-martina-permissions');
+      } catch (_) {}
+
+      let profileData = await customersService.getProfileByUserId(data.user.id, phone);
+
+      if (profileData) {
+        try {
+          localStorage.setItem('la-martina-customer-profile', JSON.stringify(profileData));
+        } catch (_) {}
+      }
 
       console.log("✅ Login exitoso. Perfil encontrado:", profileData);
 
@@ -395,6 +499,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOutCustomer: async () => {
     console.log("⏳ Cerrando sesión de cliente...");
+    try {
+      localStorage.removeItem('la-martina-customer-profile');
+      localStorage.removeItem('la-martina-user');
+    } catch (_) {}
     set({ loading: true });
     await supabase.auth.signOut();
     set({ 
@@ -402,6 +510,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       session: null, 
       customerProfile: null, 
       employeeProfile: null, 
+      guestProfile: { name: '', phone: '', address: '', orders: [] },
       permissions: [],
       loading: false 
     });
@@ -495,10 +604,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   }
 }));
 
-// Export a proxy hook to maintain compatibility with storefront components
 export const useAuth = () => {
   const store = useAuthStore();
-  const isCustomer = !!store.session && !store.employeeProfile;
+  const isCustomer = (!!store.customerProfile || !!store.session) && !store.employeeProfile;
   const isEmployee = !!store.session && !!store.employeeProfile;
 
   const [dbOrders, setDbOrders] = React.useState<Order[]>([]);

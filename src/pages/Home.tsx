@@ -1,45 +1,35 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAdmin } from '../context/AdminContext';
+import { useCart } from '../context/CartContext';
+import { useAuth } from '../stores/useAuthStore';
 import { ProductCarousel } from '../components/ProductCarousel';
 import { ProductCard } from '../components/ProductCard';
 import { HeroCarousel } from '../components/HeroCarousel';
+import { productsService } from '../services/products.service';
+import { Product } from '../types/product.types';
 
 export const Home: React.FC = () => {
-  const { adminProducts: products, applyOffersToCartItem, getTopSellingProducts, getStock } = useAdmin();
+  const { applyOffersToCartItem, getStock, activeOffers } = useAdmin();
+  const { currentCustomer } = useCart();
+  const { isAuthenticated, user, customerProfile } = useAuth();
+  const isUserLoggedIn = isAuthenticated || !!currentCustomer || !!customerProfile || (!!user?.phone && user.phone.length > 5);
 
-  const productsWithOffers = React.useMemo(() => {
-    return products
-      .filter(p => getStock(p.id) > 0)
-      .map(p => {
-        // Simulate adding 1 item to check for discounts
-        const calc = applyOffersToCartItem({ productId: p.id, categoryId: p.categoryId, price: p.price, quantity: 1 });
-        if (calc.discountAmount > 0) {
-          // Return a mapped product that ProductCard will render as discounted
-          return { ...p, originalPrice: p.price, price: calc.finalPrice, offerLabel: calc.offerLabel };
-        }
-        return p.originalPrice ? p : null; // Fallback to hardcoded mock data if present
-      }).filter(Boolean) as any[];
-  }, [products, applyOffersToCartItem, getStock]);
-
-  // Detectamos el ancho de pantalla para saber cuántos productos requerimos para rellenar exactamente 15 filas:
-  // Celular (<768px): 2 cols * 15 filas = 30 productos
-  // Tablet (768px - 1023px): 3 cols * 15 filas = 45 productos
-  // Computadora (>=1024px): 4 cols * 15 filas = 60 productos
-  // Pantallas XL (>=1600px): 5 cols * 15 filas = 75 productos
-  const [targetCount, setTargetCount] = React.useState(60);
+  // Cantidad de productos requeridos para rellenar exactamente 10 filas:
+  // Celular (<768px): 2 cols * 10 filas = 20 productos
+  // Tablet (768px - 1023px): 3 cols * 10 filas = 30 productos
+  // Computadora (>=1024px): 4 cols * 10 filas = 40 productos
+  const [targetCount, setTargetCount] = React.useState(40);
 
   React.useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;
-      if (width >= 1600) {
-        setTargetCount(75);  // 5 columnas * 15 filas
-      } else if (width >= 1024) {
-        setTargetCount(60);  // 4 columnas * 15 filas
+      if (width >= 1024) {
+        setTargetCount(40);
       } else if (width >= 768) {
-        setTargetCount(45);  // 3 columnas * 15 filas
+        setTargetCount(30);
       } else {
-        setTargetCount(30);  // 2 columnas * 15 filas
+        setTargetCount(20);
       }
     };
     handleResize();
@@ -47,38 +37,113 @@ export const Home: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Vinculado totalmente con el backend/analíticas.
-  // Obtiene los más vendidos y autocompleta el resto aleatoriamente de los demás productos del catálogo (excluyendo sin stock).
+  // Estados locales para productos de la Home (Ahorro crítico de Egress)
+  const [rawOffers, setRawOffers] = React.useState<Product[]>([]);
+  const [rawFeatured, setRawFeatured] = React.useState<Product[]>([]);
+  const [loadingFeatured, setLoadingFeatured] = React.useState(true);
+
+  // 1. Cargar ofertas según promociones activas y productos con descuento
+  React.useEffect(() => {
+    let isMounted = true;
+    productsService.getOffersProducts(25, activeOffers).then(res => {
+      if (isMounted) setRawOffers(res);
+    }).catch(console.error);
+
+    return () => { isMounted = false; };
+  }, [activeOffers]);
+
+  // 2. Cargar destacados según targetCount (20 celular / 40 computadora = 10 filas)
+  React.useEffect(() => {
+    let isMounted = true;
+    setLoadingFeatured(true);
+    productsService.getFeaturedProducts(targetCount).then(res => {
+      if (isMounted) {
+        setRawFeatured(res);
+        setLoadingFeatured(false);
+      }
+    }).catch(err => {
+      console.error(err);
+      if (isMounted) setLoadingFeatured(false);
+    });
+
+    return () => { isMounted = false; };
+  }, [targetCount]);
+
+  // Aplicar lógica de ofertas personalizadas: solo incluimos productos con beneficio o descuento real
+  const productsWithOffers = React.useMemo(() => {
+    const list: any[] = [];
+
+    rawOffers
+      .filter(p => {
+        if (p.isPaused) return false;
+        const availableStock = Math.max(Number(p.stock) || 0, getStock(p.id, p.stock));
+        return availableStock > 0;
+      })
+      .forEach(p => {
+        const basePrice = (p.originalPrice && p.originalPrice > p.price) ? p.originalPrice : p.price;
+        const calc = applyOffersToCartItem(
+          { productId: p.id, categoryId: p.categoryId, price: basePrice, quantity: 1 },
+          currentCustomer,
+          { forDisplay: true }
+        );
+
+        const hasCalcDiscount = calc.discountAmount > 0;
+        const hasOriginalPrice = Boolean(p.originalPrice && p.originalPrice > p.price);
+        const hasDiscountField = p.discount !== null && p.discount !== undefined && Number(p.discount) > 0;
+        const hasOfferBadge = Boolean(p.badge && /(oferta|3x2|promo|descuento)/i.test(p.badge));
+
+        if (hasCalcDiscount) {
+          const discountPercentStr = basePrice > 0
+            ? `-${Math.round((calc.discountAmount / basePrice) * 100)}%`
+            : undefined;
+          list.push({
+            ...p,
+            originalPrice: basePrice,
+            price: calc.finalPrice,
+            discount: discountPercentStr || p.discount || `-$${calc.discountAmount.toLocaleString('es-AR')}`,
+            badge: calc.offerLabel || p.badge || 'Oferta',
+            offerLabel: calc.offerLabel
+          });
+        } else if (hasOriginalPrice || hasDiscountField || hasOfferBadge) {
+          list.push(p);
+        }
+      });
+
+    return list;
+  }, [rawOffers, applyOffersToCartItem, getStock, currentCustomer]);
+
+  // Aplicar ofertas a destacados (para display a todos los visitantes)
   const featuredProducts = React.useMemo(() => {
-    const inStockProducts = products.filter(p => getStock(p.id) > 0);
-    const top = getTopSellingProducts(30)
-      .map(item => item.product)
-      .filter(p => getStock(p.id) > 0);
-
-    // Si ya cubrimos o superamos el target count, devolvemos los más vendidos recortados
-    if (top.length >= targetCount) {
-      return top.slice(0, targetCount);
-    }
-
-    // Set de IDs existentes para evitar duplicados
-    const existingIds = new Set(top.map(p => p.id));
-    const remainingCount = targetCount - top.length;
-
-    // Filtrar los productos del catálogo que no estén ya en la lista de más vendidos y que tengan stock disponible
-    const availablePool = inStockProducts.filter(p => !existingIds.has(p.id));
-
-    // Si no hay suficientes productos en el pool, simplemente tomamos lo que hay
-    if (availablePool.length <= remainingCount) {
-      return [...top, ...availablePool];
-    }
-
-    // Seleccionar aleatoriamente
-    const shuffled = [...availablePool].sort(() => 0.5 - Math.random());
-    const randomPick = shuffled.slice(0, remainingCount);
-
-    return [...top, ...randomPick];
-  }, [products, getTopSellingProducts, targetCount, getStock]);
-
+    return rawFeatured
+      .filter(p => {
+        if (p.isPaused) return false;
+        const availableStock = Math.max(Number(p.stock) || 0, getStock(p.id, p.stock));
+        return availableStock > 0;
+      })
+      .slice(0, targetCount)
+      .map(p => {
+        const basePrice = (p.originalPrice && p.originalPrice > p.price) ? p.originalPrice : p.price;
+        const calc = applyOffersToCartItem(
+          { productId: p.id, categoryId: p.categoryId, price: basePrice, quantity: 1 },
+          currentCustomer,
+          { forDisplay: true }
+        );
+        if (calc.discountAmount > 0) {
+          const discountPercentStr = basePrice > 0
+            ? `-${Math.round((calc.discountAmount / basePrice) * 100)}%`
+            : undefined;
+          return {
+            ...p,
+            originalPrice: basePrice,
+            price: calc.finalPrice,
+            discount: discountPercentStr || p.discount || `-$${calc.discountAmount.toLocaleString('es-AR')}`,
+            badge: calc.offerLabel || p.badge || 'Oferta',
+            offerLabel: calc.offerLabel
+          };
+        }
+        return p;
+      });
+  }, [rawFeatured, targetCount, applyOffersToCartItem, getStock, currentCustomer]);
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6 animate-in fade-in duration-500">
@@ -148,24 +213,58 @@ export const Home: React.FC = () => {
         </div>
       </section>
 
-      {/* Ofertas Relámpago Carousel */}
+      {/* Ofertas Relámpago Carousel (Mostrado a todos los visitantes) */}
       {productsWithOffers.length > 0 ? (
         <ProductCarousel
           title="Ofertas Relámpago"
-          products={productsWithOffers.slice(0, 16)}
+          badgeText="Beneficio Exclusivo Registrados"
+          subtitle={
+            isAuthenticated
+              ? (currentCustomer?.name
+                  ? `¡Hola ${currentCustomer.name.split(' ')[0]}! Beneficios exclusivos aplicados a tu cuenta.`
+                  : 'Beneficios exclusivos aplicados a tu cuenta de cliente registrado.')
+              : 'Registrate o iniciá sesión gratis para aplicar estos descuentos en tu compra'
+          }
+          products={productsWithOffers.slice(0, 25)}
         />
       ) : (
         <section className="mt-8">
-          <h2 className="font-headline-lg text-headline-lg text-[22px] sm:text-[25px] text-on-background font-bold mb-4">Ofertas Relámpago</h2>
-          <div className="bg-white rounded-2xl p-8 text-center border border-outline-variant/15 shadow-xs">
-            <span className="material-symbols-outlined text-4xl text-on-surface-variant/30 mb-2 block" aria-hidden="true" translate="no">local_offer</span>
-            <p className="text-on-surface-variant font-bold">No hay ofertas activas en este momento</p>
-            <p className="text-on-surface-variant/60 text-xs mt-1">¡Volvé pronto para ver nuestras promociones especiales!</p>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-headline-lg text-headline-lg text-[22px] sm:text-[25px] text-on-background font-bold flex items-center gap-2">
+              <span>Ofertas Relámpago</span>
+            </h2>
+            <span className="bg-primary/10 text-primary text-[11px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-primary/20">
+              Beneficio Martina Club
+            </span>
+          </div>
+          <div className="bg-white rounded-2xl p-6 sm:p-8 text-center border border-outline-variant/15 shadow-xs">
+            <div className="w-12 h-12 bg-primary/10 rounded-2xl text-primary flex items-center justify-center mx-auto mb-3">
+              <span className="material-symbols-outlined text-[26px]" aria-hidden="true" translate="no">local_offer</span>
+            </div>
+            <p className="text-on-surface font-bold text-sm sm:text-base">
+              Pronto sumaremos nuevas Ofertas Relámpago
+            </p>
+            <p className="text-on-surface-variant text-xs mt-1.5 max-w-md mx-auto leading-relaxed">
+              {isAuthenticated
+                ? 'Estamos preparando nuevas promociones especiales para miembros de Martina Club. ¡Volvé a consultar pronto!'
+                : 'Creá tu cuenta gratis para ser el primero en aprovechar los descuentos exclusivos cuando estén activos.'}
+            </p>
+            {!isAuthenticated && (
+              <div className="mt-4 flex items-center justify-center">
+                <Link
+                  to="/profile"
+                  className="px-5 py-2.5 bg-primary text-white text-xs font-bold rounded-xl shadow-md shadow-primary/20 hover:bg-primary/90 transition-all flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">login</span>
+                  <span>Registrarme / Iniciar Sesión</span>
+                </Link>
+              </div>
+            )}
           </div>
         </section>
       )}
 
-      {/* Productos Destacados en Grid de Productos */}
+      {/* Productos Destacados en Grid (20 en móvil / 40 en desktop = 10 filas) */}
       <section className="mt-6 mb-8">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -176,11 +275,36 @@ export const Home: React.FC = () => {
           </div>
         </div>
 
-        <div className="product-grid">
-          {featuredProducts.map(product => (
-            <ProductCard key={product.id} product={product} />
-          ))}
-        </div>
+        {loadingFeatured ? (
+          <div className="product-grid">
+            {Array.from({ length: Math.min(targetCount, 8) }).map((_, i) => (
+              <div key={i} className="bg-white rounded-xl p-3 border border-outline-variant/10 animate-pulse flex flex-col h-72">
+                <div className="w-full aspect-square bg-surface-container-low rounded-lg mb-3"></div>
+                <div className="h-3 bg-surface-container rounded w-1/3 mb-2"></div>
+                <div className="h-4 bg-surface-container rounded w-3/4 mb-4"></div>
+                <div className="h-6 bg-surface-container rounded w-1/2 mt-auto"></div>
+              </div>
+            ))}
+          </div>
+        ) : featuredProducts.length > 0 ? (
+          <div className="product-grid">
+            {featuredProducts.map(product => (
+              <ProductCard key={product.id} product={product as any} />
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl p-8 text-center border border-outline-variant/15 shadow-xs">
+            <div className="w-12 h-12 bg-primary/10 rounded-2xl text-primary flex items-center justify-center mx-auto mb-3">
+              <span className="material-symbols-outlined text-[26px]" aria-hidden="true" translate="no">inventory_2</span>
+            </div>
+            <p className="text-on-surface font-bold text-sm sm:text-base">
+              No hay productos destacados activos en este momento
+            </p>
+            <p className="text-on-surface-variant text-xs mt-1.5 max-w-md mx-auto leading-relaxed">
+              Los productos se mostrarán aquí en cuanto estén habilitados y cuenten con stock disponible.
+            </p>
+          </div>
+        )}
       </section>
 
     </div>

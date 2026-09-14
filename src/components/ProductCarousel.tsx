@@ -4,6 +4,8 @@ import { ProductCard } from './ProductCard';
 
 interface ProductCarouselProps {
   title: string;
+  subtitle?: string;
+  badgeText?: string;
   products: Product[];
 }
 
@@ -52,7 +54,7 @@ function useGridCols(): number {
   return cols;
 }
 
-export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, products }) => {
+export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, subtitle, badgeText, products }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const itemsPerPage = useItemsPerPage();
@@ -112,10 +114,25 @@ export const ProductCarousel: React.FC<ProductCarouselProps> = ({ title, product
   return (
     <section className="mt-10 relative">
       {/* Header with Title and Desktop Arrows */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-headline-lg text-headline-lg text-[22px] sm:text-[25px] text-on-background font-bold flex items-center gap-2">
-          <span>{title}</span>
-        </h2>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between mb-4 gap-2">
+        <div>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h2 className="font-headline-lg text-headline-lg text-[22px] sm:text-[25px] text-on-background font-bold flex items-center gap-2">
+              <span>{title}</span>
+            </h2>
+            {badgeText && (
+              <span className="bg-primary/10 text-primary text-[11px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-primary/20">
+                {badgeText}
+              </span>
+            )}
+          </div>
+          {subtitle && (
+            <p className="text-xs text-on-surface-variant font-medium mt-1 flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[15px] text-primary" aria-hidden="true" translate="no">verified_user</span>
+              <span>{subtitle}</span>
+            </p>
+          )}
+        </div>
 
         {/* Desktop Header Navigation Controls */}
         {totalPages > 1 && (

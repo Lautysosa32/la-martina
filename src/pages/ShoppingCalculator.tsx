@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import { useShoppingCalculatorStore } from '../stores/useShoppingCalculatorStore';
 import { useAdmin } from '../context/AdminContext';
 import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
+import { useScrollLock } from '../utils/useScrollLock';
 
 export const ShoppingCalculator: React.FC = () => {
   const { formatCurrency } = useAdmin();
-  
+
   // Zustand Store Integration
   const {
     items,
@@ -32,9 +33,12 @@ export const ShoppingCalculator: React.FC = () => {
   const [showManualForm, setShowManualForm] = useState(false);
   const [manualName, setManualName] = useState('');
   const [manualPrice, setManualPrice] = useState('');
-  
+
   // User info modal to prompt name/phone before finalize
   const [showUserInfoForm, setShowUserInfoForm] = useState(false);
+
+  // Bloquear scroll de fondo cuando haya modales abiertos
+  useScrollLock(showManualForm || showUserInfoForm);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
 
@@ -59,7 +63,7 @@ export const ShoppingCalculator: React.FC = () => {
   const handleFinalize = async (e: React.FormEvent) => {
     e.preventDefault();
     setShowUserInfoForm(false);
-    
+
     const success = await finalizeCalculator(customerName.trim(), customerPhone.trim());
     if (success) {
       setCustomerName('');
@@ -81,7 +85,7 @@ export const ShoppingCalculator: React.FC = () => {
 
   return (
     <div className="w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-4 flex flex-col min-h-[calc(100vh-140px)]">
-      
+
       {/* ────────────────────────────────────────────────────────
           ESTADO 1: PRE-COMPRA GENERADA CON ÉXITO
           ──────────────────────────────────────────────────────── */}
@@ -101,7 +105,7 @@ export const ShoppingCalculator: React.FC = () => {
           {/* CODE CARD */}
           <div className="w-full bg-surface-container-lowest border-2 border-primary/20 rounded-[2rem] p-6.5 shadow-xl relative overflow-hidden mb-8 max-w-md">
             <div className="absolute top-0 right-0 left-0 h-1.5 bg-gradient-to-r from-primary/80 to-primary"></div>
-            
+
             <span className="text-[10px] font-extrabold text-on-surface-variant uppercase tracking-wider block mb-1">
               CÓDIGO DE PRE-COMPRA
             </span>
@@ -111,9 +115,8 @@ export const ShoppingCalculator: React.FC = () => {
               </span>
               <button
                 onClick={() => handleCopyCode(generatedSession.session.code)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
-                  copiedCode ? 'bg-green-100 text-green-600' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
-                }`}
+                className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${copiedCode ? 'bg-green-100 text-green-600' : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
+                  }`}
                 title="Copiar código al portapapeles"
               >
                 <span className="material-symbols-outlined text-[18px]">
@@ -121,7 +124,7 @@ export const ShoppingCalculator: React.FC = () => {
                 </span>
               </button>
             </div>
-            
+
             <div className="border-t border-outline-variant/15 mt-3.5 pt-3.5 flex justify-between items-center text-xs">
               <div className="text-left">
                 <span className="text-[9px] font-extrabold text-on-surface-variant/60 uppercase block">Subtotal Estimado</span>
@@ -180,7 +183,7 @@ export const ShoppingCalculator: React.FC = () => {
               <Link to="/" className="w-10 h-10 rounded-full flex items-center justify-center bg-white shadow-sm border border-outline-variant/10 text-on-surface-variant hover:bg-surface-container-high transition-colors">
                 <span className="material-symbols-outlined text-[20px]">arrow_back</span>
               </Link>
-              <h2 className="font-bold text-on-surface-variant text-sm uppercase tracking-wider">La Martina</h2>
+              <h2 className="font-bold text-on-surface-variant text-sm uppercase tracking-wider">Martina Supermercado</h2>
               <div className="w-10"></div> {/* Spacer */}
             </div>
 
@@ -203,7 +206,7 @@ export const ShoppingCalculator: React.FC = () => {
             <p className="font-body-lg text-on-surface-variant mb-6 text-sm sm:text-base leading-relaxed px-4">
               Escaneá los productos con la cámara de tu celular a medida que los vas sumando al carrito en el local.
               Conocé el total aproximado de tu gasto y presentá el código generado en la caja.
-            </p>            
+            </p>
 
             {/* Bottom CTA Button */}
             <button
@@ -218,12 +221,12 @@ export const ShoppingCalculator: React.FC = () => {
             </button>
           </div>
         ) : (
-          
+
           /* ────────────────────────────────────────────────────────
               ESTADO 3: CALCULADORA ACTIVA (CARRITO LOCAL)
               ──────────────────────────────────────────────────────── */
           <div className="flex-grow flex flex-col w-full animate-in fade-in slide-in-from-bottom duration-500">
-            
+
             {/* Header Row */}
             <div className="flex items-center justify-between pb-4 border-b border-outline-variant/10 mb-6">
               <div className="flex items-center gap-3">
@@ -254,7 +257,7 @@ export const ShoppingCalculator: React.FC = () => {
 
             {/* Main Content Area */}
             <div className="flex-grow flex flex-col">
-              
+
               {/* Error messages feedback */}
               {error && (
                 <div className="mb-4 p-3.5 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl flex items-center justify-between animate-in slide-in-from-top duration-300">
@@ -276,7 +279,7 @@ export const ShoppingCalculator: React.FC = () => {
                   <p className="text-xs text-on-surface-variant max-w-xs mb-8">
                     Escaneá los productos que agregues a tu carro físico para llevar la cuenta impositiva y de gasto.
                   </p>
-                  
+
                   <div className="flex flex-col gap-3.5 w-full max-w-xs">
                     <button
                       onClick={() => { clearError(); setScannerOpen(true); }}
@@ -308,7 +311,7 @@ export const ShoppingCalculator: React.FC = () => {
                             <img src={item.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
                           )}
                         </div>
-                        
+
                         {/* Name & price detail */}
                         <div className="flex-grow min-w-0">
                           <h4 className="text-xs font-bold text-on-surface truncate leading-tight">{item.name}</h4>
@@ -353,7 +356,7 @@ export const ShoppingCalculator: React.FC = () => {
                         <span className="text-[10px] text-on-surface-variant uppercase tracking-wider font-extrabold block">Total Estimado</span>
                         <span className="text-2xl font-black text-primary">${formatCurrency(subtotal)}</span>
                       </div>
-                      
+
                       {/* Secondary Actions */}
                       <div className="flex gap-2">
                         <button
@@ -418,7 +421,7 @@ export const ShoppingCalculator: React.FC = () => {
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
-            
+
             <form onSubmit={handleAddManualItem} className="p-6 space-y-4">
               <div>
                 <label className="text-[10px] text-on-surface-variant uppercase tracking-wider font-extrabold block mb-1">Nombre o Descripción</label>
@@ -480,7 +483,7 @@ export const ShoppingCalculator: React.FC = () => {
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
-            
+
             <form onSubmit={handleFinalize} className="p-6 space-y-4">
               <p className="text-xs text-on-surface-variant leading-relaxed">
                 Ingresá tu nombre y celular opcional para que la cajera asocie la pre-compra en el POS más fácilmente.

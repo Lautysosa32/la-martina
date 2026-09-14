@@ -5,6 +5,7 @@ import { useCart } from '../context/CartContext';
 import { useAdmin } from '../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import { MapSelector } from '../components/MapSelector';
+import { useScrollLock } from '../utils/useScrollLock';
 
 export const Profile: React.FC = () => {
   const { 
@@ -12,13 +13,14 @@ export const Profile: React.FC = () => {
     updateUser, 
     isAuthenticated, 
     isCustomer, 
+    customerProfile,
     signUpCustomer, 
     signInCustomer, 
     signOutCustomer, 
     loading: authLoading,
     updateOrderStatus: updateLocalOrderStatus
   } = useAuth();
-  const { addItem } = useCart();
+  const { addItem, currentCustomer } = useCart();
   const { customers, orders, toggleCurrentAccount, updateOrderStatus } = useAdmin();
   const navigate = useNavigate();
   
@@ -29,10 +31,14 @@ export const Profile: React.FC = () => {
   const [ccError, setCcError] = useState<string | null>(null);
   const [cancelOrderData, setCancelOrderData] = useState<any | null>(null);
 
+  // Bloquear scroll de fondo cuando haya modales abiertos en Perfil
+  useScrollLock(showCCModal || !!ccError || !!cancelOrderData);
+
   // Customer Auth Flow States
   const [continueAsGuest, setContinueAsGuest] = useState(false);
   const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form states for login/signup
   const [phone, setPhone] = useState('');
@@ -49,23 +55,26 @@ export const Profile: React.FC = () => {
   const [addressReference, setAddressReference] = useState<string>('');
   const [addressNotes, setAddressNotes] = useState<string>('');
 
-  const currentCustomer = useMemo(() => {
-    if (!user?.phone) return null;
-    return customers.find(c => c.phone.replace(/\s+/g, '') === user.phone.replace(/\s+/g, ''));
-  }, [customers, user?.phone]);
+  const cleanPhone = (p?: string) => (p || '').replace(/\D/g, '');
+  const activeUserPhoneClean = cleanPhone(user?.phone || currentCustomer?.phone);
 
   const ccOrders = useMemo(() => {
-    if (!user?.phone) return [];
-    return orders.filter(o =>
-      o.phone.replace(/\s+/g, '') === user.phone.replace(/\s+/g, '') &&
-      o.paymentMethod === 'cuenta_corriente' &&
-      o.status !== 'Cancelado'
-    ).sort((a, b) => {
+    if (!activeUserPhoneClean) return [];
+    return orders.filter(o => {
+      const oClean = cleanPhone(o.phone);
+      return (
+        (oClean === activeUserPhoneClean ||
+          (activeUserPhoneClean.length >= 8 && oClean.endsWith(activeUserPhoneClean.slice(-8))) ||
+          (oClean.length >= 8 && activeUserPhoneClean.endsWith(oClean.slice(-8)))) &&
+        o.paymentMethod === 'cuenta_corriente' &&
+        o.status !== 'Cancelado'
+      );
+    }).sort((a, b) => {
       const tsA = a.timestamp || 0;
       const tsB = b.timestamp || 0;
       return tsB - tsA;
     });
-  }, [orders, user?.phone]);
+  }, [orders, activeUserPhoneClean]);
 
   const ccByDate = useMemo(() => {
     const groups: Record<string, typeof ccOrders> = {};
@@ -134,7 +143,9 @@ export const Profile: React.FC = () => {
       return;
     }
 
+    setIsSubmitting(true);
     const res = await signInCustomer(phone, password);
+    setIsSubmitting(false);
     if (res.error) {
       setErrorMsg('Celular o contraseña incorrectos. Revisa e intenta de nuevo.');
     }
@@ -148,7 +159,9 @@ export const Profile: React.FC = () => {
       return;
     }
 
+    setIsSubmitting(true);
     const res = await signUpCustomer(phone, password, name, lastName, email);
+    setIsSubmitting(false);
     if (res.error) {
       setErrorMsg(res.error.message || 'Error en el registro. Intenta de nuevo.');
     }
@@ -185,12 +198,6 @@ export const Profile: React.FC = () => {
         {/* Columna Izquierda: Datos Personales, Cuenta Corriente y Martina Club */}
         <div className="md:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-outline-variant/10 shadow-sm relative overflow-hidden">
-            {authLoading && (
-              <div className="absolute inset-0 bg-white/70 backdrop-blur-sm z-50 flex items-center justify-center">
-                <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-              </div>
-            )}
-
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-lg font-bold">Mis Datos</h2>
               {/* Clientes autenticados solo pueden editar la dirección */}
@@ -361,7 +368,7 @@ export const Profile: React.FC = () => {
           </div>
 
           {/* Sección de Cuenta Corriente (si habilitada) */}
-          {currentCustomer?.hasCurrentAccount && (
+          {Boolean(currentCustomer?.hasCurrentAccount ?? (customerProfile as any)?.hasCurrentAccount) && (
             <div className="bg-white p-6 rounded-3xl border border-outline-variant/10 shadow-sm animate-in zoom-in-95 duration-500">
               <div className="flex items-center gap-3 mb-4 text-primary">
                 <span className="material-symbols-outlined text-[28px]">menu_book</span>
@@ -370,15 +377,15 @@ export const Profile: React.FC = () => {
 
               <div className="bg-surface-container-low rounded-2xl p-4 mb-5">
                 <p className="text-[10px] font-bold text-on-surface-variant uppercase mb-1">Deuda Pendiente</p>
-                <p className={`text-2xl font-black ${currentCustomer.currentDebt > 0 ? 'text-error' : 'text-green-600'}`}>
-                  ${currentCustomer.currentDebt.toLocaleString('es-AR')}
+                <p className={`text-2xl font-black ${(currentCustomer?.currentDebt ?? 0) > 0 ? 'text-error' : 'text-green-600'}`}>
+                  ${(currentCustomer?.currentDebt ?? 0).toLocaleString('es-AR')}
                 </p>
               </div>
 
               <div className="space-y-3">
                 <button
                   onClick={() => setShowCCModal(true)}
-                  className="w-full bg-primary/10 text-primary font-bold py-3 rounded-xl hover:bg-primary/20 transition-all text-sm flex items-center justify-center gap-2"
+                  className="w-full bg-primary/10 text-primary font-bold py-3 rounded-xl hover:bg-primary/20 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span className="material-symbols-outlined text-[18px]">visibility</span>
                   Revisar cuenta corriente
@@ -386,10 +393,13 @@ export const Profile: React.FC = () => {
 
                 <button
                   onClick={() => {
-                    const res = toggleCurrentAccount(currentCustomer.phone);
-                    if (!res.success) setCcError(res.message || 'Error al modificar cuenta');
+                    const phoneToToggle = currentCustomer?.phone || customerProfile?.phone || user?.phone;
+                    if (phoneToToggle) {
+                      const res = toggleCurrentAccount(phoneToToggle);
+                      if (!res.success) setCcError(res.message || 'Error al modificar cuenta');
+                    }
                   }}
-                  className="w-full text-on-surface-variant font-bold py-3 rounded-xl hover:bg-surface-container-high transition-all text-[11px] uppercase tracking-widest"
+                  className="w-full text-on-surface-variant font-bold py-3 rounded-xl hover:bg-surface-container-high transition-all text-[11px] uppercase tracking-widest cursor-pointer"
                 >
                   Deshabilitar cuenta
                 </button>
@@ -400,12 +410,6 @@ export const Profile: React.FC = () => {
           {/* Card de Martina Club / Iniciar Sesión / Registro para Invitados */}
           {(!isCustomer || !isAuthenticated) && (
             <div className="bg-white p-6 rounded-3xl border border-primary/20 shadow-sm relative overflow-hidden space-y-6 animate-in fade-in duration-500">
-              {authLoading && (
-                <div className="absolute inset-0 bg-white/70 backdrop-blur-sm z-50 flex items-center justify-center">
-                  <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              )}
-
               {/* Banner Martina Club */}
               <div className="bg-primary/5 -mx-6 -mt-6 p-6 border-b border-primary/10">
                 <span className="text-[10px] font-black bg-primary/10 text-primary px-3 py-1 rounded-full uppercase tracking-wider">Martina Club</span>
@@ -500,9 +504,17 @@ export const Profile: React.FC = () => {
 
                     <button
                       type="submit"
-                      className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider mt-2 cursor-pointer"
+                      disabled={isSubmitting}
+                      className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider mt-2 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-70"
                     >
-                      INGRESAR
+                      {isSubmitting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>INGRESANDO...</span>
+                        </>
+                      ) : (
+                        <span>INGRESAR</span>
+                      )}
                     </button>
                   </form>
                 ) : (
@@ -582,9 +594,17 @@ export const Profile: React.FC = () => {
 
                     <button
                       type="submit"
-                      className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider mt-2 cursor-pointer"
+                      disabled={isSubmitting}
+                      className="w-full bg-primary hover:bg-primary/95 text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs uppercase tracking-wider mt-2 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-70"
                     >
-                      REGISTRARME
+                      {isSubmitting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>REGISTRANDO...</span>
+                        </>
+                      ) : (
+                        <span>REGISTRARME</span>
+                      )}
                     </button>
                   </form>
                 )}

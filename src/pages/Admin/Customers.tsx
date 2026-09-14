@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAdmin } from '../../context/AdminContext';
 import type { AdminCustomer, AdminOrder } from '../../context/AdminContext';
 import { whatsappMessageService } from '../../services/whatsapp-message.service';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 export const Customers: React.FC = () => {
   const { customers, orders, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount, formatCurrency, addManualCustomer, deleteCustomer, blockPhone, unblockPhone, isPhoneBlocked } = useAdmin();
@@ -96,6 +97,10 @@ export const Customers: React.FC = () => {
   // Map simulated selector states
   const [showMapModal, setShowMapModal] = useState(false);
   const [selectedMapLocation, setSelectedMapLocation] = useState<string | null>(null);
+
+  // Bloquear scroll de fondo cuando haya algún modal abierto en Clientes
+  const hasCustomerModalOpen = !!selectedCustomer || !!settleModalData || showNewCustomerModal || !!showDeleteConfirm || showMapModal;
+  useScrollLock(hasCustomerModalOpen);
 
   const landmarks = [
     { name: "Av. San Martín 1230, Ciudad", desc: "Cerca de Plaza Independencia", coords: { x: 45, y: 30 } },

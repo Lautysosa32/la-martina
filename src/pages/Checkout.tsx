@@ -10,8 +10,8 @@ import { checkCustomerOverdueDebt } from '../utils/billing-cycle';
 import { calculateDistanceKm, calculateShippingCost } from '../utils/shipping';
 
 export const Checkout: React.FC = () => {
-  const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
-  const { user, addOrder, updateUser, customerProfile } = useAuth();
+  const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, potentialDiscount, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
+  const { user, addOrder, updateUser, customerProfile, isAuthenticated } = useAuth();
   const { addAdminOrder, customers, orders, applyOrderOffers, deductStockForOrder, storeStatus, generalConfig, isPhoneBlocked, currentAccountConfig, formatCurrency } = useAdmin();
   const navigate = useNavigate();
   const [isOrdered, setIsOrdered] = useState(false);
@@ -445,7 +445,7 @@ export const Checkout: React.FC = () => {
     }
 
     // Final stock validation before confirming
-    const stockResult = deductStockForOrder(items.map(i => ({ id: i.id, quantity: i.quantity })));
+    const stockResult = deductStockForOrder(items.map(i => ({ id: i.id, quantity: i.quantity, stock: i.stock })));
     if (!stockResult.success) {
       setStockError(stockResult.insufficientItems);
       return;
@@ -467,17 +467,17 @@ export const Checkout: React.FC = () => {
       ? 'Retiro en sucursal'
       : usingProfileAddress && savedProfileAddress
         ? [
-            savedProfileAddress,
-            orderNotes ? `[NOTAS:${orderNotes}]` : '',
-            (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
-          ].filter(Boolean).join(' ')
+          savedProfileAddress,
+          orderNotes ? `[NOTAS:${orderNotes}]` : '',
+          (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
+        ].filter(Boolean).join(' ')
         : [
-            deliveryAddressLabel,
-            deliveryHouseNumber?.trim() ? `[ALTURA:${deliveryHouseNumber.trim()}]` : '',
-            deliveryReference?.trim() ? `[REF:${deliveryReference.trim()}]` : '',
-            orderNotes ? `[NOTAS:${orderNotes}]` : '',
-            (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
-          ].filter(Boolean).join(' ');
+          deliveryAddressLabel,
+          deliveryHouseNumber?.trim() ? `[ALTURA:${deliveryHouseNumber.trim()}]` : '',
+          deliveryReference?.trim() ? `[REF:${deliveryReference.trim()}]` : '',
+          orderNotes ? `[NOTAS:${orderNotes}]` : '',
+          (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
+        ].filter(Boolean).join(' ');
 
     // Guardar en el historial del usuario
     const userOrder = {
@@ -517,8 +517,9 @@ export const Checkout: React.FC = () => {
       deliveryTime: formData.deliveryTime,
       method: isPickup ? 'Retiro' : 'Envío',
       paymentMethod: formData.paymentMethod,
-      paymentStatus: (formData.paymentMethod === 'transfer' ? 'Pagado' : 'Pendiente') as 'Pagado' | 'Pendiente',
+      paymentStatus: 'Pendiente' as 'Pagado' | 'Pendiente',
       status: 'Nuevo' as const,
+      source: 'web' as const,
       total: finalTotal,
       items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity })),
       notes: orderNotes,
@@ -584,8 +585,8 @@ export const Checkout: React.FC = () => {
           Gracias {confirmedName || formData.name}, hemos recibido tu pedido. En breve nos comunicaremos con vos al {formData.phone} para coordinar {isPickup ? 'el retiro' : 'la entrega'}.
         </p>
         <div className="flex flex-col gap-4 w-full max-w-xs">
-          <Link 
-            to="/" 
+          <Link
+            to="/"
             className="bg-primary text-white font-bold py-4 rounded-2xl flex justify-center items-center hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
           >
             Volver al inicio
@@ -628,6 +629,29 @@ export const Checkout: React.FC = () => {
         <div className="mb-10 text-center md:text-left">
           <h1 className="text-[25px] font-bold text-on-background mb-2">Finalizar Compra</h1>
           <p className="text-on-surface-variant text-base">Completá tus datos para finalizar el pedido.</p>
+
+          {!isAuthenticated && potentialDiscount > 0 && (
+            <div className="mt-4 p-4 bg-gradient-to-r from-primary/10 via-primary/5 to-white border border-primary/25 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs text-left">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-primary text-[28px] shrink-0">loyalty</span>
+                <div>
+                  <p className="text-xs sm:text-sm font-black text-on-surface">
+                    ¿Querés ahorrar <span className="text-primary">${potentialDiscount.toLocaleString('es-AR')}</span> en este pedido?
+                  </p>
+                  <p className="text-[11px] text-on-surface-variant mt-0.5">
+                    Iniciá sesión o registrate gratis antes de confirmar para que se aplique tu descuento de Ofertas Relámpago.
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/profile"
+                className="shrink-0 w-full sm:w-auto px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl text-center shadow-sm hover:bg-primary/90 transition-all flex items-center justify-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[16px]">login</span>
+                <span>Registrarme / Iniciar Sesión</span>
+              </Link>
+            </div>
+          )}
 
           <div className="mt-8 flex justify-center md:justify-start">
             <div className="inline-flex bg-surface-container-low p-1 rounded-2xl border border-outline-variant/10">
@@ -686,16 +710,16 @@ export const Checkout: React.FC = () => {
                   <div className="relative flex items-center bg-[#fcf9f8] border border-outline-variant/30 rounded-xl focus-within:border-primary transition-all overflow-hidden">
                     <span className="material-symbols-outlined pl-4 text-on-surface-variant text-[20px] shrink-0">call</span>
                     <span className="pl-2 pr-1.5 text-on-surface font-semibold text-sm shrink-0 border-r border-outline-variant/20 mr-2">+54</span>
-                    <input 
-                      required 
-                      type="tel" 
-                      placeholder="261 455 6677" 
-                      value={formData.phone.startsWith('+54') ? formData.phone.substring(3) : (formData.phone.startsWith('54') ? formData.phone.substring(2) : formData.phone)} 
+                    <input
+                      required
+                      type="tel"
+                      placeholder="261 455 6677"
+                      value={formData.phone.startsWith('+54') ? formData.phone.substring(3) : (formData.phone.startsWith('54') ? formData.phone.substring(2) : formData.phone)}
                       onChange={(e) => {
                         const val = e.target.value.replace(/\D/g, '');
                         setFormData(prev => ({ ...prev, phone: val ? '+54' + val : '' }));
-                      }} 
-                      className="w-full bg-transparent py-3 pr-4 outline-none font-semibold text-sm" 
+                      }}
+                      className="w-full bg-transparent py-3 pr-4 outline-none font-semibold text-sm"
                     />
                   </div>
                 </div>
@@ -832,7 +856,7 @@ export const Checkout: React.FC = () => {
                           </button>
                         </div>
 
-                      /* CASO 2: Seleccionó nueva ubicación en el mapa */
+                        /* CASO 2: Seleccionó nueva ubicación en el mapa */
                       ) : deliveryCoords ? (
                         <div className="space-y-2">
                           <div className="bg-green-50/50 border border-green-200 rounded-2xl p-4 flex justify-between items-center gap-4 animate-in fade-in duration-300">
@@ -871,7 +895,7 @@ export const Checkout: React.FC = () => {
                           )}
                         </div>
 
-                      /* CASO 3: Sin dirección — botón para abrir el mapa */
+                        /* CASO 3: Sin dirección — botón para abrir el mapa */
                       ) : (
                         <button
                           type="button"
@@ -905,24 +929,24 @@ export const Checkout: React.FC = () => {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 animate-in slide-in-from-top-3 duration-500">
                         <div className="space-y-2">
                           <label className="text-sm font-bold text-on-surface-variant">Número de casa / Altura / Lote *</label>
-                          <input 
-                            required 
-                            type="text" 
-                            placeholder="Ej: 145, Manzana B Lote 4" 
+                          <input
+                            required
+                            type="text"
+                            placeholder="Ej: 145, Manzana B Lote 4"
                             value={deliveryHouseNumber}
                             onChange={(e) => setDeliveryHouseNumber(e.target.value)}
-                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" 
+                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold"
                           />
                         </div>
                         <div className="space-y-2">
                           <label className="text-sm font-bold text-on-surface-variant">Referencia visual *</label>
-                          <input 
-                            required 
-                            type="text" 
-                            placeholder="Ej: Portón negro, casa de esquina" 
+                          <input
+                            required
+                            type="text"
+                            placeholder="Ej: Portón negro, casa de esquina"
                             value={deliveryReference}
                             onChange={(e) => setDeliveryReference(e.target.value)}
-                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold" 
+                            className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-semibold"
                           />
                         </div>
                       </div>
@@ -935,7 +959,7 @@ export const Checkout: React.FC = () => {
                     <div className="flex items-start gap-3">
                       <span className="material-symbols-outlined text-primary text-[24px] mt-0.5">storefront</span>
                       <div>
-                        <p className="font-bold text-on-surface">La Martina Supermercado</p>
+                        <p className="font-bold text-on-surface">Martina Supermercado</p>
                         <p className="text-sm text-on-surface-variant">La Paz, Mendoza</p>
                         <p className="text-xs text-on-surface-variant mt-1">Horario: Lunes a Sábados 8:00 - 21:00</p>
                       </div>
@@ -976,13 +1000,12 @@ export const Checkout: React.FC = () => {
                         return (
                           <label
                             key={slot.id}
-                            className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all ${
-                              !isAvailable
+                            className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all ${!isAvailable
                                 ? 'opacity-40 bg-surface-container-low border-outline-variant/10 cursor-not-allowed'
                                 : formData.deliveryTime === slot.label
                                   ? 'border-primary bg-primary/5 cursor-pointer shadow-sm'
                                   : 'border-outline-variant/20 hover:bg-surface-container-low cursor-pointer'
-                            }`}
+                              }`}
                           >
                             <input
                               type="radio"
@@ -1012,12 +1035,12 @@ export const Checkout: React.FC = () => {
 
                 <div className="md:col-span-2 space-y-2">
                   <label className="text-sm font-bold text-on-surface-variant">Notas o aclaraciones para el pedido</label>
-                  <textarea 
-                    name="notes" 
-                    value={formData.notes} 
-                    onChange={handleInputChange} 
-                    rows={3} 
-                    placeholder="Ej: Timbre roto, llamar al celular al llegar, instrucciones sobre tus productos..." 
+                  <textarea
+                    name="notes"
+                    value={formData.notes}
+                    onChange={handleInputChange}
+                    rows={3}
+                    placeholder="Ej: Timbre roto, llamar al celular al llegar, instrucciones sobre tus productos..."
                     className="w-full bg-[#fcf9f8] border border-outline-variant/30 rounded-xl px-4 py-3 outline-none focus:border-primary transition-all font-medium text-sm resize-none"
                   ></textarea>
                 </div>
@@ -1049,9 +1072,8 @@ export const Checkout: React.FC = () => {
                   <div className="pt-2">
                     {isCcValidated ? (
                       <div className="space-y-3">
-                        <label className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${
-                          formData.paymentMethod === 'cuenta_corriente' ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'
-                        }`}>
+                        <label className={`flex items-center gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${formData.paymentMethod === 'cuenta_corriente' ? 'border-primary bg-primary/5' : 'border-outline-variant/20 hover:bg-surface-container-low'
+                          }`}>
                           <input type="radio" name="paymentMethod" value="cuenta_corriente" checked={formData.paymentMethod === 'cuenta_corriente'} onChange={handleInputChange} className="hidden" />
                           <span className={`material-symbols-outlined ${formData.paymentMethod === 'cuenta_corriente' ? 'text-primary' : 'text-on-surface-variant'}`}>menu_book</span>
                           <div className="flex-1 min-w-0">
@@ -1134,10 +1156,10 @@ export const Checkout: React.FC = () => {
 
                         <div className="flex flex-col sm:flex-row gap-2 pt-1">
                           <div className="relative flex-1">
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               inputMode="numeric"
-                              placeholder="Ingresá tu DNI (ej: 38123456)" 
+                              placeholder="Ingresá tu DNI (ej: 38123456)"
                               value={ccDniInput}
                               onChange={(e) => {
                                 setCcDniInput(e.target.value.replace(/\D/g, ''));
@@ -1253,6 +1275,19 @@ export const Checkout: React.FC = () => {
                     <span>-$ {activeDiscountApplied.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
                   </div>
                 )}
+                {!isAuthenticated && potentialDiscount > 0 && (
+                  <div className="p-3 bg-primary/5 border border-primary/15 rounded-xl space-y-1">
+                    <div className="flex justify-between text-xs font-black text-primary">
+                      <span>Descuento con registro:</span>
+                      <span>-$ {potentialDiscount.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>
+                    </div>
+                    <p className="text-[10px] text-on-surface-variant leading-tight">
+                      <Link to="/profile" className="text-primary font-bold underline hover:opacity-80">
+                        Registrate o iniciá sesión
+                      </Link> para aplicar este descuento antes de confirmar.
+                    </p>
+                  </div>
+                )}
                 <div className="flex justify-between items-start text-on-surface-variant">
                   <div>
                     <span>{isPickup ? 'Retiro en sucursal' : 'Envío a domicilio'}</span>
@@ -1287,14 +1322,14 @@ export const Checkout: React.FC = () => {
       </div>
 
       {isMapModalOpen && (
-        <MapSelector 
+        <MapSelector
           initialLat={deliveryCoords?.lat}
           initialLng={deliveryCoords?.lng}
           storeLat={storeLat}
           storeLng={storeLng}
           deliveryRadiusKm={maxRadiusKm}
-          onClose={() => setIsMapModalOpen(false)} 
-          onLocationSelected={handleLocationSelected} 
+          onClose={() => setIsMapModalOpen(false)}
+          onLocationSelected={handleLocationSelected}
         />
       )}
     </>

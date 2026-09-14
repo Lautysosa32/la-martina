@@ -8,15 +8,15 @@ import { useProductStore } from '../../stores/useProductStore';
 import { productsService } from '../../services/products.service';
 
 export const Dashboard: React.FC = () => {
-  const { 
-    totalRevenue, ordersRevenue, posRevenue, totalDebtInStreet, activeOrdersCount, totalCustomers, 
+  const {
+    totalRevenue, ordersRevenue, posRevenue, totalDebtInStreet, activeOrdersCount, totalCustomers,
     orders, adminCategories, getOrderTimestamp,
     privacyMode, formatCurrency
   } = useAdmin();
   const navigate = useNavigate();
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
-  
+
   const canViewFinancial = employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || hasPermission('dashboard.view_financial');
 
   const [replenishAmounts, setReplenishAmounts] = useState<Record<string, string>>({});
@@ -68,59 +68,59 @@ export const Dashboard: React.FC = () => {
     const ordersRev = filteredOrders
       .filter(o => o.status !== 'Cancelado' && o.source !== 'pos')
       .reduce((s, o) => s + o.total, 0);
-    
+
     const posRev = filteredOrders
       .filter(o => o.status !== 'Cancelado' && o.source === 'pos')
       .reduce((s, o) => s + o.total, 0);
-    
+
     const revenue = ordersRev + posRev;
     const active = filteredOrders.filter(o => o.status !== 'Entregado' && o.status !== 'Cancelado').length;
-    
+
     const baseStats = [];
-    
+
     if (canViewFinancial) {
       baseStats.push(
-        { 
-          label: 'Ventas por Caja (POS)', 
-          value: `$${formatCurrency(posRev)}`, 
-          change: 'Ventas en local', 
-          icon: 'point_of_sale', 
-          color: 'bg-orange-100 text-orange-600' 
+        {
+          label: 'Ventas por Caja (POS)',
+          value: `$${formatCurrency(posRev)}`,
+          change: 'Ventas local',
+          icon: 'point_of_sale',
+          color: 'bg-orange-100 text-orange-600'
         },
-        { 
-          label: 'Ventas por Pedidos', 
-          value: `$${formatCurrency(ordersRev)}`, 
-          change: 'Ventas por web', 
-          icon: 'local_shipping', 
-          color: 'bg-indigo-100 text-indigo-600' 
+        {
+          label: 'Ventas por Pedidos',
+          value: `$${formatCurrency(ordersRev)}`,
+          change: 'Ventas web',
+          icon: 'local_shipping',
+          color: 'bg-indigo-100 text-indigo-600'
         }
       );
     }
 
     baseStats.push(
-      { 
-        label: 'Pedidos Activos', 
-        value: formatCurrency(active, false), 
-        change: filteredOrders.length > 0 ? `${formatCurrency(filteredOrders.length, false)} totales` : 'Sin pedidos', 
-        icon: 'shopping_cart', 
-        color: 'bg-blue-100 text-blue-600' 
+      {
+        label: 'Pedidos Activos',
+        value: formatCurrency(active, false),
+        change: filteredOrders.length > 0 ? `${formatCurrency(filteredOrders.length, false)} totales` : 'Sin pedidos',
+        icon: 'shopping_cart',
+        color: 'bg-blue-100 text-blue-600'
       },
-      { 
-        label: 'Alertas de Stock', 
-        value: formatCurrency(lowStockCount, false), 
-        change: lowStockCount > 5 ? 'Crítico' : lowStockCount > 0 ? 'Moderado' : 'OK', 
-        icon: 'warning', 
+      {
+        label: 'Alertas de Stock',
+        value: formatCurrency(lowStockCount, false),
+        change: lowStockCount > 5 ? 'Crítico' : lowStockCount > 0 ? 'Moderado' : 'OK',
+        icon: 'warning',
         color: lowStockCount > 5 ? 'bg-error/10 text-error' : 'bg-orange-100 text-orange-600'
       }
     );
 
     if (canViewFinancial) {
-      baseStats.push({ 
-        label: 'Deuda en la Calle', 
-        value: `$${formatCurrency(totalDebtInStreet)}`, 
-        change: 'Total Cta. Corr.', 
-        icon: 'menu_book', 
-        color: 'bg-red-50 text-red-600' 
+      baseStats.push({
+        label: 'Deuda en la Calle',
+        value: `$${formatCurrency(totalDebtInStreet)}`,
+        change: 'Total Cta. Corr.',
+        icon: 'menu_book',
+        color: 'bg-red-50 text-red-600'
       });
     }
 
@@ -155,11 +155,12 @@ export const Dashboard: React.FC = () => {
     try {
       // If all items on current page are selected (or default state), fetch complete list from DB
       if (selectedForReport.size === lowStockProducts.length) {
-        productsToReport = await productsService.getAllLowStockProducts();
+        const allFetched = await productsService.getAllLowStockProducts();
+        productsToReport = allFetched.filter(p => (p as any).is_paused !== true && (p as any).isPaused !== true);
       } else {
         // Only report the selected items from the page
         productsToReport = lowStockProducts
-          .filter(p => selectedForReport.has(p.id))
+          .filter(p => selectedForReport.has(p.id) && !p.isPaused)
           .map(p => ({
             name: p.name,
             categoryId: p.categoryId,
@@ -201,7 +202,7 @@ export const Dashboard: React.FC = () => {
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
               <div>
                 <h1 style="margin: 0 0 8px 0; color: #e62e05;">Reporte de Stock Crítico (${sortedProducts.length} productos)</h1>
-                <p style="margin: 0; color: #666; font-weight: bold;">La Martina - Generado el ${new Date().toLocaleDateString('es-AR')}</p>
+                <p style="margin: 0; color: #666; font-weight: bold;">Martina Supermercado- Generado el ${new Date().toLocaleDateString('es-AR')}</p>
               </div>
               <button onclick="window.print()" class="no-print" style="background: #e62e05; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer;">Imprimir / Guardar PDF</button>
             </div>
@@ -232,11 +233,11 @@ export const Dashboard: React.FC = () => {
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       {portalTarget && employeeProfile?.role !== 'employee' && createPortal(
-        <AdminPeriodSelector 
-          period={period} 
-          setPeriod={setPeriod} 
-          customRange={customRange} 
-          setCustomRange={setCustomRange} 
+        <AdminPeriodSelector
+          period={period}
+          setPeriod={setPeriod}
+          customRange={customRange}
+          setCustomRange={setCustomRange}
         />,
         portalTarget
       )}
@@ -248,9 +249,8 @@ export const Dashboard: React.FC = () => {
               <div className={`w-10 h-10 md:w-12 md:h-12 ${stat.color} rounded-xl md:rounded-2xl flex items-center justify-center`}>
                 <span className="material-symbols-outlined text-[22px] md:text-[28px]">{stat.icon}</span>
               </div>
-              <span className={`text-[10px] md:text-xs font-bold px-2 py-0.5 md:py-1 rounded-lg ${
-                stat.change === 'Crítico' ? 'bg-error/10 text-error' : 'bg-surface-container-low text-on-surface-variant'
-              }`}>
+              <span className={`text-[10px] md:text-xs font-bold padding-0 px-2 py-0.5 md:py-1 rounded-lg ${stat.change === 'Crítico' ? 'bg-error/10 text-error' : 'bg-surface-container-low text-on-surface-variant'
+                }`}>
                 {stat.change}
               </span>
             </div>
@@ -336,7 +336,7 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white rounded-2xl md:rounded-[2rem] shadow-sm border border-outline-variant/5 flex flex-col h-full md:max-h-[640px]">
           <div className="px-5 py-4 md:p-8 border-b border-outline-variant/10 flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <button 
+              <button
                 onClick={() => {
                   if (selectedForReport.size === lowStockProducts.length) setSelectedForReport(new Set());
                   else setSelectedForReport(new Set(lowStockProducts.map(p => p.id)));
@@ -347,7 +347,7 @@ export const Dashboard: React.FC = () => {
               </button>
               <h2 className="text-xl font-bold">Alertas de Stock</h2>
             </div>
-            <button 
+            <button
               onClick={() => navigate('/admin/inventory')}
               className="text-primary text-sm font-bold hover:underline"
             >
@@ -364,7 +364,7 @@ export const Dashboard: React.FC = () => {
                   return (
                     <div key={product.id} className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${isSelected ? 'bg-surface-container-low border-outline-variant/10' : 'bg-white border-transparent opacity-60'}`}>
                       <div className="flex items-center gap-3">
-                        <button 
+                        <button
                           onClick={() => toggleSelectForReport(product.id)}
                           className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${isSelected ? 'bg-primary border-primary text-white shadow-sm' : 'border-outline-variant/30 text-transparent'}`}
                         >
@@ -383,14 +383,14 @@ export const Dashboard: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <div className="relative">
                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-on-surface-variant/40">+</span>
-                          <input 
+                          <input
                             type="number"
                             value={amount}
                             onChange={e => setReplenishAmounts({ ...replenishAmounts, [product.id]: e.target.value })}
                             className="w-14 h-8 pl-4 pr-1 bg-white border border-outline-variant/10 rounded-lg text-xs font-bold focus:ring-2 ring-primary/10 outline-none text-center"
                           />
                         </div>
-                        <button 
+                        <button
                           onClick={() => {
                             const toAdd = parseInt(amount) || 0;
                             if (toAdd > 0) {
@@ -443,7 +443,7 @@ export const Dashboard: React.FC = () => {
           )}
 
           <div className="p-6 pt-0 mt-auto border-t border-outline-variant/5">
-            <button 
+            <button
               onClick={handleGenerateStockReport}
               className="w-full mt-6 bg-primary text-white font-bold py-4 rounded-2xl hover:bg-primary/90 transition-all shadow-md shadow-primary/20 text-sm disabled:opacity-50 flex items-center justify-center gap-2"
               disabled={lowStockProducts.length === 0 || isGeneratingReport}

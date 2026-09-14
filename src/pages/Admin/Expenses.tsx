@@ -11,6 +11,7 @@ import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPerio
 import { useAuthStore } from '../../stores/useAuthStore';
 import { employeesService } from '../../services/employees.service';
 import { Employee } from '../../types/permissions.types';
+import { useScrollLock } from '../../utils/useScrollLock';
 
 const EXPENSE_TYPES: ExpenseType[] = [
   'mercaderia', 'proveedor', 'sueldos', 'alquiler',
@@ -87,14 +88,18 @@ export const Expenses: React.FC = () => {
   const [payModalExpense, setPayModalExpense] = useState<Expense | null>(null);
   const [payMethod, setPayMethod] = useState<'cash' | 'card' | 'transfer'>('cash');
 
+  // View modal
+  const [viewExpense, setViewExpense] = useState<Expense | null>(null);
+
+  // Bloquear scroll de fondo cuando haya algún modal abierto en Egresos
+  const hasExpenseModalOpen = showModal || !!payModalExpense || !!viewExpense;
+  useScrollLock(hasExpenseModalOpen);
+
   // Employees for responsible selector
   const [employees, setEmployees] = useState<Employee[]>([]);
   useEffect(() => {
     employeesService.getAllEmployees().then(data => setEmployees(data || [])).catch(() => {});
   }, []);
-
-  // View modal
-  const [viewExpense, setViewExpense] = useState<Expense | null>(null);
 
   // Period params
   const analyticsParams = useMemo(() => {

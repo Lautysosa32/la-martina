@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-worker",
   "version": "1.0.0",
-  "description": "WhatsApp Web local worker for La Martina supermarket",
+  "description": "WhatsApp Web local worker for Martina Supermercado supermarket",
   "main": "worker.js",
   "type": "commonjs",
   "scripts": {
