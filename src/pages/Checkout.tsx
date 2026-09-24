@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useCart } from '../context/CartContext';
 import { useAuth, Order } from '../stores/useAuthStore';
-import { useAdmin } from '../context/AdminContext';
+import { useAdmin, defaultDeliveryTimeSlots, DeliveryTimeSlot } from '../context/AdminContext';
 import { Link, useNavigate } from 'react-router-dom';
 import { MapSelector } from '../components/MapSelector';
 import { whatsappMessageService } from '../services/whatsapp-message.service';
 import { upsertCustomerProfile } from '../services/admin.service';
 import { checkCustomerOverdueDebt } from '../utils/billing-cycle';
-import { calculateDistanceKm, calculateShippingCost } from '../utils/shipping';
+import { calculateDistanceKm, calculateShippingCost } from '../../supabase/functions/_shared/shipping';
 
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, potentialDiscount, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
   const { user, addOrder, updateUser, customerProfile, isAuthenticated } = useAuth();
-  const { addAdminOrder, customers, orders, applyOrderOffers, deductStockForOrder, storeStatus, generalConfig, isPhoneBlocked, currentAccountConfig, formatCurrency } = useAdmin();
+  const { addAdminOrder, customers, orders, applyOrderOffers, deductStockForOrder, storeStatus, generalConfig, isPhoneBlocked, currentAccountConfig, formatCurrency, deliveryTimeSlots } = useAdmin();
   const navigate = useNavigate();
   const [isOrdered, setIsOrdered] = useState(false);
   const [confirmedName, setConfirmedName] = useState('');
@@ -72,8 +72,32 @@ export const Checkout: React.FC = () => {
     phone: user?.phone || '',
     notes: '',
     paymentMethod: 'cash',
-    deliveryTime: isPickup ? 'Retiro en sucursal' : 'Lo antes posible (Entrega en 30-60 min)'
+    deliveryTime: isPickup ? 'Retiro en sucursal' : 'Lo antes posible'
   });
+
+  // Sincronizar o seleccionar horario predeterminado válido según slots configurados
+  useEffect(() => {
+    const activeSlots = (deliveryTimeSlots && deliveryTimeSlots.length > 0 ? deliveryTimeSlots : defaultDeliveryTimeSlots)
+      .filter(s => s.enabled !== false);
+    if (activeSlots.length === 0) return;
+
+    setFormData(prev => {
+      const current = prev.deliveryTime;
+      const matchesAny = activeSlots.some(s =>
+        current === s.label ||
+        (s.sub && current === `${s.label} (${s.sub})`) ||
+        (Boolean(s.label) && current.startsWith(s.label))
+      );
+      if (!matchesAny) {
+        const first = activeSlots[0];
+        return {
+          ...prev,
+          deliveryTime: first.sub ? `${first.label} (${first.sub})` : first.label
+        };
+      }
+      return prev;
+    });
+  }, [deliveryTimeSlots]);
 
   // Clean and format helper functions
   const cleanPhone = (p: string) => {
@@ -86,42 +110,17 @@ export const Checkout: React.FC = () => {
 
   const cleanDni = (d: string) => (d || '').replace(/\D/g, '');
 
-  // ─── Trusted Device & OTP Verification ───────────────────────
-  const getDeviceVerifiedPhones = (): string[] => {
-    try {
-      const stored = localStorage.getItem('la_martina_verified_phones');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const addDeviceVerifiedPhone = (p: string) => {
-    const clean = cleanPhone(p);
-    if (!clean) return;
-    const list = getDeviceVerifiedPhones();
-    if (!list.includes(clean)) {
-      list.push(clean);
-      localStorage.setItem('la_martina_verified_phones', JSON.stringify(list));
-    }
-  };
-
-  const [otpCodeSent, setOtpCodeSent] = useState<string | null>(null);
+  // ─── OTP Verification (Server-Side) ───────────────────────
+  // Solo consideramos verificado el teléfono si poseemos el checkoutToken emitido por el backend
+  const [checkoutToken, setCheckoutToken] = useState<string | null>(null);
+  const [otpCodeSent, setOtpCodeSent] = useState<boolean>(false);
   const [otpInput, setOtpInput] = useState('');
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpSuccess, setOtpSuccess] = useState<string | null>(null);
   const [otpCountdown, setOtpCountdown] = useState(0);
-  const [deviceVerifiedManually, setDeviceVerifiedManually] = useState(false);
 
-  // Check if current phone is verified in this device
-  const isPhoneVerifiedOnDevice = useMemo(() => {
-    const clean = cleanPhone(formData.phone);
-    if (!clean || clean.length < 8) return false;
-    return getDeviceVerifiedPhones().includes(clean);
-  }, [formData.phone]);
-
-  const isPhoneEffectiveVerified = isPhoneVerifiedOnDevice || deviceVerifiedManually;
+  const isPhoneEffectiveVerified = !!checkoutToken;
 
   useEffect(() => {
     if (otpCountdown > 0) {
@@ -132,8 +131,8 @@ export const Checkout: React.FC = () => {
 
   // Reset manual verification when phone changes
   useEffect(() => {
-    setDeviceVerifiedManually(false);
-    setOtpCodeSent(null);
+    setCheckoutToken(null);
+    setOtpCodeSent(false);
     setOtpInput('');
     setOtpError(null);
     setOtpSuccess(null);
@@ -154,34 +153,59 @@ export const Checkout: React.FC = () => {
     }
 
     setIsSendingOtp(true);
-    const generated = Math.floor(1000 + Math.random() * 9000).toString(); // 4 dígitos
-    setOtpCodeSent(generated);
 
     try {
-      await whatsappMessageService.createOtpMessage(phoneDigits, generated, formData.name);
+      const { supabase } = await import('../lib/supabase');
+      const { error } = await supabase.rpc('request_otp', { 
+        p_phone: phoneDigits,
+        p_customer_name: formData.name 
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setOtpCodeSent(true);
       setOtpSuccess('¡Código enviado por WhatsApp! Revisá tus mensajes.');
       setOtpCountdown(60);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error enviando OTP:', err);
-      setOtpError('Error enviando código de verificación. Reintentá en unos momentos.');
+      setOtpError(err.message || 'Error enviando código de verificación. Reintentá en unos momentos.');
     } finally {
       setIsSendingOtp(false);
     }
   };
 
-  const handleVerifyOtp = () => {
+  const handleVerifyOtp = async () => {
     setOtpError(null);
     if (!otpInput || otpInput.trim().length !== 4) {
       setOtpError('Ingresá el código de 4 dígitos.');
       return;
     }
-    if (otpInput.trim() === otpCodeSent) {
-      addDeviceVerifiedPhone(formData.phone);
-      setDeviceVerifiedManually(true);
-      setOtpSuccess('¡Número verificado correctamente en este dispositivo!');
-      setOtpError(null);
-    } else {
-      setOtpError('El código ingresado es incorrecto.');
+    
+    const phoneDigits = cleanPhone(formData.phone);
+
+    try {
+      const { supabase } = await import('../lib/supabase');
+      const { data, error } = await supabase.rpc('verify_otp', { 
+        p_phone: phoneDigits, 
+        p_code: otpInput.trim() 
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        setCheckoutToken(data);
+        setOtpSuccess('¡Número verificado correctamente!');
+        setOtpError(null);
+      } else {
+        setOtpError('Respuesta inválida del servidor al verificar el código.');
+      }
+    } catch (err: any) {
+      console.error('Error verificando OTP:', err);
+      setOtpError(err.message || 'El código ingresado es incorrecto o ha expirado.');
     }
   };
 
@@ -226,9 +250,24 @@ export const Checkout: React.FC = () => {
   const activeTotalPrice = subtotalAfterItemDiscounts - activeOrderOfferDiscount;
   const activeDiscountApplied = originalPriceSum - activeTotalPrice;
 
-  // Dynamic shipping calculation based on distance
+  // Selected delivery slot details and free shipping check
+  const currentSlots = useMemo(() => {
+    return (deliveryTimeSlots && deliveryTimeSlots.length > 0 ? deliveryTimeSlots : defaultDeliveryTimeSlots);
+  }, [deliveryTimeSlots]);
+
+  const selectedDeliverySlot = useMemo(() => {
+    return currentSlots.find(s =>
+      formData.deliveryTime === s.label ||
+      (s.sub && formData.deliveryTime === `${s.label} (${s.sub})`) ||
+      (Boolean(s.label) && formData.deliveryTime.startsWith(s.label))
+    );
+  }, [currentSlots, formData.deliveryTime]);
+
+  const hasSlotFreeShipping = Boolean(selectedDeliverySlot?.freeShipping);
+
+  // Dynamic shipping calculation based on distance and slot benefits
   const shippingCalculation = useMemo(() => {
-    return calculateShippingCost({
+    const calc = calculateShippingCost({
       distanceKm: currentDistanceKm,
       cartTotal: activeTotalPrice,
       baseCost: generalConfig.shippingBaseCost ?? 1000,
@@ -236,10 +275,93 @@ export const Checkout: React.FC = () => {
       freeShippingMinAmount: generalConfig.freeShippingMinAmount ?? 0,
       isPickup
     });
-  }, [currentDistanceKm, activeTotalPrice, generalConfig, isPickup]);
+
+    if (hasSlotFreeShipping && !isPickup) {
+      return {
+        ...calc,
+        cost: 0,
+        isFreeShipping: true,
+        breakdownText: '¡Envío gratis para este horario!'
+      };
+    }
+
+    return calc;
+  }, [currentDistanceKm, activeTotalPrice, generalConfig, isPickup, hasSlotFreeShipping]);
 
   const shippingCost = shippingCalculation.cost;
   const finalTotal = activeTotalPrice + shippingCost;
+
+  // Helper de disponibilidad y horario de atención para franjas horarias
+  const checkSlotAvailability = (slot: DeliveryTimeSlot, now: Date = new Date()) => {
+    const currentHour = now.getHours();
+    const currentMinutes = now.getMinutes();
+    const currentTotalMinutes = currentHour * 60 + currentMinutes;
+
+    const isAsap = !slot.isTomorrow && (slot.id === 'asap' || (!slot.cutoffTime && (slot.endHour === undefined || slot.endHour >= 24)));
+
+    if (isAsap) {
+      const start = slot.startTime || '09:00';
+      const end = slot.endTime || '21:00';
+      const [sH, sM] = start.split(':').map(Number);
+      const [eH, eM] = end.split(':').map(Number);
+      const sMinTotal = (isNaN(sH) ? 9 : sH) * 60 + (isNaN(sM) ? 0 : sM);
+      const eMinTotal = (isNaN(eH) ? 21 : eH) * 60 + (isNaN(eM) ? 0 : eM);
+
+      if (currentTotalMinutes < sMinTotal || currentTotalMinutes >= eMinTotal) {
+        return {
+          isAvailable: false,
+          reason: `Cerrado (${start} a ${end} hs)`
+        };
+      }
+      return { isAvailable: true, reason: '' };
+    }
+
+    if (!slot.isTomorrow) {
+      if (slot.cutoffTime) {
+        const [cHour, cMin] = slot.cutoffTime.split(':').map(Number);
+        if (!isNaN(cHour) && !isNaN(cMin)) {
+          if (currentHour > cHour || (currentHour === cHour && currentMinutes >= cMin)) {
+            return { isAvailable: false, reason: `Corte superado (${slot.cutoffTime} hs)` };
+          }
+        }
+      } else if (slot.endHour !== undefined || slot.endMin !== undefined) {
+        const endHour = slot.endHour ?? 24;
+        const endMin = slot.endMin ?? 0;
+        if (currentHour > endHour || (currentHour === endHour && currentMinutes >= endMin)) {
+          return { isAvailable: false, reason: 'Horario superado' };
+        }
+        const minutesUntilEnd = (endHour - currentHour) * 60 + (endMin - currentMinutes);
+        if (minutesUntilEnd < 15) {
+          return { isAvailable: false, reason: 'Fuera de horario' };
+        }
+      }
+    }
+
+    return { isAvailable: true, reason: '' };
+  };
+
+  // Auto-seleccionar primer horario disponible si el seleccionado no está disponible (ej: supermercado cerrado)
+  useEffect(() => {
+    const now = new Date();
+    const activeSlots = currentSlots.filter(s => s.enabled !== false);
+    if (activeSlots.length === 0) return;
+
+    const currentMatches = activeSlots.find(s =>
+      formData.deliveryTime === s.label ||
+      (s.sub && formData.deliveryTime === `${s.label} (${s.sub})`) ||
+      (Boolean(s.label) && formData.deliveryTime.startsWith(s.label))
+    );
+
+    const isCurrentValid = currentMatches && checkSlotAvailability(currentMatches, now).isAvailable;
+
+    if (!isCurrentValid) {
+      const firstAvailable = activeSlots.find(s => checkSlotAvailability(s, now).isAvailable);
+      if (firstAvailable) {
+        const val = firstAvailable.sub ? `${firstAvailable.label} (${firstAvailable.sub})` : firstAvailable.label;
+        setFormData(prev => ({ ...prev, deliveryTime: val }));
+      }
+    }
+  }, [currentSlots, formData.deliveryTime]);
 
   // Cuenta Corriente Validations (Temporal Overdue & Monetary Limit including Shipping)
   const ccOverdueStatus = useMemo(() => {
@@ -327,10 +449,15 @@ export const Checkout: React.FC = () => {
     setDeliveryMethod(method);
     localStorage.setItem('la-martina-delivery-method', method);
     setFormError(null);
-    setFormData(prev => ({
-      ...prev,
-      deliveryTime: method === 'retiro' ? 'Retiro en sucursal' : 'Lo antes posible (Entrega en 30-60 min)'
-    }));
+    setFormData(prev => {
+      const activeSlots = (deliveryTimeSlots && deliveryTimeSlots.length > 0 ? deliveryTimeSlots : defaultDeliveryTimeSlots)
+        .filter(s => s.enabled !== false);
+      const defaultTime = activeSlots[0] ? (activeSlots[0].sub ? `${activeSlots[0].label} (${activeSlots[0].sub})` : activeSlots[0].label) : 'Lo antes posible';
+      return {
+        ...prev,
+        deliveryTime: defaultTime
+      };
+    });
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -355,8 +482,13 @@ export const Checkout: React.FC = () => {
     setDeliveryReference('');
   };
 
-  const handleOrder = (e: React.FormEvent) => {
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  const handleOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isConfirming) return;
+    setIsConfirming(true);
+    
     setStockError(null);
     setFormError(null);
 
@@ -444,22 +576,11 @@ export const Checkout: React.FC = () => {
       }
     }
 
-    // Final stock validation before confirming
-    const stockResult = deductStockForOrder(items.map(i => ({ id: i.id, quantity: i.quantity, stock: i.stock })));
-    if (!stockResult.success) {
-      setStockError(stockResult.insufficientItems);
-      return;
-    }
-
-    const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
-    const dateStr = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
     // Resolve final delivery coordinates
     const finalLat = usingProfileAddress ? (user?.address_lat ?? null) : (deliveryCoords?.lat ?? null);
     const finalLng = usingProfileAddress ? (user?.address_lng ?? null) : (deliveryCoords?.lng ?? null);
     const finalAddressLabel = usingProfileAddress ? savedProfileAddress : deliveryAddressLabel;
     const validatedDni = isCcValidated ? cleanDni(currentCustomer?.dni || ccDniInput) : (currentCustomer?.dni || undefined);
-
     const orderNotes = formData.notes?.trim() || null;
 
     // Build address string — use saved profile address or newly selected map address
@@ -479,99 +600,88 @@ export const Checkout: React.FC = () => {
           (finalLat && finalLng) ? `[GEO:${finalLat},${finalLng}]` : ''
         ].filter(Boolean).join(' ');
 
-    // Guardar en el historial del usuario
-    const userOrder = {
-      id: orderId,
-      date: dateStr,
-      timestamp: Date.now(),
-      total: finalTotal,
-      itemsCount: totalItems,
-      status: 'Procesando' as const,
-      address: backwardAddressString,
-      deliveryTime: formData.deliveryTime,
-      items: [...items],
-      phone: formData.phone,
-      dni: validatedDni,
-      notes: orderNotes,
-      discount: activeOrderOfferDiscount,
-      discountLabel: activeOrderOfferLabel || undefined,
-      delivery_lat: finalLat,
-      delivery_lng: finalLng,
-      delivery_address_label: finalAddressLabel || null,
-      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber?.trim() || null),
-      delivery_reference: usingProfileAddress ? null : (deliveryReference?.trim() || null),
-      delivery_notes: orderNotes,
-      delivery_method: isPickup ? ('retiro' as const) : ('envio' as const)
-    };
-    addOrder(userOrder as Order);
+    setIsConfirming(true);
 
-    // Guardar en el panel de administración
-    const adminOrder = {
-      id: orderId,
-      date: dateStr,
-      timestamp: Date.now(),
-      customer: finalCustomerName,
-      phone: formData.phone,
-      dni: validatedDni,
-      address: backwardAddressString,
-      deliveryTime: formData.deliveryTime,
-      method: isPickup ? 'Retiro' : 'Envío',
-      paymentMethod: formData.paymentMethod,
-      paymentStatus: 'Pendiente' as 'Pagado' | 'Pendiente',
-      status: 'Nuevo' as const,
-      source: 'web' as const,
-      total: finalTotal,
-      items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.finalPrice ?? i.price, quantity: i.quantity, originalPrice: i.price, offerId: i.offerId, lineDiscount: i.lineDiscount, discountedQuantity: i.discountedQuantity })),
-      notes: orderNotes,
-      discount: activeOrderOfferDiscount,
-      discountLabel: activeOrderOfferLabel || undefined,
-      delivery_lat: finalLat,
-      delivery_lng: finalLng,
-      delivery_address_label: finalAddressLabel || null,
-      delivery_house_number: usingProfileAddress ? null : (deliveryHouseNumber?.trim() || null),
-      delivery_reference: usingProfileAddress ? null : (deliveryReference?.trim() || null),
-      delivery_notes: orderNotes,
-      delivery_method: isPickup ? 'retiro' : 'envio'
-    };
-    addAdminOrder(adminOrder as any);
+    try {
+      const { supabase } = await import('../lib/supabase');
+      
+      const payload = {
+        items: items.map(i => ({ id: i.id, quantity: i.quantity })),
+        checkout_token: checkoutToken,
+        isPickup: isPickup,
+        customer_phone: cleanP,
+        delivery_lat: finalLat,
+        delivery_lng: finalLng,
+        delivery_data: {
+          address: backwardAddressString,
+          addressLabel: finalAddressLabel,
+          houseNumber: deliveryHouseNumber,
+          reference: deliveryReference,
+          deliveryTime: formData.deliveryTime
+        },
+        payment_method: formData.paymentMethod,
+        notes: orderNotes,
+        dni: validatedDni,
+        expected_total: finalTotal
+      };
 
-    // Auto-crear cliente verificado en la base de datos si es invitado nuevo
-    if (cleanP && !currentCustomer) {
-      const parts = finalCustomerName.trim().split(' ');
-      const firstName = parts[0] || finalCustomerName;
-      const lastName = parts.slice(1).join(' ') || '';
-      upsertCustomerProfile({
-        user_id: customerProfile?.user_id || `guest_${cleanP}`,
-        phone: cleanP,
-        name: firstName,
-        last_name: lastName,
-        address: backwardAddressString,
-        address_lat: finalLat,
-        address_lng: finalLng,
-        branch_id: 'main',
-        active: true,
-        dni: validatedDni || cleanP
-      } as any).catch(console.error);
+      const { data, error } = await supabase.functions.invoke('checkout-api/checkout', {
+        body: payload
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Error del servidor');
+      }
+      
+      if (!data || !data.success) {
+        throw new Error(data?.message || data?.error || 'Error al procesar el pedido');
+      }
+
+      // Check if server total matches frontend total
+      // The edge function returns the real total calculated server-side
+      const serverTotal = data.total;
+      
+      if (Math.abs(serverTotal - finalTotal) > 1) { // 1 peso tolerance
+        setFormError(`El importe cotizado por el servidor ($${formatCurrency(serverTotal, true, true)}) difiere de tu total en pantalla. Revisá los precios actualizados y confirmá de nuevo.`);
+        window.scrollTo({ top: 300, behavior: 'smooth' });
+        setIsConfirming(false);
+        // Aquí idealmente deberíamos refrescar el carrito, pero como mínimo bloqueamos
+        return;
+      }
+
+      // Guardar última ubicación en localStorage para futuros pedidos
+      if (!isPickup && finalLat && finalLng) {
+        saveLastDeliveryLocation(
+          { lat: finalLat, lng: finalLng },
+          finalAddressLabel || '',
+          deliveryHouseNumber,
+          deliveryReference
+        );
+      }
+
+      // Guardar datos en perfil local del invitado si aplica
+      updateUser({ name: finalCustomerName, phone: formData.phone });
+      setConfirmedName(finalCustomerName);
+      setIsOrdered(true);
+
+      setTimeout(() => {
+        clearCart();
+      }, 1000);
+
+    } catch (err: any) {
+      console.error("Error al procesar el pedido:", err);
+      if (err.message?.includes("Insufficient stock")) {
+        setFormError('Lamentablemente, algunos de los productos ya no tienen stock suficiente. Modificá tu carrito.');
+      } else if (err.message?.includes("token")) {
+        setFormError('La sesión de pago expiró o es inválida. Verificá nuevamente tu teléfono.');
+        setCheckoutToken(null);
+      } else {
+        setFormError('Error al crear el pedido: ' + err.message);
+      }
+      window.scrollTo({ top: 300, behavior: 'smooth' });
+    } finally {
+      setIsConfirming(false);
     }
-
-    // Guardar última ubicación en localStorage para futuros pedidos
-    if (!isPickup && finalLat && finalLng) {
-      saveLastDeliveryLocation(
-        { lat: finalLat, lng: finalLng },
-        finalAddressLabel || '',
-        deliveryHouseNumber,
-        deliveryReference
-      );
-    }
-
-    // Guardar datos en perfil local del invitado si aplica
-    updateUser({ name: finalCustomerName, phone: formData.phone });
-    setConfirmedName(finalCustomerName);
-    setIsOrdered(true);
-
-    setTimeout(() => {
-      clearCart();
-    }, 1000);
   };
 
   if (isOrdered) {
@@ -972,37 +1082,23 @@ export const Checkout: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {(() => {
                       const now = new Date();
-                      const currentHour = now.getHours();
-                      const currentMinutes = now.getMinutes();
+                      const activeSlots = (deliveryTimeSlots && deliveryTimeSlots.length > 0 ? deliveryTimeSlots : defaultDeliveryTimeSlots)
+                        .filter(s => s.enabled !== false);
 
-                      const slots = [
-                        { id: 'asap', label: 'Lo antes posible', sub: '30-60 min', icon: 'bolt', endHour: 24, endMin: 0 },
-                        { id: 'today_midday', label: 'Hoy al Mediodía', sub: '13:00 a 14:00', icon: 'sunny', endHour: 14, endMin: 0 },
-                        { id: 'today_2', label: 'Hoy a la Noche', sub: '21:00 a 22:00', icon: 'dark_mode', endHour: 22, endMin: 0 },
-                        { id: 'tomorrow_1', label: 'Mañana al Mediodía', sub: '13:00 a 14:00', icon: 'event', isTomorrow: true }
-                      ];
-
-                      return slots.map(slot => {
-                        // Lógica de disponibilidad
-                        let isAvailable = true;
-                        if (!slot.isTomorrow && slot.id !== 'asap') {
-                          const endHour = slot.endHour ?? 0;
-                          const endMin = slot.endMin ?? 0;
-                          if (currentHour > endHour || (currentHour === endHour && currentMinutes >= endMin)) {
-                            isAvailable = false;
-                          }
-                          const minutesUntilEnd = (endHour - currentHour) * 60 + (endMin - currentMinutes);
-                          if (minutesUntilEnd < 15) {
-                            isAvailable = false;
-                          }
-                        }
+                      return activeSlots.map(slot => {
+                        const { isAvailable, reason: closedReason } = checkSlotAvailability(slot, now);
+                        const slotFullValue = slot.sub ? `${slot.label} (${slot.sub})` : slot.label;
+                        const isSelected =
+                          formData.deliveryTime === slot.label ||
+                          formData.deliveryTime === slotFullValue ||
+                          (Boolean(slot.label) && formData.deliveryTime.startsWith(slot.label));
 
                         return (
                           <label
                             key={slot.id}
                             className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all ${!isAvailable
-                                ? 'opacity-40 bg-surface-container-low border-outline-variant/10 cursor-not-allowed'
-                                : formData.deliveryTime === slot.label
+                                ? 'opacity-50 bg-surface-container-low border-outline-variant/10 cursor-not-allowed'
+                                : isSelected
                                   ? 'border-primary bg-primary/5 cursor-pointer shadow-sm'
                                   : 'border-outline-variant/20 hover:bg-surface-container-low cursor-pointer'
                               }`}
@@ -1010,20 +1106,40 @@ export const Checkout: React.FC = () => {
                             <input
                               type="radio"
                               name="deliveryTime"
-                              value={slot.label}
-                              checked={formData.deliveryTime === slot.label}
-                              onChange={handleInputChange}
+                              value={slotFullValue}
+                              checked={isSelected}
+                              onChange={() => {
+                                if (isAvailable) {
+                                  setFormData(prev => ({ ...prev, deliveryTime: slotFullValue }));
+                                }
+                              }}
                               disabled={!isAvailable}
                               className="hidden"
                             />
-                            <span className={`material-symbols-outlined text-[22px] ${formData.deliveryTime === slot.label ? 'text-primary' : 'text-on-surface-variant'}`}>
-                              {slot.icon}
+                            <span className={`material-symbols-outlined text-[22px] ${isSelected ? 'text-primary' : 'text-on-surface-variant'}`}>
+                              {slot.icon || 'schedule'}
                             </span>
                             <div className="flex-1 min-w-0">
-                              <p className="font-bold text-sm text-on-surface leading-tight">{slot.label}</p>
-                              <p className="text-[11px] text-on-surface-variant font-medium mt-0.5">{slot.sub}</p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-bold text-sm text-on-surface leading-tight">{slot.label}</p>
+                                {slot.freeShipping && !isPickup && (
+                                  <span className="text-[10px] font-black uppercase text-green-700 bg-green-100 px-2 py-0.5 rounded-md inline-flex items-center gap-0.5">
+                                    <span className="material-symbols-outlined text-[12px]">local_shipping</span>
+                                    Envío Gratis
+                                  </span>
+                                )}
+                              </div>
+                              {slot.sub && (
+                                <p className="text-[11px] text-on-surface-variant font-medium mt-0.5">{slot.sub}</p>
+                              )}
+                              {!isAvailable && closedReason && (
+                                <span className="text-[10px] font-bold text-red-700 bg-red-100/90 px-2 py-0.5 rounded-md mt-1 inline-flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-[12px]">lock_clock</span>
+                                  {closedReason}
+                                </span>
+                              )}
                             </div>
-                            {formData.deliveryTime === slot.label && (
+                            {isSelected && (
                               <span className="material-symbols-outlined text-primary text-[20px]">check_circle</span>
                             )}
                           </label>
@@ -1234,9 +1350,17 @@ export const Checkout: React.FC = () => {
                 UBICACIÓN FUERA DE COBERTURA (CAMBIÁ A RETIRO)
               </div>
             ) : (
-              <button type="submit" className="w-full bg-primary text-white font-label-sm py-5 rounded-full flex justify-center items-center gap-3 hover:bg-primary/90 transition-all shadow-xl text-lg font-bold">
-                CONFIRMAR PEDIDO
-                <span className="material-symbols-outlined">send</span>
+              <button 
+                type="submit" 
+                disabled={isConfirming}
+                className={`w-full text-white font-label-sm py-5 rounded-full flex justify-center items-center gap-3 transition-all shadow-xl text-lg font-bold ${isConfirming ? 'bg-surface-variant text-on-surface-variant cursor-not-allowed shadow-none' : 'bg-primary hover:bg-primary/90'}`}
+              >
+                {isConfirming ? 'PROCESANDO...' : 'CONFIRMAR PEDIDO'}
+                {isConfirming ? (
+                  <span className="material-symbols-outlined animate-spin">sync</span>
+                ) : (
+                  <span className="material-symbols-outlined">send</span>
+                )}
               </button>
             )}
           </form>
@@ -1245,7 +1369,7 @@ export const Checkout: React.FC = () => {
           <aside className="w-full md:w-100 sticky top-24">
             <div className="bg-white p-6 rounded-3xl shadow-md border border-outline-variant/10">
               <h3 className="text-[25px] font-bold text-on-background mb-6">Tu Pedido</h3>
-              <div className="max-h-75 overflow-y-auto space-y-4 mb-6 pr-2 no-scrollbar">
+              <div className="max-h-[50vh] overflow-y-auto space-y-4 mb-6 pr-2 no-scrollbar">
                 {items.map(item => (
                   <div key={item.id} className="flex gap-4 items-center">
                     <div className="w-12 h-12 bg-[#fcf9f8] rounded-lg p-1">
@@ -1293,18 +1417,20 @@ export const Checkout: React.FC = () => {
                     <span>{isPickup ? 'Retiro en sucursal' : 'Envío a domicilio'}</span>
                     {!isPickup && (
                       <span className="text-[10px] text-on-surface-variant/70 block">
-                        {shippingCalculation.isFreeShipping
-                          ? '¡Envío bonificado por monto!'
-                          : currentDistanceKm !== null
-                            ? `(${currentDistanceKm.toFixed(1)} km)`
-                            : '(Tarifa base)'}
+                        {hasSlotFreeShipping
+                          ? '¡Envío bonificado por horario elegido!'
+                          : shippingCalculation.isFreeShipping
+                            ? '¡Envío bonificado por monto!'
+                            : currentDistanceKm !== null
+                              ? `(${currentDistanceKm.toFixed(1)} km)`
+                              : '(Tarifa base)'}
                       </span>
                     )}
                   </div>
                   <span className="text-right">
                     {isPickup ? (
                       <span className="text-green-600 font-bold">Gratis</span>
-                    ) : shippingCalculation.isFreeShipping ? (
+                    ) : (hasSlotFreeShipping || shippingCalculation.isFreeShipping) ? (
                       <span className="text-green-600 font-bold">¡Gratis!</span>
                     ) : (
                       <span className="font-semibold text-on-surface">$ {shippingCost.toLocaleString('es-AR', { maximumFractionDigits: 0 })}</span>

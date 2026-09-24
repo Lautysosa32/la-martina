@@ -4,9 +4,10 @@ import { useAdmin } from '../../context/AdminContext';
 import type { AdminCustomer, AdminOrder } from '../../context/AdminContext';
 import { whatsappMessageService } from '../../services/whatsapp-message.service';
 import { useScrollLock } from '../../utils/useScrollLock';
+import { validateCuit } from '../../../server/services/arca/arcaTaxRules';
 
 export const Customers: React.FC = () => {
-  const { customers, orders, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount, formatCurrency, addManualCustomer, deleteCustomer, blockPhone, unblockPhone, isPhoneBlocked } = useAdmin();
+  const { customers, orders, invoices, toggleCurrentAccount, updateCustomerProfile, settleCurrentAccount, formatCurrency, addManualCustomer, deleteCustomer, blockPhone, unblockPhone, isPhoneBlocked } = useAdmin();
   const [headerPortal, setHeaderPortal] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setHeaderPortal(document.getElementById('admin-header-portal'));
@@ -20,11 +21,22 @@ export const Customers: React.FC = () => {
   const [settleMethod, setSettleMethod] = useState('cash');
   const [settleType, setSettleType] = useState<'total' | 'parcial'>('total');
   const [partialAmount, setPartialAmount] = useState('');
+  const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editDni, setEditDni] = useState('');
   const [editBirthday, setEditBirthday] = useState('');
+  const [editCuit, setEditCuit] = useState('');
+  const [editTaxCondition, setEditTaxCondition] = useState('Consumidor Final');
+  const [editBusinessName, setEditBusinessName] = useState('');
+  const [editFiscalAddress, setEditFiscalAddress] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editDocumentType, setEditDocumentType] = useState<'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR'>('DNI');
+  const [cuitValidationMsg, setCuitValidationMsg] = useState<string | null>(null);
   const [isSendingReminder, setIsSendingReminder] = useState(false);
   const [reminderStatus, setReminderStatus] = useState<string | null>(null);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+  const openedPhoneRef = React.useRef<string | null>(null);
 
   const { currentAccountConfig } = useAdmin();
   const [showLimitsForm, setShowLimitsForm] = useState(false);
@@ -35,20 +47,108 @@ export const Customers: React.FC = () => {
     accountLimitNotes: ''
   });
 
-  // Sync inputs with selected customer when modal opens
+  // Sync inputs with selected customer only when opening or switching customers
   useEffect(() => {
     if (selectedCustomer) {
-      const c = customers.find(x => x.phone === selectedCustomer.phone) || selectedCustomer;
-      setEditPhone(c.phone || '');
-      setEditDni(c.dni || '');
-      setEditBirthday(c.birthday || '');
+      if (openedPhoneRef.current !== selectedCustomer.phone) {
+        openedPhoneRef.current = selectedCustomer.phone;
+        const c = customers.find(x => x.phone === selectedCustomer.phone) || selectedCustomer;
+        setEditName(c.name || '');
+        setEditPhone(c.phone || '');
+        setEditDni(c.dni || '');
+        setEditBirthday(c.birthday || '');
+        setEditCuit(c.cuit || '');
+        setEditTaxCondition(c.taxCondition || 'Consumidor Final');
+        setEditBusinessName(c.businessName || '');
+        setEditFiscalAddress(c.fiscalAddress || c.address || '');
+        setEditEmail(c.email || '');
+        setEditDocumentType(c.documentType || (c.cuit ? 'CUIT' : 'DNI'));
+        setCuitValidationMsg(null);
+        setSaveSuccessMsg(null);
+      }
     } else {
+      openedPhoneRef.current = null;
+      setEditName('');
       setEditPhone('');
       setEditDni('');
       setEditBirthday('');
+      setEditCuit('');
+      setEditTaxCondition('Consumidor Final');
+      setEditBusinessName('');
+      setEditFiscalAddress('');
+      setEditEmail('');
+      setEditDocumentType('DNI');
       setReminderStatus(null);
+      setCuitValidationMsg(null);
+      setSaveSuccessMsg(null);
     }
-  }, [selectedCustomer?.phone, customers]);
+  }, [selectedCustomer?.phone]);
+
+  const handleSaveCustomerChanges = async () => {
+    if (!selectedCustomer) return;
+    const currentCustomer = customers.find(c => c.phone === selectedCustomer.phone) || selectedCustomer;
+    const oldPhone = currentCustomer.phone;
+    const newPhone = editPhone.trim();
+
+    if (editCuit.trim()) {
+      const check = validateCuit(editCuit);
+      if (!check.valid && editTaxCondition === 'Responsable Inscripto') {
+        setCuitValidationMsg(check.error || 'CUIT inválido para Responsable Inscripto');
+        return;
+      }
+    }
+
+    setIsSavingCustomer(true);
+    setCuitValidationMsg(null);
+    setSaveSuccessMsg(null);
+
+    try {
+      const isFiscal = Boolean(editCuit.trim() || editBusinessName.trim() || editTaxCondition !== 'Consumidor Final');
+
+      const success = await updateCustomerProfile(oldPhone, {
+        name: editName.trim(),
+        phone: newPhone,
+        dni: editDni.trim(),
+        birthday: editBirthday,
+        email: editEmail.trim(),
+        cuit: editCuit.trim(),
+        documentType: editDocumentType,
+        taxCondition: editTaxCondition,
+        businessName: editBusinessName.trim(),
+        fiscalAddress: editFiscalAddress.trim(),
+        isFiscal
+      });
+
+      if (success !== false) {
+        const updatedFields: any = {
+          name: editName.trim(),
+          dni: editDni.trim(),
+          birthday: editBirthday,
+          email: editEmail.trim(),
+          cuit: editCuit.trim(),
+          taxCondition: editTaxCondition,
+          businessName: editBusinessName.trim(),
+          fiscalAddress: editFiscalAddress.trim(),
+        };
+        if (newPhone && newPhone !== oldPhone) {
+          openedPhoneRef.current = newPhone;
+          setSelectedCustomer(prev => prev ? { ...prev, ...updatedFields, phone: newPhone } : null);
+        } else {
+          setSelectedCustomer(prev => prev ? { ...prev, ...updatedFields } : null);
+        }
+        setSaveSuccessMsg('Modificaciones guardadas correctamente');
+        setTimeout(() => setSaveSuccessMsg(null), 3500);
+      } else {
+        setSaveSuccessMsg('❌ Error al guardar. Verificá tu conexión e intentá de nuevo.');
+        setTimeout(() => setSaveSuccessMsg(null), 5000);
+      }
+    } catch (err: any) {
+      console.error('Error saving customer changes:', err);
+      alert('Error al guardar: ' + (err.message || ''));
+    } finally {
+      setIsSavingCustomer(false);
+    }
+  };
 
   const handleSendDebtReminder = async (customer: AdminCustomer) => {
     if (!customer.phone || customer.currentDebt <= 0) return;
@@ -89,7 +189,18 @@ export const Customers: React.FC = () => {
 
   // New Customer Modal
   const [showNewCustomerModal, setShowNewCustomerModal] = useState(false);
-  const [newCustomer, setNewCustomer] = useState({ nombre: '', apellido: '', telefono: '', direccion: '', dni: '' });
+  const [newCustomer, setNewCustomer] = useState({ 
+    nombre: '', 
+    apellido: '', 
+    telefono: '', 
+    direccion: '', 
+    dni: '',
+    cuit: '',
+    taxCondition: 'Consumidor Final',
+    businessName: '',
+    fiscalAddress: '',
+    email: ''
+  });
   const [newCustomerError, setNewCustomerError] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ phone: string; name: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -176,9 +287,15 @@ export const Customers: React.FC = () => {
   };
 
   const sortedCustomers = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
     const result = customers.filter(c => {
-      const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.phone.includes(searchQuery);
+      const matchesSearch = !q ||
+        c.name.toLowerCase().includes(q) ||
+        c.phone.includes(q) ||
+        (c.dni && c.dni.includes(q)) ||
+        (c.cuit && c.cuit.includes(q)) ||
+        (c.email && c.email.toLowerCase().includes(q)) ||
+        (c.businessName && c.businessName.toLowerCase().includes(q));
       const matchesTier = tierFilter === 'All' || c.tier === tierFilter;
       return matchesSearch && matchesTier;
     });
@@ -265,16 +382,16 @@ export const Customers: React.FC = () => {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
         {[
           { label: 'TOTAL CLIENTES', val: stats.total, growth: stats.totalGrowth, icon: 'group', color: 'red' },
           { label: 'MIEMBROS ACTIVOS', val: stats.active, growth: stats.activeGrowth, icon: 'verified', color: 'yellow' },
           { label: 'NUEVOS ESTE MES', val: stats.newCount, growth: stats.newGrowth, icon: 'person_add', color: 'gray' }
         ].map((s, idx) => (
-          <div key={idx} className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col relative overflow-hidden">
-            <div className="flex justify-between items-start mb-6">
-              <div className={`w-12 h-12 bg-${s.color}-50 text-${s.color === 'gray' ? 'gray-500' : s.color === 'red' ? 'red-500' : 'yellow-600'} rounded-2xl flex items-center justify-center`}>
-                <span className="material-symbols-outlined">{s.icon}</span>
+          <div key={idx} className={`bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col relative overflow-hidden ${idx === 2 ? 'col-span-2 md:col-span-1' : ''}`}>
+            <div className="flex justify-between items-start mb-3 sm:mb-6">
+              <div className={`w-10 h-10 sm:w-12 sm:h-12 bg-${s.color}-50 text-${s.color === 'gray' ? 'gray-500' : s.color === 'red' ? 'red-500' : 'yellow-600'} rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0`}>
+                <span className="material-symbols-outlined text-[20px] sm:text-[24px]">{s.icon}</span>
               </div>
               <span className={`${parseFloat(s.growth) >= 0 ? 'text-green-500' : 'text-red-500'} text-xs font-bold flex items-center gap-0.5`}>
                 {parseFloat(s.growth) >= 0 ? '+' : ''}{formatCurrency(parseFloat(s.growth), false)}%
@@ -284,8 +401,8 @@ export const Customers: React.FC = () => {
               </span>
             </div>
             <div>
-              <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">{s.label}</p>
-              <p className="text-4xl font-black text-on-background">{formatCurrency(s.val, false)}</p>
+              <p className="text-[10px] sm:text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1 truncate">{s.label}</p>
+              <p className="text-2xl sm:text-4xl font-black text-on-background truncate">{formatCurrency(s.val, false)}</p>
             </div>
           </div>
         ))}
@@ -294,7 +411,7 @@ export const Customers: React.FC = () => {
       {/* Main Table Area */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-outline-variant/5 overflow-hidden">
         {/* Filters */}
-        <div className="p-6 border-b border-outline-variant/10 flex flex-wrap gap-4 items-center">
+        <div className="p-4 sm:p-6 border-b border-outline-variant/10 flex flex-wrap gap-3 sm:gap-4 items-center">
           <div className="relative flex-1 min-w-[200px]">
             <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">filter_list</span>
             <input
@@ -333,25 +450,25 @@ export const Customers: React.FC = () => {
           </p>
         </div>
 
-        {/* Natural Table - Optimized to fit without scroll */}
-        <div className="w-full">
-          <table className="w-full text-left border-collapse table-auto">
+        {/* Natural Table - Responsive con scroll horizontal interno */}
+        <div className="w-full overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[920px]">
             <thead>
               <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">
                 {([
-                  { key: 'name', label: 'Nombre', width: '500px' },
-                  { key: 'phone', label: 'Teléfono', width: '140px' },
+                  { key: 'name', label: 'Nombre', width: '280px' },
+                  { key: 'phone', label: 'Teléfono', width: '150px' },
                   { key: 'tier', label: 'Categoría', width: '130px' },
-                  { key: 'totalOrders', label: 'Órdenes', width: '90px' },
-                  { key: 'totalSpent', label: 'Total gastado', width: '130px' },
-                  { key: 'lastOrder', label: 'Última actividad', width: '150px' }
+                  { key: 'totalOrders', label: 'Órdenes', width: '100px' },
+                  { key: 'totalSpent', label: 'Total gastado', width: '140px' },
+                  { key: 'lastOrder', label: 'Última actividad', width: '160px' }
                 ] as const).map(col => {
                   const sort = sortConfigs.find(c => c.key === col.key);
                   return (
                     <th
                       key={col.key}
                       onClick={(e) => handleSort(col.key, e.shiftKey)}
-                      className="px-5 py-5 font-bold cursor-pointer select-none group"
+                      className="px-5 py-4 font-bold cursor-pointer select-none group whitespace-nowrap"
                       style={col.width ? { width: col.width } : {}}
                     >
                       <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl group-hover:bg-surface-container-low transition-all duration-200">
@@ -363,7 +480,7 @@ export const Customers: React.FC = () => {
                     </th>
                   );
                 })}
-                <th className="px-5 py-5 font-bold w-[80px]"></th>
+                <th className="px-5 py-4 font-bold w-[80px] whitespace-nowrap"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/10 text-sm">
@@ -376,10 +493,28 @@ export const Customers: React.FC = () => {
                         <div className="w-10 h-10 rounded-xl bg-surface-container-low flex items-center justify-center font-bold text-on-surface-variant border border-outline-variant/10 shadow-sm shrink-0">
                           {getInitials(c.name)}
                         </div>
-                        <span className="font-bold text-on-background text-[14px] line-clamp-1">{c.name}</span>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-on-background text-[14px] line-clamp-1">{c.name}</span>
+                            {c.taxCondition === 'Responsable Inscripto' ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-purple-100 text-purple-800 border border-purple-200 shrink-0">RI</span>
+                            ) : c.taxCondition === 'Monotributista' ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-100 text-blue-800 border border-blue-200 shrink-0">MONO</span>
+                            ) : c.taxCondition === 'Exento' ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-green-100 text-green-800 border border-green-200 shrink-0">EXENTO</span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-surface-container-high text-on-surface-variant border border-outline-variant/20 shrink-0">CF</span>
+                            )}
+                          </div>
+                          {(c.cuit || (c.dni && c.dni !== c.phone)) && (
+                            <span className="text-[11px] font-mono text-on-surface-variant block">
+                              {c.cuit ? `CUIT: ${c.cuit}` : `DNI: ${c.dni}`}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
-                    <td className="px-7 py-4 text-on-surface-variant font-medium whitespace-nowrap">
+                    <td className="px-5 py-4 text-on-surface-variant font-medium whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         <span>{c.phone}</span>
                         {isPhoneBlocked(c.phone) && (
@@ -390,19 +525,19 @@ export const Customers: React.FC = () => {
                         )}
                       </div>
                     </td>
-                    <td className="px-10 py-4">
+                    <td className="px-5 py-4 whitespace-nowrap">
                       <span className="bg-surface-container-low px-2 py-1 rounded-lg text-[10px] font-black text-on-surface-variant uppercase tracking-wider whitespace-nowrap border border-outline-variant/10">
                         {tier === 'Gold' ? 'Oro' : tier === 'Silver' ? 'Plata' : tier === 'Bronze' ? 'Bronce' : tier}
                       </span>
                     </td>
-                    <td className="px-15 py-4 text-on-surface-variant font-black text-sm">{c.totalOrders}</td>
-                    <td className="px-13 py-4 font-black text-primary text-[15px] whitespace-nowrap tracking-tight">
+                    <td className="px-5 py-4 text-on-surface-variant font-black text-sm whitespace-nowrap">{c.totalOrders}</td>
+                    <td className="px-5 py-4 font-black text-primary text-[15px] whitespace-nowrap tracking-tight">
                       ${formatCurrency(c.totalSpent)}
                     </td>
-                    <td className="px-14 py-4 text-on-surface-variant font-medium whitespace-nowrap text-[13px]">
+                    <td className="px-5 py-4 text-on-surface-variant font-medium whitespace-nowrap text-[13px]">
                       {c.lastOrder.split(',')[0]}
                     </td>
-                    <td className="px-5 py-4 text-right">
+                    <td className="px-5 py-4 text-right whitespace-nowrap">
                       <button
                         onClick={() => setSelectedCustomer(c)}
                         className="w-9 h-9 rounded-xl flex items-center justify-center bg-white border border-outline-variant/10 text-on-surface-variant hover:bg-primary hover:text-white transition-all shadow-sm"
@@ -457,6 +592,20 @@ export const Customers: React.FC = () => {
               </div>
 
               <div className="p-8 space-y-6 overflow-y-auto no-scrollbar">
+                {saveSuccessMsg && (
+                  <div className={`p-3.5 border rounded-2xl text-xs font-black flex items-center gap-2 animate-in fade-in slide-in-from-top-1 ${
+                    saveSuccessMsg.startsWith('❌')
+                      ? 'bg-red-50 border-red-200 text-red-800'
+                      : 'bg-green-50 border-green-200 text-green-800'
+                  }`}>
+                    <span className={`material-symbols-outlined text-[20px] ${saveSuccessMsg.startsWith('❌') ? 'text-red-600' : 'text-green-600'}`}>
+                      {saveSuccessMsg.startsWith('❌') ? 'error' : 'check_circle'}
+                    </span>
+                    <span>{saveSuccessMsg}</span>
+                  </div>
+                )}
+
+                {/* 1. LOS CUADROS DE GASTADO Y DE PEDIDOS */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 rounded-2xl bg-surface-container-lowest border border-outline-variant/10">
                     <p className="text-[10px] font-bold text-on-surface-variant uppercase mb-1">Total Gastado</p>
@@ -468,9 +617,36 @@ export const Customers: React.FC = () => {
                   </div>
                 </div>
 
+                {/* 2. INFORMACIÓN DE CONTACTO (INCLUYE CAMBIAR NOMBRE) */}
                 <div>
                   <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-3">Información de Contacto</h4>
                   <div className="space-y-4">
+                    <div className="flex items-start gap-3">
+                      <span className="material-symbols-outlined text-primary text-[20px]">person</span>
+                      <div className="flex-1">
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Nombre / Contacto</label>
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onBlur={async () => {
+                            if (editName.trim() && editName.trim() !== currentCustomer.name) {
+                              const success = await updateCustomerProfile(currentCustomer.phone, { name: editName.trim() });
+                              if (success !== false) {
+                                setSelectedCustomer(prev => prev ? { ...prev, name: editName.trim() } : null);
+                                setSaveSuccessMsg('Nombre guardado correctamente');
+                                setTimeout(() => setSaveSuccessMsg(null), 3000);
+                              } else {
+                                setSaveSuccessMsg('❌ Error al guardar el nombre. Revisá tu conexión.');
+                                setTimeout(() => setSaveSuccessMsg(null), 5000);
+                              }
+                            }
+                          }}
+                          placeholder="Nombre completo"
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
+                        />
+                      </div>
+                    </div>
                     <div className="flex items-start gap-3">
                       <span className="material-symbols-outlined text-primary text-[20px]">phone</span>
                       <div className="flex-1">
@@ -479,10 +655,19 @@ export const Customers: React.FC = () => {
                           type="text"
                           value={editPhone}
                           onChange={(e) => setEditPhone(e.target.value)}
-                          onBlur={() => {
-                            if (editPhone && editPhone !== currentCustomer.phone) {
-                              updateCustomerProfile(currentCustomer.phone, { phone: editPhone });
-                              setSelectedCustomer(prev => prev ? { ...prev, phone: editPhone } : null);
+                          onBlur={async () => {
+                            const trimmedPhone = editPhone.trim();
+                            if (trimmedPhone && trimmedPhone !== currentCustomer.phone) {
+                              const success = await updateCustomerProfile(currentCustomer.phone, { phone: trimmedPhone });
+                              if (success !== false) {
+                                openedPhoneRef.current = trimmedPhone;
+                                setSelectedCustomer(prev => prev ? { ...prev, phone: trimmedPhone } : null);
+                                setSaveSuccessMsg('Celular guardado correctamente');
+                                setTimeout(() => setSaveSuccessMsg(null), 3000);
+                              } else {
+                                setSaveSuccessMsg('❌ Error al guardar el celular. Revisá tu conexión.');
+                                setTimeout(() => setSaveSuccessMsg(null), 5000);
+                              }
                             }
                           }}
                           placeholder="Sin teléfono"
@@ -499,12 +684,46 @@ export const Customers: React.FC = () => {
                           type="text"
                           value={editDni}
                           onChange={(e) => setEditDni(e.target.value)}
-                          onBlur={() => {
-                            if (editDni !== currentCustomer.dni) {
-                              updateCustomerProfile(currentCustomer.phone, { dni: editDni });
+                          onBlur={async () => {
+                            if (editDni.trim() !== (currentCustomer.dni || '')) {
+                              const success = await updateCustomerProfile(currentCustomer.phone, { dni: editDni.trim() });
+                              if (success !== false) {
+                                setSelectedCustomer(prev => prev ? { ...prev, dni: editDni.trim() } : null);
+                                setSaveSuccessMsg('DNI guardado correctamente');
+                                setTimeout(() => setSaveSuccessMsg(null), 3000);
+                              } else {
+                                setSaveSuccessMsg('❌ Error al guardar el DNI. Revisá tu conexión.');
+                                setTimeout(() => setSaveSuccessMsg(null), 5000);
+                              }
                             }
                           }}
                           placeholder="Sin DNI"
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <span className="material-symbols-outlined text-primary text-[20px]">mail</span>
+                      <div className="flex-1">
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Email</label>
+                        <input
+                          type="email"
+                          value={editEmail}
+                          onChange={(e) => setEditEmail(e.target.value)}
+                          onBlur={async () => {
+                            if (editEmail.trim() !== (currentCustomer.email || '')) {
+                              const success = await updateCustomerProfile(currentCustomer.phone, { email: editEmail.trim() });
+                              if (success !== false) {
+                                setSelectedCustomer(prev => prev ? { ...prev, email: editEmail.trim() } : null);
+                                setSaveSuccessMsg('Email guardado correctamente');
+                                setTimeout(() => setSaveSuccessMsg(null), 3000);
+                              } else {
+                                setSaveSuccessMsg('❌ Error al guardar el email. Revisá tu conexión.');
+                                setTimeout(() => setSaveSuccessMsg(null), 5000);
+                              }
+                            }
+                          }}
+                          placeholder="correo@ejemplo.com"
                           className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
                         />
                       </div>
@@ -517,9 +736,17 @@ export const Customers: React.FC = () => {
                           type="date"
                           value={editBirthday}
                           onChange={(e) => setEditBirthday(e.target.value)}
-                          onBlur={() => {
-                            if (editBirthday !== currentCustomer.birthday) {
-                              updateCustomerProfile(currentCustomer.phone, { birthday: editBirthday });
+                          onBlur={async () => {
+                            if (editBirthday !== (currentCustomer.birthday || '')) {
+                              const success = await updateCustomerProfile(currentCustomer.phone, { birthday: editBirthday });
+                              if (success !== false) {
+                                setSelectedCustomer(prev => prev ? { ...prev, birthday: editBirthday } : null);
+                                setSaveSuccessMsg('Fecha de nacimiento guardada correctamente');
+                                setTimeout(() => setSaveSuccessMsg(null), 3000);
+                              } else {
+                                setSaveSuccessMsg('❌ Error al guardar la fecha. Revisá tu conexión.');
+                                setTimeout(() => setSaveSuccessMsg(null), 5000);
+                              }
                             }
                           }}
                           className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-1.5 text-sm font-bold outline-none focus:border-primary transition-colors"
@@ -530,21 +757,80 @@ export const Customers: React.FC = () => {
                       <span className="material-symbols-outlined text-primary text-[20px]">location_on</span>
                       <p className="text-sm font-medium">{currentCustomer.address || 'Dirección no registrada'}</p>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <span className="material-symbols-outlined text-primary text-[20px]">schedule</span>
-                      <p className="text-sm font-medium">Última actividad: {currentCustomer.lastOrder}</p>
-                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveCustomerChanges}
+                      disabled={isSavingCustomer}
+                      className="w-full bg-primary/10 hover:bg-primary text-primary hover:text-white font-bold py-2.5 rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 mt-2"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {isSavingCustomer ? 'sync' : 'save'}
+                      </span>
+                      {isSavingCustomer ? 'Guardando modificaciones...' : 'Guardar Información de Contacto'}
+                    </button>
                   </div>
                 </div>
 
+                {/* 3. ACTIVIDAD RECIENTE */}
                 <div>
-                  <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-3">Actividad Reciente (30 días)</h4>
-                  <div className="p-4 rounded-2xl bg-green-50 border border-green-100 flex justify-between items-center">
-                    <span className="text-sm font-bold text-green-800">Gasto este mes</span>
-                    <span className="text-lg font-black text-green-700">${formatCurrency(currentCustomer.spent30)}</span>
+                  <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-3">Actividad Reciente</h4>
+                  <div className="space-y-3">
+                    <div className="p-4 rounded-2xl bg-green-50 border border-green-100 flex justify-between items-center">
+                      <span className="text-sm font-bold text-green-800">Gasto este mes (30 días)</span>
+                      <span className="text-lg font-black text-green-700">${formatCurrency(currentCustomer.spent30)}</span>
+                    </div>
+                    <div className="p-3 bg-surface-container-lowest border border-outline-variant/10 rounded-xl flex items-center justify-between text-xs">
+                      <span className="text-on-surface-variant font-medium">Última actividad registrada</span>
+                      <span className="font-bold text-on-background">{currentCustomer.lastOrder || '-'}</span>
+                    </div>
+                    {/* Lista de últimos pedidos */}
+                    {(() => {
+                      const clean = (p?: string) => (p || '').replace(/\D/g, '');
+                      const cPhone = clean(currentCustomer.phone);
+                      const customerOrders = orders
+                        .filter(o => {
+                          const oPhone = clean(o.phone);
+                          if (cPhone && oPhone && (cPhone === oPhone || (cPhone.length >= 8 && oPhone.endsWith(cPhone.slice(-8))))) return true;
+                          if (o.customer && currentCustomer.name && o.customer.toLowerCase().trim() === currentCustomer.name.toLowerCase().trim()) return true;
+                          return false;
+                        })
+                        .slice(0, 4);
+
+                      if (customerOrders.length === 0) {
+                        return (
+                          <p className="text-[11px] text-on-surface-variant italic py-1">Sin historial de pedidos online/POS registrado.</p>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-1.5 mt-2">
+                          <p className="text-[10px] font-bold text-on-surface-variant uppercase">Últimos Pedidos</p>
+                          {customerOrders.map(o => (
+                            <div key={o.id} className="p-2.5 bg-surface-container-lowest border border-outline-variant/10 rounded-xl flex items-center justify-between text-xs">
+                              <div>
+                                <span className="font-bold">Pedido #{o.id}</span>
+                                <span className="text-on-surface-variant ml-2 text-[10px]">{o.date}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-primary">${formatCurrency(o.total)}</span>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                  o.status === 'Entregado' ? 'bg-green-100 text-green-800' :
+                                  o.status === 'Cancelado' ? 'bg-red-100 text-red-800' :
+                                  'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {o.status}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
+                {/* 4. CUENTA CORRIENTE */}
                 <div className="pt-4 border-t border-outline-variant/10">
                   <div className="flex items-center justify-between mb-4">
                     <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider">Cuenta Corriente</h4>
@@ -716,6 +1002,204 @@ export const Customers: React.FC = () => {
                             </div>
                           )}
                         </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 5. DATOS FISCALES (ARCA) */}
+                <div className="pt-4 border-t border-outline-variant/10 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-primary">receipt_long</span>
+                      Datos Fiscales (ARCA)
+                    </h4>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                      editTaxCondition === 'Responsable Inscripto'
+                        ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                        : editTaxCondition === 'Monotributista'
+                          ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                          : editTaxCondition === 'Exento'
+                            ? 'bg-green-100 text-green-800 border border-green-200'
+                            : 'bg-surface-container-high text-on-surface-variant'
+                    }`}>
+                      {editTaxCondition}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Condición frente al IVA</label>
+                        <select
+                          value={editTaxCondition}
+                          onChange={(e) => setEditTaxCondition(e.target.value)}
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-2 text-xs font-bold outline-none cursor-pointer"
+                        >
+                          <option>Consumidor Final</option>
+                          <option>Responsable Inscripto</option>
+                          <option>Monotributista</option>
+                          <option>Exento</option>
+                          <option>No Categorizado</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Tipo de Documento</label>
+                        <select
+                          value={editDocumentType}
+                          onChange={(e) => setEditDocumentType(e.target.value as any)}
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-2 text-xs font-bold outline-none cursor-pointer"
+                        >
+                          <option value="DNI">DNI</option>
+                          <option value="CUIT">CUIT</option>
+                          <option value="CUIL">CUIL</option>
+                          <option value="PASAPORTE">Pasaporte</option>
+                          <option value="SIN_IDENTIFICAR">Sin Identificar</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">CUIT / CUIL (11 dígitos)</label>
+                        <input
+                          type="text"
+                          value={editCuit}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditCuit(val);
+                            if (val.trim()) {
+                              const check = validateCuit(val);
+                              setCuitValidationMsg(check.valid ? null : (check.error || 'CUIT inválido'));
+                            } else {
+                              setCuitValidationMsg(null);
+                            }
+                          }}
+                          placeholder="20-xxxxxxxx-x / 30-xxxxxxxx-x"
+                          className={`w-full bg-surface-container-low border rounded-lg px-3 py-2 text-xs font-mono font-bold outline-none ${
+                            cuitValidationMsg ? 'border-red-400 bg-red-50/50 text-red-800' : 'border-outline-variant/10'
+                          }`}
+                        />
+                        {cuitValidationMsg && (
+                          <p className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">warning</span>
+                            {cuitValidationMsg}
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Razón Social (Para Factura A)</label>
+                        <input
+                          type="text"
+                          value={editBusinessName}
+                          onChange={(e) => setEditBusinessName(e.target.value)}
+                          placeholder="Nombre comercial o legal completo"
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-2 text-xs font-bold outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Domicilio Fiscal</label>
+                        <input
+                          type="text"
+                          value={editFiscalAddress}
+                          onChange={(e) => setEditFiscalAddress(e.target.value)}
+                          placeholder="Domicilio registrado en ARCA"
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-2 text-xs font-bold outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Email para Comprobantes</label>
+                        <input
+                          type="email"
+                          value={editEmail}
+                          onChange={(e) => setEditEmail(e.target.value)}
+                          placeholder="facturas@empresa.com"
+                          className="w-full bg-surface-container-low border border-outline-variant/10 rounded-lg px-3 py-2 text-xs font-bold outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveCustomerChanges}
+                      disabled={isSavingCustomer}
+                      className="w-full bg-primary/10 hover:bg-primary text-primary hover:text-white font-bold py-2.5 rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 mt-2"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {isSavingCustomer ? 'sync' : 'save'}
+                      </span>
+                      {isSavingCustomer ? 'Guardando modificaciones...' : 'Guardar Datos Fiscales'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 6. LISTA CON TODAS LAS FACTURAS QUE SE LE HICIERON */}
+                <div className="pt-4 border-t border-outline-variant/10">
+                  <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-primary">receipt</span>
+                    Historial de Facturas Emitidas
+                  </h4>
+                  {(() => {
+                    const cleanDoc = (d?: string) => (d || '').replace(/\D/g, '');
+                    const cDni = cleanDoc(currentCustomer.dni);
+                    const cCuit = cleanDoc(currentCustomer.cuit);
+                    const cName = currentCustomer.name?.toLowerCase().trim();
+                    const bName = currentCustomer.businessName?.toLowerCase().trim();
+
+                    const customerInvoices = invoices.filter(inv => {
+                      const invCuit = cleanDoc(inv.clientCuit);
+                      if (cCuit && invCuit && cCuit === invCuit) return true;
+                      if (cDni && invCuit && cDni === invCuit) return true;
+                      const invName = (inv.clientName || '').toLowerCase().trim();
+                      if (cName && invName && (invName === cName || invName.includes(cName))) return true;
+                      if (bName && invName && (invName === bName || invName.includes(bName))) return true;
+                      return false;
+                    });
+
+                    if (customerInvoices.length === 0) {
+                      return (
+                        <div className="p-4 rounded-2xl bg-surface-container-low text-center">
+                          <p className="text-xs text-on-surface-variant font-medium">No posee facturas fiscales emitidas aún.</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        {customerInvoices.map(inv => (
+                          <div key={inv.id} className="p-3 bg-surface-container-lowest border border-outline-variant/10 rounded-2xl flex items-center justify-between text-xs">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-primary">{inv.folio || inv.id}</span>
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${
+                                  inv.type === 'A' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+                                }`}>
+                                  Factura {inv.type}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-on-surface-variant mt-0.5">
+                                {inv.date} • CAE: {inv.cae || 'Sin CAE'}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-black text-sm text-on-background">${formatCurrency(inv.total)}</p>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold inline-block ${
+                                inv.status === 'AUTORIZADA' || inv.status === 'VERIFICADA_EN_ARCA'
+                                  ? 'bg-green-100 text-green-800'
+                                  : inv.status === 'RECHAZADA'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {inv.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     );
                   })()}
@@ -974,13 +1458,62 @@ export const Customers: React.FC = () => {
                   className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-medium text-sm outline-none focus:border-primary transition-colors"
                 />
               </div>
+
+              {/* Datos Fiscales en Nuevo Cliente */}
+              <div className="pt-2 border-t border-outline-variant/10 space-y-3">
+                <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider">Datos Fiscales (Opcional)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Condición IVA</label>
+                    <select
+                      value={newCustomer.taxCondition}
+                      onChange={e => setNewCustomer(p => ({ ...p, taxCondition: e.target.value }))}
+                      className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-3 py-2.5 text-xs font-bold outline-none cursor-pointer"
+                    >
+                      <option>Consumidor Final</option>
+                      <option>Responsable Inscripto</option>
+                      <option>Monotributista</option>
+                      <option>Exento</option>
+                      <option>No Categorizado</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">CUIT / CUIL</label>
+                    <input
+                      type="text"
+                      value={newCustomer.cuit}
+                      onChange={e => setNewCustomer(p => ({ ...p, cuit: e.target.value }))}
+                      placeholder="20-xxxxxxxx-x"
+                      className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-3 py-2.5 text-xs font-mono font-bold outline-none"
+                    />
+                  </div>
+                </div>
+
+                {(newCustomer.taxCondition === 'Responsable Inscripto' || newCustomer.taxCondition === 'Monotributista' || newCustomer.cuit) && (
+                  <div>
+                    <label className="text-[10px] font-black text-on-surface-variant uppercase mb-1 block">Razón Social</label>
+                    <input
+                      type="text"
+                      value={newCustomer.businessName}
+                      onChange={e => setNewCustomer(p => ({ ...p, businessName: e.target.value }))}
+                      placeholder="Nombre comercial o razón social"
+                      className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-3 py-2.5 text-xs font-bold outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
               {newCustomerError && (
                 <p className="text-error text-xs font-bold bg-error/5 px-4 py-2 rounded-xl">{newCustomerError}</p>
               )}
             </div>
             <div className="p-6 border-t border-outline-variant/10 flex gap-3">
               <button
-                onClick={() => { setShowNewCustomerModal(false); setNewCustomer({ nombre: '', apellido: '', telefono: '', direccion: '', dni: '' }); setNewCustomerError(''); }}
+                onClick={() => { 
+                  setShowNewCustomerModal(false); 
+                  setNewCustomer({ nombre: '', apellido: '', telefono: '', direccion: '', dni: '', cuit: '', taxCondition: 'Consumidor Final', businessName: '', fiscalAddress: '', email: '' }); 
+                  setNewCustomerError(''); 
+                }}
                 className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors"
               >
                 Cancelar
@@ -991,7 +1524,7 @@ export const Customers: React.FC = () => {
                   if (!newCustomer.telefono.trim()) { setNewCustomerError('El teléfono es obligatorio'); return; }
                   addManualCustomer(newCustomer);
                   setShowNewCustomerModal(false);
-                  setNewCustomer({ nombre: '', apellido: '', telefono: '', direccion: '', dni: '' });
+                  setNewCustomer({ nombre: '', apellido: '', telefono: '', direccion: '', dni: '', cuit: '', taxCondition: 'Consumidor Final', businessName: '', fiscalAddress: '', email: '' });
                   setNewCustomerError('');
                 }}
                 className="flex-[2] bg-primary text-white font-black py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2"

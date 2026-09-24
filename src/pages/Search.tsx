@@ -479,13 +479,13 @@ export const Search: React.FC = () => {
 
       {/* Mobile Filters Drawer */}
       {isFilterOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end lg:hidden">
+        <div className="fixed inset-0 z-50 flex justify-start lg:hidden">
           <div
             className="fixed inset-0 bg-black/50 backdrop-blur-xs animate-in fade-in duration-300"
             onClick={() => setIsFilterOpen(false)}
           />
 
-          <div className="relative w-full max-w-xs bg-white h-full shadow-2xl p-6 flex flex-col justify-between overflow-y-auto z-10 animate-in slide-in-from-right duration-300">
+          <div className="relative w-full max-w-xs bg-white h-full shadow-2xl p-6 flex flex-col justify-between overflow-y-auto z-10 animate-in slide-in-from-left duration-300">
             <div>
               <div className="flex items-center justify-between border-b border-outline-variant/15 pb-4 mb-6">
                 <h3 className="font-bold text-lg text-on-surface flex items-center gap-2">

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { products as catalogProducts, categories as catalogCategories } from '../data/mockData';
 import type { Category, Subcategory } from '../data/mockData';
 export type { Category, Subcategory };
@@ -21,7 +21,12 @@ import {
 import { fetchExpenses, insertExpense, updateExpenseInDb, cancelExpenseInDb } from '../services/expense.service';
 import type { Expense } from '../types/expense.types';
 export type { Expense };
-
+import { billingService, FiscalBusinessConfig } from '../services/billing.service';
+export type { FiscalBusinessConfig };
+import { thermalPrinterService, ThermalPrinterConfig } from '../services/thermalPrinter.service';
+export type { ThermalPrinterConfig };
+import { isTierMatch, applyOffersToCartItem as pureApplyOffersToCartItem, applyOrderOffers as pureApplyOrderOffers } from '../../supabase/functions/_shared/pricing';
+import type { PricingItemInput } from '../../supabase/functions/_shared/pricing.types';
 
 // ─── Interfaces ────────────────────────────────────────────
 
@@ -59,6 +64,7 @@ export interface AdminOrder {
   discount?: number;
   discountLabel?: string;
   discountOfferId?: string;
+  checkoutToken?: string; // Temporal auth token from backend
   // Nuevos campos para ubicación detallada
   delivery_lat?: number | null;
   delivery_lng?: number | null;
@@ -72,6 +78,7 @@ export interface AdminOrder {
 }
 
 export interface AdminCustomer {
+  id?: string;
   dni: string;
   name: string;
   phone: string;
@@ -90,22 +97,50 @@ export interface AdminCustomer {
   customDebtLimit?: number;
   customDebtDays?: number;
   accountLimitNotes?: string;
+
+  // Campos Fiscales Unificados
+  cuit?: string;
+  documentType?: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+  documentNumber?: string;
+  taxCondition?: string;
+  businessName?: string;
+  fiscalAddress?: string;
+  email?: string;
+  isFiscal?: boolean;
 }
 
 export interface CustomerProfile {
+  id?: string;
   dni?: string;
   phone: string;
   hasCurrentAccount: boolean;
   creditLimit?: number;
   birthday?: string;
   nombre?: string;
+  name?: string;
   apellido?: string;
+  last_name?: string;
   direccion?: string;
+  address?: string;
   isManual?: boolean; // true if created manually from Customers screen
   useCustomAccountLimits?: boolean;
   customDebtLimit?: number;
   customDebtDays?: number;
   accountLimitNotes?: string;
+
+  // Campos Fiscales Unificados
+  cuit?: string;
+  document_type?: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+  documentType?: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+  tax_condition?: string;
+  taxCondition?: string;
+  business_name?: string;
+  businessName?: string;
+  fiscal_address?: string;
+  fiscalAddress?: string;
+  email?: string;
+  is_fiscal?: boolean;
+  isFiscal?: boolean;
 }
 
 export interface CurrentAccountConfig {
@@ -140,6 +175,29 @@ export interface GeneralConfig {
   freeShippingMinAmount: number;
 }
 
+export interface DeliveryTimeSlot {
+  id: string;
+  label: string;
+  sub: string;
+  icon: string;
+  enabled: boolean;
+  cutoffTime?: string; // HH:mm (ej: "13:45")
+  startTime?: string;  // HH:mm (ej: "09:00")
+  endTime?: string;    // HH:mm (ej: "21:00")
+  endHour?: number;
+  endMin?: number;
+  isTomorrow?: boolean;
+  freeShipping?: boolean; // si el envío es 100% gratuito en este horario
+  order?: number;
+}
+
+export const defaultDeliveryTimeSlots: DeliveryTimeSlot[] = [
+  { id: 'asap', label: 'Lo antes posible', sub: '30-60 min', icon: 'bolt', enabled: true, startTime: '09:00', endTime: '21:00' },
+  { id: 'today_midday', label: 'Hoy al Mediodía', sub: '13:00 a 14:00', icon: 'sunny', enabled: true, cutoffTime: '13:45' },
+  { id: 'today_2', label: 'Hoy a la Noche', sub: '21:00 a 22:00', icon: 'dark_mode', enabled: true, cutoffTime: '21:45' },
+  { id: 'tomorrow_1', label: 'Mañana al Mediodía', sub: '13:00 a 14:00', icon: 'event', enabled: true, isTomorrow: true }
+];
+
 export interface CashRegister {
   isOpen: boolean;
   initialAmount: number;
@@ -148,39 +206,131 @@ export interface CashRegister {
 }
 
 export interface InvoiceItem {
+  productId?: string;
+  code?: string;
+  codigoMtx?: string;
+  barcode?: string;
+  gtin?: string;
+  ean?: string;
+  unidadesMtx?: number;
   description: string;
   quantity: number;
+  unit?: string;
+  unitPrice?: number;
   price: number;
   taxRate: number; // e.g. 21, 10.5, 0
+  netAmount?: number;
+  vatAmount?: number;
+  discountAmount?: number;
   total: number;
 }
+
+export type InvoiceOrigin = 'ARCA_LOCAL' | 'EXTERNA_MANUAL';
+
+export type InvoiceStatus = 
+  | 'BORRADOR'
+  | 'PENDIENTE'
+  | 'EN_PROCESO'
+  | 'AUTORIZADA'
+  | 'RECHAZADA'
+  | 'ESTADO_DESCONOCIDO'
+  | 'ERROR_TECNICO'
+  | 'REGISTRADA_EXTERNAMENTE'
+  | 'VERIFICADA_EN_ARCA'
+  | 'ANULADA'
+  | 'ANULADA_POR_NC'
+  | 'Emitida'; // Legacy support
+
+export type InvoiceType = 'A' | 'B' | 'C' | 'NC_A' | 'NC_B' | 'NC_C' | 'ND_A' | 'ND_B' | 'ND_C';
 
 export interface Invoice {
   id: string;
   date: string;
-  serie: string;
-  folio: string;
+  serie?: string;
+  folio: string; // Ej: "0001-00000125"
+  pointOfSale?: number;
+  invoiceNumber?: number;
+  origin?: InvoiceOrigin;
+  attachmentUrl?: string;
+  notes?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  
+  // Receptor
+  customerId?: string;
   clientName: string;
   clientCuit: string;
+  customerName?: string;
+  customerDocumentType?: string;
+  customerDocumentNumber?: string;
+  customerCuit?: string;
+  customerTaxCondition?: string;
+  customerAddress?: string;
+
+  // Importes
   subtotal: number;
+  subtotalNet?: number;
   taxes: number;
   total: number;
+  currency?: string;
+
+  // Venta asociada
   saleId: string;
-  type: 'A' | 'B' | 'C';
-  status: 'Emitida' | 'Anulada' | 'Pendiente';
-  direction?: 'venta' | 'compra';
-  items?: InvoiceItem[];
   saleIds?: string[];
+  type: InvoiceType;
+  invoiceType?: InvoiceType;
+  invoiceTypeCode?: number;
+  status: InvoiceStatus;
+  direction?: 'venta' | 'compra';
+  serviceUsed?: 'WSMTXCA' | 'WSFEv1';
+
+  // Datos Fiscales ARCA
+  arcaStatus?: 'AUTORIZADO' | 'RECHAZADO' | 'ESTADO_DESCONOCIDO' | 'ERROR';
+  cae?: string;
+  caeExpirationDate?: string;
+  arcaObservations?: any[];
+  arcaErrors?: any[];
+  arcaErrorCode?: string;
+  arcaErrorMessage?: string;
+  operationId?: string;
+
+  // Comprobantes Asociados (para Notas de Crédito / Débito)
+  originalPointOfSale?: number;
+  originalInvoiceNumber?: number;
+  originalInvoiceType?: string;
+  associatedInvoiceId?: string;
+  associatedPointOfSale?: number;
+  associatedInvoiceNumber?: number;
+  associatedInvoiceType?: string;
+  associatedInvoiceTypeCode?: number;
+  associatedCuit?: string;
+
+  // PDF y QR
+  pdfUrl?: string;
+  qrPayload?: string;
+  qrDataUrl?: string;
+
+  items?: InvoiceItem[];
+  vatBreakdown?: Array<{ vatRate: number; vatCode: number; baseAmount: number; vatAmount: number }>;
+  
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
 }
 
 export interface BillingCustomer {
   id: string;
   name: string;
+  documentType?: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+  documentNumber?: string;
   cuit: string;
+  taxCondition: string;
   address: string;
   phone: string;
   email: string;
-  taxCondition: string;
+  lastValidationDate?: string;
+  fiscalValidationStatus?: 'valid' | 'invalid' | 'pending';
+  notes?: string;
 }
 
 export interface CashWithdrawal {
@@ -341,9 +491,39 @@ export interface AdminContextType {
   // Customers
   customers: AdminCustomer[];
   toggleCurrentAccount: (phone: string) => { success: boolean; message?: string };
-  updateCustomerProfile: (oldPhone: string, updates: Partial<{ name: string; phone: string; dni: string; birthday: string; creditLimit: number; useCustomAccountLimits: boolean; customDebtLimit: number; customDebtDays: number; accountLimitNotes: string }>) => void;
+  updateCustomerProfile: (oldPhone: string, updates: Partial<{ 
+    name: string; 
+    phone: string; 
+    dni: string; 
+    birthday: string; 
+    creditLimit: number; 
+    useCustomAccountLimits: boolean; 
+    customDebtLimit: number; 
+    customDebtDays: number; 
+    accountLimitNotes: string;
+    cuit: string;
+    documentType: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+    documentNumber: string;
+    taxCondition: string;
+    businessName: string;
+    fiscalAddress: string;
+    email: string;
+    isFiscal: boolean;
+  }>) => Promise<boolean> | void;
   settleCurrentAccount: (phone: string, method: string, amount?: number) => void;
-  addManualCustomer: (data: { nombre: string; apellido: string; telefono: string; direccion: string; dni?: string }) => void;
+  addManualCustomer: (data: { 
+    nombre: string; 
+    apellido: string; 
+    telefono: string; 
+    direccion: string; 
+    dni?: string;
+    cuit?: string;
+    documentType?: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+    taxCondition?: string;
+    businessName?: string;
+    fiscalAddress?: string;
+    email?: string;
+  }) => void;
   deleteCustomer: (phone: string) => { success: boolean; message?: string };
 
   // Stats
@@ -375,10 +555,6 @@ export interface AdminContextType {
   storeStatus: StoreStatus;
   updateStoreStatus: (updates: Partial<StoreStatus>) => void;
 
-  // Auto Cash Close
-  autoCashCloseConfig: AutoCashCloseConfig;
-  updateAutoCashCloseConfig: (config: AutoCashCloseConfig) => void;
-
   // Cash Close & Movements
   cashCloses: CashClose[];
   performCashClose: (withdrawals?: CashWithdrawal[]) => CashClose | null;
@@ -391,25 +567,41 @@ export interface AdminContextType {
 
   // Ticket Config
   ticketConfig: TicketConfig;
-  updateTicketConfig: (config: Partial<TicketConfig>) => void;
+  updateTicketConfig: (config: Partial<TicketConfig>) => Promise<void> | void;
+  thermalPrinterConfig: ThermalPrinterConfig;
+  updateThermalPrinterConfig: (config: Partial<ThermalPrinterConfig>) => void;
+
+  // Fiscal Config (ARCA)
+  fiscalConfig: FiscalBusinessConfig;
+  updateFiscalConfig: (config: Partial<FiscalBusinessConfig>) => Promise<void>;
 
   // General Config
   generalConfig: GeneralConfig;
-  updateGeneralConfig: (config: Partial<GeneralConfig>) => void;
+  updateGeneralConfig: (config: Partial<GeneralConfig>) => Promise<void> | void;
   blockPhone: (phone: string) => void;
   unblockPhone: (phone: string) => void;
   isPhoneBlocked: (phone: string) => boolean;
+
+  // Delivery Time Slots (Clientes)
+  deliveryTimeSlots: DeliveryTimeSlot[];
+  updateDeliveryTimeSlots: (slots: DeliveryTimeSlot[]) => Promise<void> | void;
 
   // Cash Register
   cashRegister: CashRegister;
   openCashRegister: (amount: number, user?: string) => void;
   closeCashRegister: () => void;
+
+  // Auto Cash Close
+  autoCashCloseConfig: AutoCashCloseConfig;
+  updateAutoCashCloseConfig: (config: AutoCashCloseConfig) => Promise<void> | void;
   isCashRegisterOpen: boolean;
 
   // Invoices
   invoices: Invoice[];
-  addInvoice: (invoice: Omit<Invoice, 'id' | 'folio'>) => Invoice;
+  addInvoice: (invoice: Omit<Invoice, 'id' | 'folio'> & { id?: string; folio?: string }) => Invoice;
   updateInvoice: (id: string, updates: Partial<Invoice>) => void;
+  refreshInvoices: () => Promise<void>;
+  checkSaleBilledStatus: (saleId: string) => { isBilled: boolean; invoice?: Invoice; canRetry: boolean; needsReconciliation: boolean };
   billingCustomers: BillingCustomer[];
   addBillingCustomer: (customer: Omit<BillingCustomer, 'id'>) => void;
   updateBillingCustomer: (id: string, updates: Partial<BillingCustomer>) => void;
@@ -579,26 +771,26 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const storeProducts = useProductStore((state) => state.products);
   const storeLoading = useProductStore((state) => state.loading);
   const storeFetch = useProductStore((state) => state.fetchProducts);
-  // Optimización de Egress: NO descargamos todo el catálogo en el inicio de la app.
-  // Solo se solicita si se ingresa específicamente al Punto de Venta (/admin/pos).
+  // Hidratación y sincronización de catálogo de productos
   useEffect(() => {
-    const isPOSRoute = typeof window !== 'undefined' && window.location.pathname.includes('/admin/pos');
-    if (isPOSRoute && storeProducts.length === 0) {
+    if (storeProducts.length === 0) {
       storeFetch();
     }
-  }, []);
+  }, [storeProducts.length, storeFetch]);
 
   useEffect(() => {
     if (!storeLoading && storeProducts.length > 0) {
       setAdminProducts(storeProducts as any);
       setStockMap(prev => {
         const next = { ...prev };
+        let hasChanges = false;
         storeProducts.forEach(p => {
-          if (p.id) {
+          if (p.id && next[p.id] !== (p.stock ?? 0)) {
             next[p.id] = p.stock ?? 0;
+            hasChanges = true;
           }
         });
-        return next;
+        return hasChanges ? next : prev;
       });
     }
   }, [storeProducts, storeLoading]);
@@ -639,20 +831,40 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 1. Initialize map only with registered customer profiles
     Object.values(customerProfiles).forEach((profileRaw) => {
       const profile = profileRaw as any;
-      const firstName = profile.nombre || profile.name;
-      const lastName = profile.apellido || profile.last_name;
+      const firstName = (profile.nombre || profile.name || '').trim();
+      const lastName = (profile.apellido || profile.last_name || '').trim();
 
       if (firstName === 'Invitado') return; // Hide guest profiles from Admin panel
 
-      const fullName = firstName && lastName
-        ? `${firstName} ${lastName}`
-        : (firstName || 'Sin Nombre');
+      let fullName = firstName;
+      if (lastName && firstName) {
+        const lowerFirst = firstName.toLowerCase();
+        const lowerLast = lastName.toLowerCase();
+        if (!lowerFirst.includes(lowerLast)) {
+          fullName = `${firstName} ${lastName}`;
+        }
+      } else if (!fullName) {
+        fullName = lastName || 'Sin Nombre';
+      }
+
+      const cleanDni = (profile.dni && profile.dni !== profile.phone) ? profile.dni : (profile.cuit || '');
+
+      const isFiscalClient = Boolean(
+        profile.is_fiscal ||
+        profile.isFiscal ||
+        (profile.cuit && String(profile.cuit).trim().length > 0) ||
+        (profile.business_name && String(profile.business_name).trim().length > 0) ||
+        (profile.businessName && String(profile.businessName).trim().length > 0) ||
+        (profile.tax_condition && profile.tax_condition !== 'Consumidor Final') ||
+        (profile.taxCondition && profile.taxCondition !== 'Consumidor Final')
+      );
 
       customerMap[profile.phone] = {
-        dni: profile.dni || '',
-        name: fullName,
+        id: profile.id,
+        dni: cleanDni,
+        name: fullName !== 'Sin Nombre' ? fullName : (profile.business_name || profile.businessName || 'Sin Nombre'),
         phone: profile.phone,
-        address: profile.direccion || profile.address || '',
+        address: profile.fiscal_address || profile.fiscalAddress || profile.direccion || profile.address || '',
         totalOrders: 0,
         totalSpent: 0,
         lastOrder: '-',
@@ -667,6 +879,16 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customDebtLimit: profile.customDebtLimit,
         customDebtDays: profile.customDebtDays,
         accountLimitNotes: profile.accountLimitNotes || '',
+
+        // Campos Fiscales Unificados
+        cuit: profile.cuit || '',
+        documentType: profile.document_type || profile.documentType || (profile.cuit ? 'CUIT' : 'DNI'),
+        documentNumber: profile.cuit || cleanDni || '',
+        taxCondition: profile.tax_condition || profile.taxCondition || 'Consumidor Final',
+        businessName: profile.business_name || profile.businessName || '',
+        fiscalAddress: profile.fiscal_address || profile.fiscalAddress || profile.direccion || profile.address || '',
+        email: profile.email || '',
+        isFiscal: isFiscalClient
       };
     });
 
@@ -757,17 +979,44 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return '+54' + cleaned;
   };
 
-  const updateCustomerProfile = (oldPhone: string, updates: Partial<{ name: string; phone: string; dni: string; birthday: string; creditLimit: number; useCustomAccountLimits: boolean; customDebtLimit: number; customDebtDays: number; accountLimitNotes: string }>) => {
-    // Find current customer by phone
-    const targetCustomer = customers.find(c => c.phone === oldPhone);
-    if (!targetCustomer) return;
+  const updateCustomerProfile = async (oldPhone: string, updates: Partial<{ 
+    name: string; 
+    phone: string; 
+    dni: string; 
+    birthday: string; 
+    creditLimit: number; 
+    useCustomAccountLimits: boolean; 
+    customDebtLimit: number; 
+    customDebtDays: number; 
+    accountLimitNotes: string;
+    cuit: string;
+    documentType: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+    documentNumber: string;
+    taxCondition: string;
+    businessName: string;
+    fiscalAddress: string;
+    email: string;
+    isFiscal: boolean;
+  }>): Promise<boolean> => {
+    // Find current customer by exact phone or normalized digits
+    const cleanDigits = (p?: string) => (p || '').replace(/\D/g, '');
+    const targetClean = cleanDigits(oldPhone);
+    const targetCustomer = customers.find(c => {
+      const cClean = cleanDigits(c.phone);
+      return cClean === targetClean || (targetClean.length >= 8 && cClean.endsWith(targetClean.slice(-8))) || (cClean.length >= 8 && targetClean.endsWith(cClean.slice(-8)));
+    }) || customers.find(c => c.phone === oldPhone);
+
+    if (!targetCustomer) {
+      console.warn('updateCustomerProfile: targetCustomer not found for phone:', oldPhone);
+      return false;
+    }
 
     const newPhone = updates.phone ? formatPhone(updates.phone) : oldPhone;
 
     // 1. Update orders if phone, name, or DNI changed
     if (newPhone !== oldPhone || updates.name || updates.dni) {
       setOrders(prev => prev.map(o => {
-        if (o.phone === oldPhone) {
+        if (cleanDigits(o.phone) === targetClean || o.phone === oldPhone) {
           const updated = {
             ...o,
             phone: newPhone,
@@ -781,16 +1030,43 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }));
     }
 
-    // 2. Update profiles (DNI, birthday, and CC status)
+    // 2. Update profiles (DNI, birthday, CC status, and Fiscal fields)
+    let profileToPersist: CustomerProfile | null = null;
     setCustomerProfiles(prev => {
       const newProfiles = { ...prev };
-      const currentProfile = newProfiles[oldPhone] || { phone: oldPhone, hasCurrentAccount: targetCustomer.hasCurrentAccount ?? false };
-      const updatedProfile = {
+      const matchedKey = Object.keys(newProfiles).find(k => {
+        const kClean = cleanDigits(k);
+        return kClean === targetClean || (targetClean.length >= 8 && kClean.endsWith(targetClean.slice(-8))) || k === oldPhone;
+      }) || oldPhone;
+      const currentProfile = newProfiles[matchedKey] || { phone: oldPhone, hasCurrentAccount: targetCustomer.hasCurrentAccount ?? false };
+      const finalIsFiscal = updates.isFiscal !== undefined 
+        ? updates.isFiscal 
+        : (updates.cuit && updates.cuit.trim().length > 0)
+          ? true
+          : (currentProfile.isFiscal ?? currentProfile.is_fiscal ?? false);
+
+      const updatedProfile: CustomerProfile = {
         ...currentProfile,
         ...updates,
         hasCurrentAccount: currentProfile.hasCurrentAccount ?? targetCustomer.hasCurrentAccount ?? false,
-        nombre: updates.name || currentProfile.nombre || '',
-        phone: newPhone
+        nombre: updates.name !== undefined ? updates.name.trim() : (currentProfile.nombre || currentProfile.name || ''),
+        name: updates.name !== undefined ? updates.name.trim() : (currentProfile.name || currentProfile.nombre || ''),
+        apellido: updates.name !== undefined ? '' : (currentProfile.apellido || ''),
+        last_name: updates.name !== undefined ? '' : (currentProfile.last_name || ''),
+        phone: newPhone,
+        dni: updates.dni !== undefined ? updates.dni : ((currentProfile.dni && currentProfile.dni !== currentProfile.phone) ? currentProfile.dni : ''),
+        cuit: updates.cuit !== undefined ? updates.cuit : currentProfile.cuit,
+        document_type: updates.documentType || currentProfile.document_type || (updates.cuit ? 'CUIT' : 'DNI'),
+        documentType: updates.documentType || currentProfile.documentType || (updates.cuit ? 'CUIT' : 'DNI'),
+        tax_condition: updates.taxCondition || currentProfile.tax_condition || 'Consumidor Final',
+        taxCondition: updates.taxCondition || currentProfile.taxCondition || 'Consumidor Final',
+        business_name: updates.businessName !== undefined ? updates.businessName : (currentProfile.business_name || currentProfile.businessName || ''),
+        businessName: updates.businessName !== undefined ? updates.businessName : (currentProfile.businessName || currentProfile.business_name || ''),
+        fiscal_address: updates.fiscalAddress !== undefined ? updates.fiscalAddress : (currentProfile.fiscal_address || currentProfile.fiscalAddress || ''),
+        fiscalAddress: updates.fiscalAddress !== undefined ? updates.fiscalAddress : (currentProfile.fiscalAddress || currentProfile.fiscal_address || ''),
+        email: updates.email !== undefined ? updates.email : currentProfile.email,
+        isFiscal: finalIsFiscal,
+        is_fiscal: finalIsFiscal
       };
 
       if (newPhone !== oldPhone) {
@@ -799,9 +1075,15 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } else {
         newProfiles[oldPhone] = updatedProfile;
       }
-      upsertCustomerProfile(updatedProfile).catch(console.error);
+      profileToPersist = updatedProfile;
       return newProfiles;
     });
+
+    if (profileToPersist) {
+      const res = await upsertCustomerProfile(profileToPersist, oldPhone);
+      return res.success;
+    }
+    return true;
   };
 
   const settleCurrentAccount = (phone: string, method: string, amount?: number) => {
@@ -889,16 +1171,35 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ─── Manual Customer CRUD ─────────────────────────────────
-  const addManualCustomer = (data: { nombre: string; apellido: string; telefono: string; direccion: string; dni?: string }) => {
-    const phone = formatPhone(data.telefono);
+  const addManualCustomer = (data: { 
+    nombre: string; 
+    apellido: string; 
+    telefono: string; 
+    direccion: string; 
+    dni?: string;
+    cuit?: string;
+    documentType?: 'CUIT' | 'DNI' | 'CUIL' | 'PASAPORTE' | 'SIN_IDENTIFICAR';
+    taxCondition?: string;
+    businessName?: string;
+    fiscalAddress?: string;
+    email?: string;
+  }) => {
+    const rawPhone = data.telefono?.trim() || '';
+    const phone = rawPhone ? formatPhone(rawPhone) : `+54999${(data.cuit || data.dni || Date.now()).toString().replace(/\D/g, '').slice(-9)}`;
     const profile: CustomerProfile = {
-      dni: data.dni || phone,
+      dni: data.dni || '',
       phone,
       hasCurrentAccount: false,
       nombre: data.nombre,
       apellido: data.apellido,
       direccion: data.direccion,
-      isManual: true
+      isManual: true,
+      cuit: data.cuit || '',
+      document_type: data.documentType || (data.cuit ? 'CUIT' : 'DNI'),
+      tax_condition: data.taxCondition || 'Consumidor Final',
+      business_name: data.businessName || (data.nombre && data.apellido ? `${data.nombre} ${data.apellido}` : data.nombre),
+      fiscal_address: data.fiscalAddress || data.direccion || '',
+      email: data.email || ''
     };
     setCustomerProfiles(prev => ({
       ...prev,
@@ -942,7 +1243,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const [
         _orders, _cashMovements, _cashCloses, _profiles, _accCfg,
-        _cashReg, _invoices, _billing, _lastCloseTs, _expenses, _autoCashClose
+        _cashReg, _lastCloseTs, _expenses, _autoCashClose
       ] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
@@ -950,8 +1251,6 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchCustomerProfiles(),
         fetchSetting('current_account_config', defaultCurrentAccountConfig),
         fetchSetting('cash_register', { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' } as CashRegister),
-        fetchSetting('invoices', [] as Invoice[]),
-        fetchSetting('billing_customers', [] as BillingCustomer[]),
         fetchSetting('last_pos_close_timestamp', 0),
         fetchExpenses(),
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }),
@@ -963,12 +1262,72 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCustomerProfiles(_profiles);
       setCurrentAccountConfig(_accCfg);
       setCashRegister(_cashReg);
-      setInvoices(_invoices);
-      setBillingCustomers(_billing);
       setLastPOSCloseTimestamp(_lastCloseTs);
       setExpenses(_expenses);
       setAutoCashCloseConfig(_autoCashClose);
       setIsAdminDataLoaded(true);
+
+      // Cargar facturas fiscales reales desde el backend ARCA / PostgreSQL
+      try {
+        const fiscalRecords = await billingService.getFiscalInvoices();
+        if (Array.isArray(fiscalRecords) && fiscalRecords.length > 0) {
+          const mapped: Invoice[] = fiscalRecords.map((r: any) => ({
+            id: r.id,
+            date: r.date || r.created_at,
+            folio: (r.folio && !r.folio.includes('undefined'))
+              ? r.folio
+              : (r.point_of_sale || r.pointOfSale) && (r.invoice_number || r.invoiceNumber)
+                ? `${String(r.point_of_sale || r.pointOfSale).padStart(4, '0')}-${String(r.invoice_number || r.invoiceNumber).padStart(8, '0')}`
+                : r.id,
+            pointOfSale: r.point_of_sale || r.pointOfSale,
+            invoiceNumber: r.invoice_number || r.invoiceNumber,
+            customerId: r.customer_id,
+            clientName: r.customer_name || 'Consumidor Final',
+            clientCuit: r.customer_cuit || r.customer_document_number || '',
+            customerName: r.customer_name,
+            customerDocumentType: r.customer_document_type,
+            customerDocumentNumber: r.customer_document_number,
+            customerCuit: r.customer_cuit,
+            customerTaxCondition: r.customer_tax_condition,
+            customerAddress: r.customer_address,
+            subtotal: Number(r.subtotal_net || 0),
+            subtotalNet: Number(r.subtotal_net || 0),
+            taxes: Number(r.taxes || 0),
+            total: Number(r.total || 0),
+            currency: r.currency || 'PES',
+            saleId: Array.isArray(r.sale_ids) ? r.sale_ids.join(', ') : (r.saleId || ''),
+            saleIds: Array.isArray(r.sale_ids) ? r.sale_ids : (r.saleIds || []),
+            type: (r.invoice_type || 'B') as any,
+            invoiceType: (r.invoice_type || 'B') as any,
+            invoiceTypeCode: r.invoice_type_code,
+            origin: r.origin || 'ARCA_LOCAL',
+            status: r.status || 'AUTORIZADA',
+            direction: r.direction || 'venta',
+            serviceUsed: r.service_used || 'WSMTXCA',
+            cae: r.cae,
+            caeExpirationDate: r.cae_expiration_date,
+            arcaObservations: r.arca_observations,
+            qrPayload: r.qr_payload,
+            qrDataUrl: r.qrDataUrl,
+            attachmentUrl: r.attachment_url,
+            notes: r.notes,
+            verifiedAt: r.verified_at,
+            verifiedBy: r.verified_by,
+            items: r.items,
+            vatBreakdown: r.vat_breakdown,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+          }));
+          setInvoices(prev => {
+            const map = new Map<string, Invoice>();
+            prev.filter(i => (i.status as any) !== 'Emitida').forEach(i => map.set(i.id, i));
+            mapped.forEach(i => map.set(i.id, i));
+            return Array.from(map.values());
+          });
+        }
+      } catch (errArca) {
+        console.warn('Backend fiscal no disponible al inicio:', errArca);
+      }
 
       // Cargar alertas de bajo stock solo para el panel de administración
       useProductStore.getState().fetchLowStockDashboardProducts({ page: 1, limit: 50 });
@@ -981,7 +1340,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 1. Cargar datos esenciales para la tienda pública (Liviano, con caché y proyección de columnas)
     const loadStorefrontData = async () => {
       try {
-        const [_offers, _ticketCfg, _categories, _subcategories, _tags, _generalCfg, _heroBanners] = await Promise.all([
+        const [_offers, _ticketCfg, _categories, _subcategories, _tags, _generalCfg, _heroBanners, _deliverySlots, _fiscalCfg] = await Promise.all([
           fetchOffers(),
           fetchSetting('ticket_config', defaultTicketConfig),
           fetchCategories(),
@@ -997,12 +1356,18 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             shippingCostPerKm: 400,
             freeShippingMinAmount: 0
           }),
-          fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners)
+          fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners),
+          fetchSetting<DeliveryTimeSlot[]>('delivery_time_slots', defaultDeliveryTimeSlots),
+          fetchSetting<FiscalBusinessConfig>('fiscal_config', defaultFiscalConfig)
         ]);
 
         setOffers(_offers);
         setTicketConfig(_ticketCfg);
+        if (_fiscalCfg) setFiscalConfig(_fiscalCfg);
         setAdminTags(_tags);
+        if (_deliverySlots && _deliverySlots.length > 0) {
+          setDeliveryTimeSlots(_deliverySlots);
+        }
         setGeneralConfig({
           ..._generalCfg,
           shippingBaseCost: _generalCfg?.shippingBaseCost ?? 1000,
@@ -1090,20 +1455,25 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('ticket_config', defaultTicketConfig).then(setTicketConfig);
         fetchSetting('current_account_config', defaultCurrentAccountConfig).then(setCurrentAccountConfig);
         fetchSetting('cash_register', { isOpen: false, initialAmount: 0, openedBy: '', openedAt: '' } as CashRegister).then(setCashRegister);
-        fetchSetting('invoices', [] as Invoice[]).then(setInvoices);
-        fetchSetting('billing_customers', [] as BillingCustomer[]).then(setBillingCustomers);
         fetchSetting('last_pos_close_timestamp', 0).then(setLastPOSCloseTimestamp);
         fetchSetting<string[]>('admin_tags', initialTags).then(setAdminTags);
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }).then(setAutoCashCloseConfig);
         fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners).then(setHeroBanners);
+        fetchSetting<DeliveryTimeSlot[]>('delivery_time_slots', defaultDeliveryTimeSlots).then(slots => {
+          if (slots && slots.length > 0) setDeliveryTimeSlots(slots);
+        });
         fetchOffers().then(setOffers);
       })
       .subscribe();
 
+    let productsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     const productsSub = supabase.channel('products_channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-        console.log('🔔 Cambio en tabla products detectado, re-fecheando...');
-        storeFetch();
+        if (productsDebounceTimer) clearTimeout(productsDebounceTimer);
+        productsDebounceTimer = setTimeout(() => {
+          console.log('🔔 Cambio en tabla products detectado (debounced), sincronizando catálogo...');
+          storeFetch();
+        }, 2500);
       })
       .subscribe();
 
@@ -1135,6 +1505,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .subscribe();
 
     return () => {
+      if (productsDebounceTimer) clearTimeout(productsDebounceTimer);
       supabase.removeChannel(statusSub);
       supabase.removeChannel(redemptionsSub);
       supabase.removeChannel(ordersSub);
@@ -1234,13 +1605,43 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showLogo: false
   };
   const [ticketConfig, setTicketConfig] = useState<TicketConfig>(defaultTicketConfig);
-  const updateTicketConfig = (updates: Partial<TicketConfig>) => {
-    setTicketConfig(prev => {
-      const next = { ...prev, ...updates };
-      saveSetting('ticket_config', next).catch(console.error);
-      return next;
-    });
+  const updateTicketConfig = async (updates: Partial<TicketConfig>) => {
+    const next = { ...ticketConfig, ...updates };
+    setTicketConfig(next);
+    await saveSetting('ticket_config', next);
   };
+
+  // ─── Fiscal Business Config (ARCA) ─────────────────────────
+  const defaultFiscalConfig: FiscalBusinessConfig = {
+    businessName: 'LA MARTINA',
+    fantasyName: 'Supermercado La Martina',
+    cuit: '',
+    taxCondition: 'Responsable Inscripto',
+    grossIncome: '',
+    startDate: '',
+    fiscalAddress: '',
+    postalCode: '',
+    phone: '',
+    defaultPointOfSale: 1
+  };
+  const [fiscalConfig, setFiscalConfig] = useState<FiscalBusinessConfig>(defaultFiscalConfig);
+  const updateFiscalConfig = async (updates: Partial<FiscalBusinessConfig>) => {
+    const next = { ...fiscalConfig, ...updates };
+    setFiscalConfig(next);
+    await saveSetting('fiscal_config', next);
+    try {
+      await billingService.updateConfig(next);
+    } catch (err) {
+      console.warn('Backend sync warning for fiscal config:', err);
+    }
+  };
+
+  // ─── Thermal Printer Config ────────────────────────────────
+  const [thermalPrinterConfig, setThermalPrinterConfigState] = useState<ThermalPrinterConfig>(() => thermalPrinterService.getConfig());
+  const updateThermalPrinterConfig = useCallback((updates: Partial<ThermalPrinterConfig>) => {
+    const next = thermalPrinterService.saveConfig(updates);
+    setThermalPrinterConfigState(next);
+  }, []);
 
   // ─── General Config ───────────────────────────────────────
   const defaultGeneralConfig: GeneralConfig = {
@@ -1254,12 +1655,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     freeShippingMinAmount: 0
   };
   const [generalConfig, setGeneralConfig] = useState<GeneralConfig>(defaultGeneralConfig);
-  const updateGeneralConfig = (updates: Partial<GeneralConfig>) => {
-    setGeneralConfig(prev => {
-      const next = { ...prev, ...updates };
-      saveSetting('general_config', next).catch(console.error);
-      return next;
-    });
+  const updateGeneralConfig = async (updates: Partial<GeneralConfig>) => {
+    const next = { ...generalConfig, ...updates };
+    setGeneralConfig(next);
+    await saveSetting('general_config', next);
   };
 
   const blockPhone = (phone: string) => {
@@ -1290,6 +1689,13 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!clean) return false;
     const list = generalConfig.blockedPhones || [];
     return list.some(p => clean.includes(p) || p.includes(clean));
+  };
+
+  // ─── Delivery Time Slots (Clientes) ────────────────────────
+  const [deliveryTimeSlots, setDeliveryTimeSlots] = useState<DeliveryTimeSlot[]>(defaultDeliveryTimeSlots);
+  const updateDeliveryTimeSlots = async (slots: DeliveryTimeSlot[]) => {
+    setDeliveryTimeSlots(slots);
+    await saveSetting('delivery_time_slots', slots);
   };
 
   // ─── Hero Banners (Home Carousel) ─────────────────────────
@@ -1365,9 +1771,9 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ─── Auto Cash Close Config ──────────────────────────────
   const defaultAutoCashCloseConfig: AutoCashCloseConfig = { enabled: false, time: '22:00' };
   const [autoCashCloseConfig, setAutoCashCloseConfig] = useState<AutoCashCloseConfig>(defaultAutoCashCloseConfig);
-  const updateAutoCashCloseConfig = (config: AutoCashCloseConfig) => {
+  const updateAutoCashCloseConfig = async (config: AutoCashCloseConfig) => {
     setAutoCashCloseConfig(config);
-    saveSetting('auto_cash_close_config', config).catch(console.error);
+    await saveSetting('auto_cash_close_config', config);
   };
 
   // ─── Auto Cash Close Timer ────────────────────────────────
@@ -1392,46 +1798,216 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => clearInterval(intervalId);
   }, [autoCashCloseConfig, cashRegister.isOpen]);
 
-  // ─── Invoices ─────────────────────────────────────────────
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [billingCustomers, setBillingCustomers] = useState<BillingCustomer[]>([]);
 
-  const addInvoice = (invoiceData: Omit<Invoice, 'id' | 'folio'>): Invoice => {
-    const folio = String(invoices.length + 1).padStart(6, '0');
-    const invoice: Invoice = { ...invoiceData, id: `INV-${Date.now()}`, folio };
-    setInvoices(prev => {
-      const next = [invoice, ...prev];
-      saveSetting('invoices', next).catch(console.error);
-      return next;
-    });
+  // Clientes Fiscales derivados directamente de la fuente única customer_profiles (customers)
+  // Solo se listan clientes que tengan datos fiscales explícitos (CUIT, Razón Social, Condición IVA específica o marca fiscal)
+  const billingCustomers = useMemo<BillingCustomer[]>(() => {
+    return customers
+      .filter(c => {
+        const hasCuit = Boolean(c.cuit && c.cuit.trim().length > 0);
+        const hasBusinessName = Boolean(c.businessName && c.businessName.trim().length > 0);
+        const isSpecialTax = Boolean(c.taxCondition && c.taxCondition !== 'Consumidor Final');
+        const isDocCuit = c.documentType === 'CUIT' || c.documentType === 'CUIL';
+        const isExplicitFiscal = c.isFiscal === true;
+        return hasCuit || hasBusinessName || isSpecialTax || isDocCuit || isExplicitFiscal;
+      })
+      .map(c => ({
+        id: c.phone || c.dni || c.name,
+        name: c.businessName ? `${c.businessName} (${c.name})` : c.name,
+        documentType: (c.documentType as any) || (c.cuit ? 'CUIT' : 'DNI'),
+        documentNumber: c.cuit || c.dni || '',
+        cuit: c.cuit || '',
+        taxCondition: c.taxCondition || 'Consumidor Final',
+        address: c.fiscalAddress || c.address || '',
+        phone: c.phone || '',
+        email: c.email || '',
+        notes: c.accountLimitNotes || ''
+      }));
+  }, [customers]);
+
+  const addInvoice = (invoiceData: Omit<Invoice, 'id' | 'folio'> & { folio?: string; id?: string }): Invoice => {
+    const pv = invoiceData.pointOfSale || (invoiceData as any).point_of_sale;
+    const num = invoiceData.invoiceNumber || (invoiceData as any).invoice_number;
+    const folio = (invoiceData.folio && !invoiceData.folio.includes('undefined'))
+      ? invoiceData.folio
+      : (pv && num
+        ? `${String(pv).padStart(4, '0')}-${String(num).padStart(8, '0')}`
+        : `COM-${Date.now().toString().slice(-6)}`);
+    const invoice: Invoice = { ...invoiceData, id: invoiceData.id || `INV-${Date.now()}`, folio };
+    setInvoices(prev => [invoice, ...prev]);
     return invoice;
   };
+
   const updateInvoice = (id: string, updates: Partial<Invoice>) => {
     setInvoices(prev => {
-      const next = prev.map(inv => inv.id === id ? { ...inv, ...updates } : inv);
-      saveSetting('invoices', next).catch(console.error);
-      return next;
+      return prev.map(inv => {
+        if (inv.id === id) {
+          if (inv.status === 'AUTORIZADA' && updates.status === 'ANULADA' && !updates.originalInvoiceNumber) {
+            console.warn('Aviso: para anular fiscalmente un comprobante autorizado se debe generar la correspondiente Nota de Crédito.');
+          }
+          return { ...inv, ...updates };
+        }
+        return inv;
+      });
     });
   };
+
+  const refreshInvoices = useCallback(async (): Promise<void> => {
+    try {
+      const fiscalRecords = await billingService.getFiscalInvoices();
+      if (Array.isArray(fiscalRecords) && fiscalRecords.length > 0) {
+        const mapped: Invoice[] = fiscalRecords.map((r: any) => ({
+          id: r.id,
+          date: r.date || r.created_at,
+          folio: (r.folio && !r.folio.includes('undefined'))
+            ? r.folio
+            : (r.point_of_sale || r.pointOfSale) && (r.invoice_number || r.invoiceNumber)
+              ? `${String(r.point_of_sale || r.pointOfSale).padStart(4, '0')}-${String(r.invoice_number || r.invoiceNumber).padStart(8, '0')}`
+              : r.id,
+          pointOfSale: r.point_of_sale || r.pointOfSale,
+          invoiceNumber: r.invoice_number || r.invoiceNumber,
+          customerId: r.customer_id,
+          clientName: r.customer_name || 'Consumidor Final',
+          clientCuit: r.customer_cuit || r.customer_document_number || '',
+          customerName: r.customer_name,
+          customerDocumentType: r.customer_document_type,
+          customerDocumentNumber: r.customer_document_number,
+          customerCuit: r.customer_cuit,
+          customerTaxCondition: r.customer_tax_condition,
+          customerAddress: r.customer_address,
+          subtotal: Number(r.subtotal_net || 0),
+          subtotalNet: Number(r.subtotal_net || 0),
+          taxes: Number(r.taxes || 0),
+          total: Number(r.total || 0),
+          currency: r.currency || 'PES',
+          saleId: Array.isArray(r.sale_ids) ? r.sale_ids.join(', ') : (r.saleId || ''),
+          saleIds: Array.isArray(r.sale_ids) ? r.sale_ids : (r.saleIds || []),
+          type: (r.invoice_type || 'B') as any,
+          invoiceType: (r.invoice_type || 'B') as any,
+          invoiceTypeCode: r.invoice_type_code,
+          origin: r.origin || 'ARCA_LOCAL',
+          status: r.status || 'AUTORIZADA',
+          direction: r.direction || 'venta',
+          serviceUsed: r.service_used || 'WSMTXCA',
+          cae: r.cae,
+          caeExpirationDate: r.cae_expiration_date,
+          arcaObservations: r.arca_observations,
+          qrPayload: r.qr_payload,
+          qrDataUrl: r.qrDataUrl,
+          attachmentUrl: r.attachment_url,
+          notes: r.notes,
+          verifiedAt: r.verified_at,
+          verifiedBy: r.verified_by,
+          items: r.items,
+          vatBreakdown: r.vat_breakdown,
+          associatedInvoiceId: r.associated_invoice_id,
+          associatedPointOfSale: r.associated_point_of_sale,
+          associatedInvoiceNumber: r.associated_invoice_number,
+          associatedInvoiceType: r.associated_invoice_type,
+          associatedInvoiceTypeCode: r.associated_invoice_type_code,
+          associatedCuit: r.associated_cuit,
+          operationId: r.operation_id || r.idempotency_key,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at
+        }));
+        setInvoices(prev => {
+          const map = new Map<string, Invoice>();
+          prev.filter(i => (i.status as any) !== 'Emitida').forEach(i => map.set(i.id, i));
+          mapped.forEach(i => map.set(i.id, i));
+          return Array.from(map.values());
+        });
+      }
+    } catch (e) {
+      console.warn('Error al refrescar facturas fiscales:', e);
+    }
+  }, []);
+
+  const checkSaleBilledStatus = useCallback((saleId: string) => {
+    if (!saleId) return { isBilled: false, canRetry: true, needsReconciliation: false };
+    const cleanId = String(saleId).trim();
+    const found = invoices.find(inv => {
+      if (inv.saleId && inv.saleId === cleanId) return true;
+      if (Array.isArray(inv.saleIds) && inv.saleIds.includes(cleanId)) return true;
+      return false;
+    });
+
+    if (!found) {
+      return { isBilled: false, canRetry: true, needsReconciliation: false };
+    }
+
+    if (found.status === 'AUTORIZADA') {
+      return { isBilled: true, invoice: found, canRetry: false, needsReconciliation: false };
+    }
+    if (found.status === 'ESTADO_DESCONOCIDO') {
+      return { isBilled: false, invoice: found, canRetry: false, needsReconciliation: true };
+    }
+    if (found.status === 'RECHAZADA' || found.status === 'ERROR_TECNICO') {
+      return { isBilled: false, invoice: found, canRetry: true, needsReconciliation: false };
+    }
+    return { isBilled: false, invoice: found, canRetry: true, needsReconciliation: false };
+  }, [invoices]);
+
   const addBillingCustomer = (data: Omit<BillingCustomer, 'id'>) => {
-    setBillingCustomers(prev => {
-      const next = [...prev, { ...data, id: `BC-${Date.now()}` }];
-      saveSetting('billing_customers', next).catch(console.error);
-      return next;
-    });
+    const rawPhone = data.phone?.trim() || '';
+    const formattedPhone = rawPhone ? formatPhone(rawPhone) : `+54999${(data.cuit || data.documentNumber || Date.now()).toString().replace(/\D/g, '').slice(-9)}`;
+    const profile: CustomerProfile = {
+      phone: formattedPhone,
+      nombre: data.name,
+      name: data.name,
+      dni: data.documentType === 'DNI' ? (data.documentNumber || '') : '',
+      cuit: data.cuit || (data.documentType === 'CUIT' ? data.documentNumber : '') || '',
+      document_type: data.documentType || (data.cuit ? 'CUIT' : 'DNI'),
+      documentType: data.documentType || (data.cuit ? 'CUIT' : 'DNI'),
+      tax_condition: data.taxCondition || 'Consumidor Final',
+      taxCondition: data.taxCondition || 'Consumidor Final',
+      business_name: data.name,
+      businessName: data.name,
+      direccion: data.address || '',
+      fiscal_address: data.address || '',
+      fiscalAddress: data.address || '',
+      email: data.email || '',
+      hasCurrentAccount: false,
+      isManual: true,
+      isFiscal: true,
+      is_fiscal: true,
+      accountLimitNotes: data.notes || ''
+    };
+    upsertCustomerProfile(profile).catch(console.error);
+    setCustomerProfiles(prev => ({
+      ...prev,
+      [formattedPhone]: profile
+    }));
   };
+
   const updateBillingCustomer = (id: string, updates: Partial<BillingCustomer>) => {
-    setBillingCustomers(prev => {
-      const next = prev.map(c => c.id === id ? { ...c, ...updates } : c);
-      saveSetting('billing_customers', next).catch(console.error);
-      return next;
+    const target = customers.find(c => c.phone === id || c.cuit === id || c.dni === id || c.name === id);
+    if (!target) return;
+    updateCustomerProfile(target.phone, {
+      name: updates.name,
+      businessName: updates.name,
+      cuit: updates.cuit,
+      documentType: updates.documentType,
+      documentNumber: updates.documentNumber || updates.cuit,
+      taxCondition: updates.taxCondition,
+      fiscalAddress: updates.address,
+      phone: updates.phone,
+      email: updates.email,
+      accountLimitNotes: updates.notes,
+      isFiscal: true
     });
   };
+
   const deleteBillingCustomer = (id: string) => {
-    setBillingCustomers(prev => {
-      const next = prev.filter(c => c.id !== id);
-      saveSetting('billing_customers', next).catch(console.error);
-      return next;
+    const target = customers.find(c => c.phone === id || c.cuit === id || c.dni === id || c.name === id);
+    if (!target) return;
+    // NO eliminar el perfil del cliente en el supermercado; solo desasociar sus datos fiscales
+    updateCustomerProfile(target.phone, {
+      cuit: '',
+      businessName: '',
+      taxCondition: 'Consumidor Final',
+      fiscalAddress: '',
+      isFiscal: false
     });
   };
 
@@ -1959,17 +2535,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const totalCustomers = customers.length;
 
   // Helper to match customer tiers flexibly (Gold/Oro, Silver/Plata, Bronze/Bronce, Regular)
-  const isTierMatch = (customerTier?: string, requiredTier?: string) => {
-    if (!requiredTier || requiredTier === 'all' || requiredTier === '') return true;
-    if (!customerTier) return false;
-    const c = customerTier.toLowerCase().trim();
-    const r = requiredTier.toLowerCase().trim();
-    if (c === r) return true;
-    if ((r === 'oro' && c === 'gold') || (r === 'gold' && c === 'oro')) return true;
-    if ((r === 'plata' && c === 'silver') || (r === 'silver' && c === 'plata')) return true;
-    if ((r === 'bronce' && c === 'bronze') || (r === 'bronze' && c === 'bronce')) return true;
-    return false;
-  };
+  // Reused from pricing.ts
+  const localIsTierMatch = isTierMatch;
 
   // ─── Offers ───────────────────────────────────────────────
   const addOffer = (o: Offer) => {
@@ -2037,110 +2604,16 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     })();
 
-    const prod = adminProducts.find(p => p.id === item.productId);
-    const itemCategoryId = item.categoryId || prod?.categoryId;
-    const itemSubcategoryId = (prod as any)?.subcategoryId || (prod as any)?.subcategory_id;
-    const itemBadge = prod?.badge;
-
-    const applicable = offers.filter(o => {
-      if (!o.active) return false;
-      const startStr = (o.startDate || '').split('T')[0];
-      const endStr = (o.endDate || '').split('T')[0];
-      if (startStr && startStr > todayStr) return false;
-      if (endStr && endStr < todayStr) return false;
-
-      // Tier requirement check (combinable with any scope)
-      // When options?.forDisplay is true (e.g. for storefront catalog showcases / flash offers),
-      // we allow displaying the promotion so customers know about it!
-      if (o.requiredTier && o.requiredTier !== 'all' && !options?.forDisplay) {
-        if (!customer) return false;
-        if (!isTierMatch(customer.tier, o.requiredTier)) return false;
-      }
-
-      if (o.scope === 'product') {
-        if (o.targetIds && Array.isArray(o.targetIds) && o.targetIds.length > 0) {
-          return o.targetIds.includes(item.productId);
-        }
-        if (o.targetId && o.targetId.includes(',')) {
-          return o.targetId.split(',').map(s => s.trim()).includes(item.productId);
-        }
-        return o.targetId === item.productId || o.productId === item.productId;
-      }
-
-      if (o.scope === 'category') {
-        return Boolean(itemCategoryId && itemCategoryId === o.targetId);
-      }
-
-      if (o.scope === 'subcategory') {
-        const targetSub = o.subcategoryId || o.targetId;
-        return Boolean(itemSubcategoryId && itemSubcategoryId === targetSub);
-      }
-
-      if (o.scope === 'tag') {
-        const targetTag = (o.tagFilter || o.targetId || '').toLowerCase().trim();
-        return Boolean(itemBadge && itemBadge.toLowerCase().trim() === targetTag);
-      }
-
-      return false;
-    });
-
-    if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null, offerId: null, discountedQuantity: 0, originalPrice: item.price };
-
-    // Use the best (highest discount) applicable offer, respecting quotas
-    let bestDiscount = 0;
-    let bestLabel: string | null = null;
-    let bestOfferId: string | null = null;
-    let finalDiscountedQuantity = 0;
-
-    applicable.forEach(o => {
-      // Validate quota before considering this offer
-      let allowedQuantity = item.quantity;
-      if (o.daily_quantity_limit || o.per_customer_daily_limit || o.total_quantity_limit) {
-        const todayRedemptions = offerRedemptions.filter(r => r.offer_id === o.id && r.redemption_date === todayStr);
-        const usedTodayTotal = todayRedemptions.reduce((s, r) => s + r.quantity, 0);
-        const usedTodayCustomer = customer ? todayRedemptions.filter(r => {
-          const clean1 = (r.customer_phone || '').replace(/\D/g, '');
-          const clean2 = (customer.phone || '').replace(/\D/g, '');
-          return clean1 === clean2 && clean1 !== '';
-        }).reduce((s, r) => s + r.quantity, 0) : 0;
-
-        let remainingGlobal = o.daily_quantity_limit ? Math.max(0, o.daily_quantity_limit - usedTodayTotal) : Infinity;
-        let remainingTotal = o.total_quantity_limit ? Math.max(0, o.total_quantity_limit - offerRedemptions.filter(r => r.offer_id === o.id).reduce((s, r) => s + r.quantity, 0)) : Infinity;
-        let remainingCustomer = o.per_customer_daily_limit ? Math.max(0, o.per_customer_daily_limit - usedTodayCustomer) : Infinity;
-
-        const strictLimit = Math.min(remainingGlobal, remainingTotal, remainingCustomer);
-        allowedQuantity = Math.min(item.quantity, strictLimit);
-      }
-
-      if (allowedQuantity <= 0) return; // Quota exceeded for this offer
-
-      // Calculate discount for the allowed units
-      let discVal = 0;
-      if (o.discountType === 'percent') {
-        const unitDiscount = item.price * (o.discountValue / 100);
-        discVal = unitDiscount * allowedQuantity;
-        if (o.maxDiscountAmount && discVal > o.maxDiscountAmount) {
-          discVal = o.maxDiscountAmount;
-        }
-      } else {
-        discVal = Math.min(o.discountValue * allowedQuantity, item.price * allowedQuantity);
-      }
-
-      if (discVal > bestDiscount) {
-        bestDiscount = discVal;
-        bestLabel = o.label || o.name || 'Oferta';
-        bestOfferId = o.id;
-        finalDiscountedQuantity = allowedQuantity;
-      }
-    });
-
-    return {
-      finalPrice: bestDiscount > 0 && finalDiscountedQuantity > 0 ? Math.max(0, item.price - (bestDiscount / finalDiscountedQuantity)) : item.price, // Exact discounted unit price
-      discountAmount: bestDiscount,
-      offerLabel: bestLabel,
-      offerId: bestOfferId,
-      discountedQuantity: finalDiscountedQuantity
-    };
+    // Adapter for pure function
+    return pureApplyOffersToCartItem(
+      item as PricingItemInput,
+      adminProducts,
+      offers,
+      offerRedemptions,
+      todayStr,
+      customer,
+      options
+    );
   };
 
   // Apply order-scoped offers (all, customer, birthday, tier) once to the entire subtotal
@@ -2148,110 +2621,20 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     subtotalAfterItemDiscounts: number,
     customer?: AdminCustomer | null
   ) => {
-    const todayStr = (() => {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    })();
-    const applicable = offers.filter(o => {
-      if (!o.active) return false;
-      const startStr = (o.startDate || '').split('T')[0];
-      const endStr = (o.endDate || '').split('T')[0];
-      if (startStr && startStr > todayStr) return false;
-      if (endStr && endStr < todayStr) return false;
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const todayMonth = today.getMonth() + 1;
+    const todayDay = today.getDate();
 
-      // Tier requirement check (combinable with any order scope)
-      if (o.requiredTier && o.requiredTier !== 'all') {
-        if (!customer) return false;
-        if (!isTierMatch(customer.tier, o.requiredTier)) return false;
-      }
-
-      if (o.scope === 'all') return true;
-      if (o.scope === 'tier') {
-        if (!customer) return false;
-        return isTierMatch(customer.tier, o.targetId);
-      }
-      if (o.scope === 'customer') {
-        if (!customer) return false;
-        if (customer.dni === o.targetId) return true;
-        const clean = (p: string) => {
-          let c = (p || '').replace(/\D/g, '');
-          if (c.startsWith('549')) c = c.substring(3);
-          else if (c.startsWith('54')) c = c.substring(2);
-          if (c.startsWith('0')) c = c.substring(1);
-          return c;
-        };
-        return clean(customer.phone) === clean(o.targetId || '');
-      }
-      if (o.scope === 'birthday') {
-        if (!customer?.birthday) return false;
-        const today = new Date();
-        const todayMonth = today.getMonth() + 1;
-        const todayDay = today.getDate();
-        const parts = customer.birthday.split('-');
-        let bMonth: number, bDay: number;
-        if (parts.length === 3) {
-          // YYYY-MM-DD format
-          bMonth = parseInt(parts[1]);
-          bDay = parseInt(parts[2]);
-        } else if (parts.length === 2) {
-          // DD-MM format (as entered from the admin panel)
-          bDay = parseInt(parts[0]);
-          bMonth = parseInt(parts[1]);
-        } else {
-          return false;
-        }
-        return (todayMonth === bMonth && todayDay === bDay);
-      }
-      return false;
-    });
-
-    if (applicable.length === 0) return { discountAmount: 0, offerLabel: null, offerId: null };
-
-    let bestDiscount = 0;
-    let bestLabel: string | null = null;
-    let bestId: string | null = null;
-
-    applicable.forEach(o => {
-      // Validate quota before considering this offer
-      let isValid = true;
-      if (o.daily_quantity_limit || o.per_customer_daily_limit || o.total_quantity_limit) {
-        const todayRedemptions = offerRedemptions.filter(r => r.offer_id === o.id && r.redemption_date === todayStr);
-        const usedTodayTotal = todayRedemptions.length; // per order applied, assume 1 usage
-        const usedTodayCustomer = customer ? todayRedemptions.filter(r => {
-          const clean1 = (r.customer_phone || '').replace(/\\D/g, '');
-          const clean2 = (customer.phone || '').replace(/\\D/g, '');
-          return clean1 === clean2 && clean1 !== '';
-        }).length : 0;
-
-        if (o.daily_quantity_limit && usedTodayTotal >= o.daily_quantity_limit) isValid = false;
-        if (o.per_customer_daily_limit && usedTodayCustomer >= o.per_customer_daily_limit) isValid = false;
-        const totalRedemptions = offerRedemptions.filter(r => r.offer_id === o.id).length;
-        if (o.total_quantity_limit && totalRedemptions >= o.total_quantity_limit) isValid = false;
-      }
-      if (!isValid) return;
-
-      let discVal = 0;
-      if (o.discountType === 'percent') {
-        discVal = subtotalAfterItemDiscounts * (o.discountValue / 100);
-        if (o.maxDiscountAmount && discVal > o.maxDiscountAmount) {
-          discVal = o.maxDiscountAmount;
-        }
-      } else {
-        discVal = o.discountValue; // Fixed discount amount off the entire order!
-      }
-
-      if (discVal > bestDiscount) {
-        bestDiscount = discVal;
-        bestLabel = o.label || o.name || 'Oferta';
-        bestId = o.id;
-      }
-    });
-
-    return {
-      discountAmount: Math.min(bestDiscount, subtotalAfterItemDiscounts),
-      offerLabel: bestLabel,
-      offerId: bestId
-    };
+    return pureApplyOrderOffers(
+      subtotalAfterItemDiscounts,
+      offers,
+      offerRedemptions,
+      todayStr,
+      todayMonth,
+      todayDay,
+      customer
+    );
   };
 
 
@@ -2613,14 +2996,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       activeOrdersCount, lowStockCount, totalCustomers,
       currentAccountConfig, updateCurrentAccountConfig, loadAdminData,
       storeStatus, updateStoreStatus,
+      deliveryTimeSlots, updateDeliveryTimeSlots,
       autoCashCloseConfig, updateAutoCashCloseConfig,
       generalConfig, updateGeneralConfig, blockPhone, unblockPhone, isPhoneBlocked,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
       cashCloses, performCashClose, updateCashCloseOpeningControl,
       cashMovements, addCashMovement, addCashWithdrawal, lastPOSCloseTimestamp, getCashCloseMovements,
       ticketConfig, updateTicketConfig,
+      fiscalConfig, updateFiscalConfig,
+      thermalPrinterConfig, updateThermalPrinterConfig,
       cashRegister, openCashRegister, closeCashRegister, isCashRegisterOpen,
-      invoices, addInvoice, updateInvoice,
+      invoices, addInvoice, updateInvoice, refreshInvoices, checkSaleBilledStatus,
       billingCustomers, addBillingCustomer, updateBillingCustomer, deleteBillingCustomer,
       getTopSellingProducts, getRevenueByCategory, getRevenueByDay,
       expenses, addExpense, updateExpense, cancelExpense, payExpense,

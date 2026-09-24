@@ -39,7 +39,7 @@ export const Header: React.FC = () => {
     let isMounted = true;
     const clean = debouncedSearch.trim();
     if (clean.length >= 2) {
-      productsService.searchProductsQuick(clean, 6).then(results => {
+      productsService.searchProductsQuick(clean, 5).then(results => {
         if (isMounted) setFilteredProducts(results);
       }).catch(console.error);
     } else {
@@ -324,20 +324,30 @@ export const Header: React.FC = () => {
 
                 return (
                   <div key={cat.id} className="relative group">
-                    <Link
-                      to={`/category/${cat.id}`}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-on-surface/90 hover:text-primary hover:bg-surface-container-low transition-colors font-medium whitespace-nowrap group-hover:text-primary group-hover:bg-surface-container-low"
-                    >
-                      <span className="material-symbols-outlined text-[16px] text-on-surface-variant/70 group-hover:text-primary transition-colors">
-                        {getCategoryIcon(cat.id)}
-                      </span>
-                      <span>{cat.title}</span>
-                      {hasSubs && (
+                    {hasSubs ? (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-on-surface/90 hover:text-primary hover:bg-surface-container-low transition-colors font-medium whitespace-nowrap group-hover:text-primary group-hover:bg-surface-container-low cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[16px] text-on-surface-variant/70 group-hover:text-primary transition-colors">
+                          {getCategoryIcon(cat.id)}
+                        </span>
+                        <span>{cat.title}</span>
                         <span className="material-symbols-outlined text-[14px] text-on-surface-variant/40 group-hover:text-primary group-hover:rotate-180 transition-transform duration-200">
                           expand_more
                         </span>
-                      )}
-                    </Link>
+                      </button>
+                    ) : (
+                      <Link
+                        to={`/category/${cat.id}`}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-on-surface/90 hover:text-primary hover:bg-surface-container-low transition-colors font-medium whitespace-nowrap group-hover:text-primary group-hover:bg-surface-container-low"
+                      >
+                        <span className="material-symbols-outlined text-[16px] text-on-surface-variant/70 group-hover:text-primary transition-colors">
+                          {getCategoryIcon(cat.id)}
+                        </span>
+                        <span>{cat.title}</span>
+                      </Link>
+                    )}
 
                     {/* Dropdown flotante con subcategorías al hacer hover */}
                     {hasSubs && (

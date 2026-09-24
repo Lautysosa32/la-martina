@@ -474,7 +474,7 @@ class SyncEngine {
       // Calcular deuda actual de cada cliente en base a órdenes impagas en Supabase
       const { data: unpaidOrders } = await supabase
         .from('orders')
-        .select('customer_phone, total, paid_amount')
+        .select('phone, total, paid_amount')
         .eq('payment_method', 'cuenta_corriente')
         .neq('payment_status', 'Pagado')
         .neq('status', 'Cancelado');
@@ -482,9 +482,10 @@ class SyncEngine {
       if (unpaidOrders) {
         const debtMap: Record<string, number> = {};
         unpaidOrders.forEach((o: any) => {
-          if (o.customer_phone) {
+          const clientPhone = o.phone || o.customer_phone;
+          if (clientPhone) {
             const debt = Number(o.total || 0) - Number(o.paid_amount || 0);
-            debtMap[o.customer_phone] = (debtMap[o.customer_phone] || 0) + debt;
+            debtMap[clientPhone] = (debtMap[clientPhone] || 0) + debt;
           }
         });
         customers.forEach(c => {

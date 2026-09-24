@@ -9,7 +9,12 @@ coverage/
 *.pem
 *.key
 *.cert
+*.crt
+*.csr
 *.pfx
+*.p12
+certs/
+server/certs/
 credentials.json
 serviceAccount*.json
 .vercel
@@ -21,3 +26,14 @@ whatsapp-worker/.wwebjs_cache/
 whatsapp-worker/node_modules/
 whatsapp-worker/.env*
 !whatsapp-worker/.env.example
+
+# Diagnostic & Scratch Scripts
+scripts/diagnostic.ts
+scripts/informe-diferencias.ts
+scripts/create_admin.ts
+scripts/verify.ts
+scripts/generate_sample_pdf.ts
+scripts/run_harness_chain.ts
+scratch/
+scratch_*.ts
+

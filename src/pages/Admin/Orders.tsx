@@ -5,7 +5,7 @@ import { useAdmin, AdminOrder } from '../../context/AdminContext';
 import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { calculateDistanceKm } from '../../utils/shipping';
+import { calculateDistanceKm } from '../../../supabase/functions/_shared/shipping';
 import { WeightInputModal } from '../../components/WeightInputModal';
 import { useScrollLock } from '../../utils/useScrollLock';
 
@@ -98,6 +98,16 @@ export const AdminOrders: React.FC = () => {
       return 0;
     });
   }, [filteredByPeriod, activeStatus, sortField, sortOrder]);
+
+  const [visibleLimit, setVisibleLimit] = useState(25);
+
+  useEffect(() => {
+    setVisibleLimit(25);
+  }, [activeStatus, period]);
+
+  const displayedOrders = useMemo(() => {
+    return sortedAndFilteredOrders.slice(0, visibleLimit);
+  }, [sortedAndFilteredOrders, visibleLimit]);
 
   const statusTabs = [
     { key: 'todos', label: 'Todos', count: filteredByPeriod.length },
@@ -241,7 +251,7 @@ export const AdminOrders: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/10 text-sm">
-                  {sortedAndFilteredOrders.map((order) => (
+                  {displayedOrders.map((order) => (
                     <React.Fragment key={order.id}>
                       <tr className="hover:bg-surface-container-lowest transition-colors border-b border-outline-variant/5">
                         <td className="px-6 py-5 font-black text-on-background">#{order.id}</td>
@@ -658,7 +668,7 @@ export const AdminOrders: React.FC = () => {
 
             {/* Mobile Cards View */}
             <div className="block md:hidden divide-y divide-outline-variant/10">
-              {sortedAndFilteredOrders.map((order) => {
+              {displayedOrders.map((order) => {
                 const isExpanded = expandedId === order.id;
                 return (
                   <div key={order.id} className="p-4 space-y-3.5 hover:bg-surface-container-lowest transition-colors">
@@ -1063,6 +1073,29 @@ export const AdminOrders: React.FC = () => {
                 );
               })}
             </div>
+
+            {/* Visual limit footer */}
+            {sortedAndFilteredOrders.length > visibleLimit ? (
+              <div className="p-4 border-t border-outline-variant/10 flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface-container-lowest">
+                <p className="text-xs font-bold text-on-surface-variant">
+                  Mostrando <span className="text-on-background font-black">{displayedOrders.length}</span> de <span className="text-on-background font-black">{sortedAndFilteredOrders.length}</span> pedidos
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setVisibleLimit(prev => prev + 25)}
+                  className="bg-white hover:bg-surface-container-low text-primary font-bold px-5 py-2.5 rounded-xl border border-outline-variant/20 transition-all text-xs shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <span className="material-symbols-outlined text-[16px]">expand_more</span>
+                  Mostrar más pedidos ({sortedAndFilteredOrders.length - displayedOrders.length} restantes)
+                </button>
+              </div>
+            ) : sortedAndFilteredOrders.length > 25 ? (
+              <div className="p-3 border-t border-outline-variant/10 text-center bg-surface-container-lowest">
+                <p className="text-[11px] font-bold text-on-surface-variant/70">
+                  Todos los pedidos mostrados ({sortedAndFilteredOrders.length})
+                </p>
+              </div>
+            ) : null}
           </>
         ) : (
           <div className="p-16 text-center">

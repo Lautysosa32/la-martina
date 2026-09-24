@@ -40,7 +40,7 @@ export const insertExpense = async (expense: Expense): Promise<void> => {
   });
   if (error) {
     console.error('Error inserting expense:', error);
-    alert(`Error guardando egreso: ${error.message}`);
+    throw new Error('No se pudo guardar el egreso en la base de datos.');
   }
 };
 
@@ -53,7 +53,7 @@ export const updateExpenseInDb = async (id: string, updates: Partial<Expense>): 
     .eq('branch_id', BRANCH_ID);
   if (error) {
     console.error('Error updating expense:', error);
-    alert(`Error actualizando egreso: ${error.message}`);
+    throw new Error('No se pudo actualizar el egreso.');
   }
 };
 
@@ -66,6 +66,6 @@ export const cancelExpenseInDb = async (id: string): Promise<void> => {
     .eq('branch_id', BRANCH_ID);
   if (error) {
     console.error('Error cancelling expense:', error);
-    alert(`Error eliminando egreso: ${error.message}`);
+    throw new Error('No se pudo cancelar el egreso.');
   }
 };

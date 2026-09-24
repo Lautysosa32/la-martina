@@ -108,18 +108,24 @@ export const About: React.FC = () => {
             </div>
           </section>
 
-          {/* Mini Mapa Actualizado */}
-          <section className="rounded-2xl overflow-hidden h-[250px] shadow-inner relative border border-outline-variant/20 group">
-            <iframe
-              src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3345.8340798739953!2d-67.5539972!3d-33.4588047!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x967f5d9a53d32efb%3A0x20989bacf6605d80!2sMartina%20supermercado!5e0!3m2!1ses-419!2sar!4v1714567890123!5m2!1ses-419!2sar"
-              width="100%"
-              height="100%"
-              style={{ border: 0 }}
-              allowFullScreen={true}
-              loading="lazy"
-              referrerPolicy="no-referrer-when-downgrade"
-            ></iframe>
-            <div className="absolute inset-0 bg-primary/5 pointer-events-none group-hover:bg-transparent transition-colors"></div>
+          {/* Mini Mapa (Enlace Externo para Privacidad) */}
+          <section className="rounded-2xl overflow-hidden shadow-inner relative border border-outline-variant/20 bg-surface-container-low flex flex-col items-center justify-center p-8 text-center h-[250px]">
+            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 text-primary shrink-0">
+              <span className="material-symbols-outlined text-3xl" aria-hidden="true" translate="no">map</span>
+            </div>
+            <h4 className="font-bold text-on-surface mb-2">Encontranos en Google Maps</h4>
+            <p className="text-sm text-on-surface-variant mb-4 max-w-[250px]">
+              Para proteger tu privacidad, no cargamos el mapa automáticamente.
+            </p>
+            <a
+              href="https://www.google.com/maps/place/Martina+supermercado/@-33.4763684,-67.6461458,11.25z/data=!4m6!3m5!1s0x967f5d9a53d32efb:0x20989bacf6605d80!8m2!3d-33.4590393!4d-67.5518086!16s%2Fg%2F11sn_4jnn5?entry=ttu&g_ep=EgoyMDI2MDUwMi4wIKXMDSoASAFQAw%3D%3D"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-primary text-on-primary px-5 py-2.5 rounded-xl font-bold hover:bg-primary/90 transition-colors text-sm"
+            >
+              Abrir Mapa
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true" translate="no">open_in_new</span>
+            </a>
           </section>
         </div>
       </div>

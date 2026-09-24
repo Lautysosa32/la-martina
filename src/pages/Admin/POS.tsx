@@ -4,8 +4,10 @@ import { useAdmin } from '../../context/AdminContext';
 import { Product } from '../../data/mockData';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { TicketPrinter, TicketData, TicketItem } from '../../components/TicketPrinter';
+import { FiscalTicketPrinter } from '../../components/FiscalTicketPrinter';
 import { MovementDetailModal } from '../../components/MovementDetailModal';
 import { WeightInputModal } from '../../components/WeightInputModal';
+import { BarcodeScannerModal } from '../../components/BarcodeScannerModal';
 import type { CashWithdrawal, CashMovement } from '../../context/AdminContext';
 import { shoppingSessionService } from '../../services/shopping-session.service';
 import { whatsappMessageService, cleanAndFormatPhone } from '../../services/whatsapp-message.service';
@@ -21,6 +23,11 @@ import { cajaManager } from '../../offline/cajaManager';
 import { syncQueue } from '../../offline/syncQueue';
 import { OfflineSaleItem } from '../../offline/types';
 import { usePOSShortcuts } from '../../hooks/usePOSShortcuts';
+import { useProductStore } from '../../stores/useProductStore';
+import type { Invoice, InvoiceItem } from '../../context/AdminContext';
+import { billingService } from '../../services/billing.service';
+import { buildCreatorItemsFromOrders } from '../../utils/billingProductMapper';
+import { determineInvoiceType, validateCuit, recalculateFiscalInvoice } from '../../../server/services/arca/arcaTaxRules';
 
 export const generateTicketWhatsAppText = (ticket: TicketData, storeName = 'Martina Supermercado', footerMsg = '¡Gracias por su compra!'): string => {
   const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -122,7 +129,27 @@ const createTab = (num: number): POSTab => ({
 });
 
 export const POS: React.FC = () => {
-  const { customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts, performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers, orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig, ticketConfig, cashCloses, updateCashCloseOpeningControl } = useAdmin();
+  const {
+    customers, cashMovements, addCashMovement, addCashWithdrawal, addAdminOrder, adminProducts,
+    performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers,
+    orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig,
+    ticketConfig, cashCloses, updateCashCloseOpeningControl,
+    invoices, addInvoice, refreshInvoices, checkSaleBilledStatus
+  } = useAdmin();
+
+  // Asegurar carga de catálogo de productos frescos para el POS
+  const storeProducts = useProductStore((state) => state.products);
+  const fetchProducts = useProductStore((state) => state.fetchProducts);
+
+  useEffect(() => {
+    if (storeProducts.length === 0) {
+      fetchProducts();
+    }
+  }, [storeProducts.length, fetchProducts]);
+
+  const activeCatalogProducts = useMemo(() => {
+    return storeProducts.length > 0 ? storeProducts : adminProducts;
+  }, [storeProducts, adminProducts]);
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
   const cashierName = employeeProfile ? employeeProfile.name : 'Admin';
@@ -196,7 +223,7 @@ export const POS: React.FC = () => {
 
       // Map to POSCartItem, updating prices if they exist in active catalog products
       const posCartItems: POSCartItem[] = sessionItems.map(item => {
-        const matchingProduct = adminProducts.find(
+        const matchingProduct = activeCatalogProducts.find(
           p => p.id === item.productId || (p.barcode && p.barcode === item.barcode)
         );
 
@@ -251,6 +278,7 @@ export const POS: React.FC = () => {
   };
 
   const [showModal, setShowModal] = useState(false);
+  const [isSubmittingSale, setIsSubmittingSale] = useState(false);
   const [showCloseSuccess, setShowCloseSuccess] = useState(false);
   const [activeWeightItemIdx, setActiveWeightItemIdx] = useState<number | null>(null);
   const [inlineWeightEdit, setInlineWeightEdit] = useState<{ idx: number; str: string } | null>(null);
@@ -330,6 +358,66 @@ export const POS: React.FC = () => {
   const [whatsappTicketError, setWhatsappTicketError] = useState('');
   const whatsappPhoneInputRef = useRef<HTMLInputElement>(null);
 
+  // --- FISCAL INVOICE STATE (ARCA POS INTEGRATION) ---
+  const [lastConfirmedSale, setLastConfirmedSale] = useState<{
+    orderId: string;
+    customerName: string;
+    customerPhone: string;
+    customerDni?: string;
+    paymentMethod: string;
+    total: number;
+    subtotal: number;
+    discountAmount: number;
+    discountLabel?: string;
+    items: Array<{
+      id?: string;
+      productId?: string;
+      name: string;
+      price: number;
+      originalPrice?: number;
+      quantity: number;
+      saleType?: 'unit' | 'weight';
+      barcode?: string;
+      finalPrice?: number;
+      lineDiscount?: number;
+    }>;
+  } | null>(null);
+
+  const [showPosFiscalModal, setShowPosFiscalModal] = useState(false);
+  const [fiscalCustomerName, setFiscalCustomerName] = useState('Consumidor Final');
+  const [fiscalTaxCondition, setFiscalTaxCondition] = useState('Consumidor Final');
+  const [fiscalDocType, setFiscalDocType] = useState('SIN_IDENTIFICAR');
+  const [fiscalDocNumber, setFiscalDocNumber] = useState('');
+  const [fiscalCustomerAddress, setFiscalCustomerAddress] = useState('');
+  const [fiscalPointOfSale, setFiscalPointOfSale] = useState(1);
+  const [fiscalNextNumber, setFiscalNextNumber] = useState<number | null>(null);
+  const [isLoadingNextNumber, setIsLoadingNextNumber] = useState(false);
+  const [fiscalInvoiceType, setFiscalInvoiceType] = useState<'A' | 'B' | 'C'>('B');
+  const [fiscalTypeReason, setFiscalTypeReason] = useState('');
+  const [fiscalError, setFiscalError] = useState('');
+  const [isAuthorizingFiscal, setIsAuthorizingFiscal] = useState(false);
+  const [fiscalAuthStep, setFiscalAuthStep] = useState('');
+  const [authorizedInvoiceResult, setAuthorizedInvoiceResult] = useState<Invoice | null>(null);
+  const [unknownOpId, setUnknownOpId] = useState<string | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
+  const [enlargedQrUrl, setEnlargedQrUrl] = useState<string | null>(null);
+  const [fiscalPrinterInvoice, setFiscalPrinterInvoice] = useState<any | null>(null);
+  const [showFiscalPrinterModal, setShowFiscalPrinterModal] = useState(false);
+  const [quickFiscalError, setQuickFiscalError] = useState<string | null>(null);
+  const [quickFiscalStep, setQuickFiscalStep] = useState<string | null>(null);
+
+  // Selector / buscador rápido de cliente registrado para emisión fiscal
+  const [fiscalCustomerSearch, setFiscalCustomerSearch] = useState('');
+  const [showFiscalCustomerSearchDropdown, setShowFiscalCustomerSearchDropdown] = useState(false);
+
+  // WhatsApp Fiscal Invoice Modal State (Separated from commercial ticket)
+  const [showWhatsAppFiscalModal, setShowWhatsAppFiscalModal] = useState<{ invoice: Invoice; phone: string } | null>(null);
+  const [whatsappFiscalPhone, setWhatsappFiscalPhone] = useState('');
+  const [isSendingWhatsAppFiscal, setIsSendingWhatsAppFiscal] = useState(false);
+  const [whatsappFiscalSuccess, setWhatsappFiscalSuccess] = useState(false);
+  const [whatsappFiscalError, setWhatsappFiscalError] = useState('');
+  const whatsappFiscalPhoneInputRef = useRef<HTMLInputElement>(null);
+
   // Movement detail state
   const [selectedMovement, setSelectedMovement] = useState<CashMovement | null>(null);
 
@@ -358,13 +446,13 @@ export const POS: React.FC = () => {
     customerDniInputRef: posCustomerDniRef,
     quantityInputRef: qtyInputRef,
     onCheckout: () => {
-      if (cart.length > 0 && !showPaymentModal && !showDiscountModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal) {
+      if (cart.length > 0 && !showPaymentModal && !showDiscountModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal && !showPosFiscalModal && !showWhatsAppFiscalModal) {
         inputRef.current?.blur();
         setShowPaymentModal(true);
       }
     },
     onClearCart: () => {
-      if (!showPaymentModal && !showDiscountModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal) {
+      if (!showPaymentModal && !showDiscountModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal && !showPosFiscalModal && !showWhatsAppFiscalModal) {
         setCart([]);
         setGlobalDiscount(0);
         updateTab({ shoppingSessionId: null });
@@ -387,12 +475,15 @@ export const POS: React.FC = () => {
       }
     },
     onOpenDiscount: () => {
-      if (!showPaymentModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal) {
+      if (!showPaymentModal && !showPriceModal && !showCloseConfirm && !showSuccessModal && !showWhatsAppTicketModal && !showPosFiscalModal && !showWhatsAppFiscalModal) {
         setDiscountInput(globalDiscount.toString());
         setShowDiscountModal(true);
       }
     },
     onCloseModalsOrBlur: () => {
+      if (enlargedQrUrl) { setEnlargedQrUrl(null); return; }
+      if (showWhatsAppFiscalModal) { setShowWhatsAppFiscalModal(null); return; }
+      if (showPosFiscalModal) { if (!isAuthorizingFiscal) setShowPosFiscalModal(false); return; }
       if (showWhatsAppTicketModal) { setShowWhatsAppTicketModal(null); return; }
       if (showSuccessModal) { setShowSuccessModal(null); return; }
       if (showDiscountModal) { setShowDiscountModal(false); return; }
@@ -413,6 +504,8 @@ export const POS: React.FC = () => {
   // --- LIVE SEARCH STATE ---
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState<number>(-1);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
 
   const filteredProducts = useMemo(() => {
     if (!searchCode.trim()) return [];
@@ -420,7 +513,7 @@ export const POS: React.FC = () => {
     if (!search) return [];
 
     const scored: { product: Product; score: number }[] = [];
-    for (const p of adminProducts) {
+    for (const p of activeCatalogProducts) {
       const barcode = (p.barcode || '').trim().toLowerCase();
       const name = (p.name || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
       const brand = (p.brand || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -456,7 +549,7 @@ export const POS: React.FC = () => {
       .sort((a, b) => b.score - a.score)
       .slice(0, 8)
       .map(s => s.product);
-  }, [searchCode, adminProducts]);
+  }, [searchCode, activeCatalogProducts]);
 
   // Stats
   const stats = useMemo(() => {
@@ -663,7 +756,7 @@ export const POS: React.FC = () => {
       if (!cleanCode) return;
 
       // 1. Detectar si es un código de balanza comercial (EAN-13 balanza prefijo 20/21/22)
-      const scaleResult = parseScaleBarcode(cleanCode, adminProducts);
+      const scaleResult = parseScaleBarcode(cleanCode, activeCatalogProducts);
       if (scaleResult.isScaleBarcode && scaleResult.product) {
         const sp = scaleResult.product;
         productId = sp.id;
@@ -675,7 +768,7 @@ export const POS: React.FC = () => {
         itemQuantity = scaleResult.weightKg || 1;
       } else {
         const cleanLower = cleanCode.toLowerCase();
-        const exactMatch = adminProducts.find(p => {
+        const exactMatch = activeCatalogProducts.find(p => {
           const barcodeStr = p.barcode ? String(p.barcode).trim().toLowerCase() : '';
           const idStr = p.id ? String(p.id).trim().toLowerCase() : '';
           return (barcodeStr && barcodeStr === cleanLower) || (idStr && idStr === cleanLower);
@@ -858,6 +951,7 @@ export const POS: React.FC = () => {
   };
 
   const handleCompleteSale = async (override = false) => {
+    if (isSubmittingSale) return;
     if (cart.length === 0) return;
 
     // Validación defensiva de seguridad: total de venta y descuentos
@@ -923,48 +1017,53 @@ export const POS: React.FC = () => {
       }
     }
 
-    let total = cartTotal;
-    const customerName = validatedCustomer ? validatedCustomer.name : 'Cliente Local';
-    const customerPhone = validatedCustomer ? validatedCustomer.phone : '';
-    const dateStr = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    setIsSubmittingSale(true);
+    try {
+      let total = cartTotal;
+      const customerName = validatedCustomer ? validatedCustomer.name : 'Cliente Local';
+      const customerPhone = validatedCustomer ? validatedCustomer.phone : '';
+      const dateStr = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-    const totalOrderDiscount = orderOfferCalc.discountAmount + manualDiscountAmount;
-    const totalOrderDiscountLabel = orderOfferCalc.offerLabel
-      ? `${orderOfferCalc.offerLabel}${globalDiscount > 0 ? ` + Descuento ${globalDiscount}%` : ''}`
-      : (globalDiscount > 0 ? `Descuento ${globalDiscount}%` : undefined);
+      const totalOrderDiscount = orderOfferCalc.discountAmount + manualDiscountAmount;
+      const totalOrderDiscountLabel = orderOfferCalc.offerLabel
+        ? `${orderOfferCalc.offerLabel}${globalDiscount > 0 ? ` + Descuento ${globalDiscount}%` : ''}`
+        : (globalDiscount > 0 ? `Descuento ${globalDiscount}%` : undefined);
 
-    // 1. REGISTRO ATÓMICO OFFLINE-FIRST (IndexedDB)
-    // Genera el sale_id canónico e inmutable (POS-CAJA01-...), persiste la venta,
-    // descuenta stock local y encola para Supabase.
-    const offlineItems: OfflineSaleItem[] = cartWithDiscounts.map(i => ({
-      productId: i.productId,
-      productCode: i.productCode || i.productId,
-      name: i.name,
-      price: i.price,
-      originalPrice: i.price,
-      quantity: i.quantity,
-      saleType: i.saleType || 'unit',
-      image: i.image,
-      discount: i.lineDiscount,
-      lineDiscount: i.lineDiscount,
-      total: (i.finalPrice || i.price) * i.quantity
-    }));
+      // 1. REGISTRO ATÓMICO OFFLINE-FIRST (IndexedDB)
+      // Genera el sale_id canónico e inmutable (POS-CAJA01-...), persiste la venta,
+      // descuenta stock local y encola para Supabase.
+      const offlineItems: OfflineSaleItem[] = cartWithDiscounts.map(i => ({
+        productId: i.productId,
+        productCode: i.productCode || i.productId,
+        name: i.name,
+        price: i.price,
+        originalPrice: i.price,
+        quantity: i.quantity,
+        saleType: i.saleType || 'unit',
+        image: i.image,
+        discount: i.lineDiscount,
+        lineDiscount: i.lineDiscount,
+        total: (i.finalPrice || i.price) * i.quantity
+      }));
 
-    const localSale = await saleRepository.createSale({
-      employee_id: employeeProfile?.id,
-      employee_name: cashierName,
-      customer_id: validatedCustomer?.id,
-      customer_name: customerName,
-      customer_phone: customerPhone,
-      customer_dni: validatedCustomer?.dni,
-      payment_method: selectedPaymentMethod as 'cash' | 'card' | 'transfer' | 'cuenta_corriente',
-      items: offlineItems,
-      subtotal,
-      discount_amount: totalOrderDiscount,
-      discount_label: totalOrderDiscountLabel,
-      total,
-      is_offline: !isHealthy
-    });
+      const clientSaleToken = `CART-${activeTab.id}-${cart.length}-${cartTotal}-${Date.now()}`;
+
+      const localSale = await saleRepository.createSale({
+        employee_id: employeeProfile?.id,
+        employee_name: cashierName,
+        customer_id: validatedCustomer?.id,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        customer_dni: validatedCustomer?.dni,
+        payment_method: selectedPaymentMethod as 'cash' | 'card' | 'transfer' | 'cuenta_corriente',
+        items: offlineItems,
+        subtotal,
+        discount_amount: totalOrderDiscount,
+        discount_label: totalOrderDiscountLabel,
+        total,
+        is_offline: !isHealthy,
+        idempotency_key: clientSaleToken
+      });
 
     const orderId = localSale.sale_id;
 
@@ -1048,6 +1147,30 @@ export const POS: React.FC = () => {
     };
     setLastSaleTicket(ticketData);
 
+    setLastConfirmedSale({
+      orderId,
+      customerName,
+      customerPhone,
+      customerDni: validatedCustomer?.dni,
+      paymentMethod: selectedPaymentMethod,
+      total,
+      subtotal,
+      discountAmount: totalOrderDiscount,
+      discountLabel: totalOrderDiscountLabel,
+      items: cartWithDiscounts.map(i => ({
+        id: i.productId,
+        productId: i.productId,
+        name: i.name,
+        price: i.finalPrice ?? i.price,
+        originalPrice: i.price,
+        quantity: i.quantity,
+        saleType: i.saleType,
+        barcode: (activeCatalogProducts.find(p => p.id === i.productId)?.barcode) || undefined,
+        finalPrice: i.finalPrice,
+        lineDiscount: i.lineDiscount
+      }))
+    });
+
     setShowSuccessModal({
       orderId,
       customer: customerName,
@@ -1071,6 +1194,12 @@ export const POS: React.FC = () => {
     setCcDni('');
     setCcError('');
     updateTab({ shoppingSessionId: null });
+    } catch (saleErr: any) {
+      console.error('Error registrando venta en caja:', saleErr);
+      alert(`Error al registrar la venta: ${saleErr.message || 'Intente nuevamente.'}`);
+    } finally {
+      setIsSubmittingSale(false);
+    }
   };
 
   const handleSendWhatsAppTicket = async (e?: React.FormEvent) => {
@@ -1122,10 +1251,561 @@ export const POS: React.FC = () => {
     }
   };
 
+  // ─── FACTURACIÓN FISCAL ARCA (INTEGRACIÓN POS) ────────────────────
+  const CF_DNI_REQUIRED_LIMIT = 344488;
+  const isCfDniMandatory = (lastConfirmedSale?.total || 0) >= CF_DNI_REQUIRED_LIMIT;
+
+  // Resuelve ítems de la última venta contra el catálogo activo
+  const fiscalItems = useMemo<InvoiceItem[]>(() => {
+    if (!lastConfirmedSale || !lastConfirmedSale.items) return [];
+    return buildCreatorItemsFromOrders([{ items: lastConfirmedSale.items }], activeCatalogProducts);
+  }, [lastConfirmedSale, activeCatalogProducts]);
+
+  // Recálculo fiscal estricto según alícuotas ARCA
+  const fiscalCalculations = useMemo(() => {
+    return recalculateFiscalInvoice(fiscalItems, true);
+  }, [fiscalItems]);
+
+  // Consulta número oficial en ARCA (con fallback seguro a último número local)
+  const fetchNextVoucherNumber = async (pv: number, type: string) => {
+    setIsLoadingNextNumber(true);
+    setFiscalError('');
+    try {
+      const res = await billingService.getLastVoucherNumber(pv, type);
+      setFiscalNextNumber(res.nextNumber || 1);
+    } catch (err: any) {
+      console.warn('Aviso consultando próximo número en ARCA, usando correlativo local:', err);
+      const localMax = invoices
+        .filter(inv => (inv.type === type || inv.invoiceType === type))
+        .map(inv => Number(inv.invoiceNumber) || (inv.folio ? Number(inv.folio.split('-').pop()) : 0) || 0)
+        .reduce((max, curr) => Math.max(max, curr), 0);
+      setFiscalNextNumber(localMax + 1);
+    } finally {
+      setIsLoadingNextNumber(false);
+    }
+  };
+
+  // Abre el flujo fiscal validando si ya fue facturada previamente
+  const openFiscalFlow = (saleData: {
+    orderId: string;
+    customerName: string;
+    customerPhone: string;
+    customerDni?: string;
+    paymentMethod: string;
+    total: number;
+    subtotal: number;
+    discountAmount: number;
+    discountLabel?: string;
+    items: Array<any>;
+  }) => {
+    // 1. Validar si la venta ya está facturada o en estado desconocido
+    const billStatus = checkSaleBilledStatus(saleData.orderId);
+    if (billStatus.isBilled && billStatus.invoice) {
+      setAuthorizedInvoiceResult(billStatus.invoice);
+      setShowPosFiscalModal(true);
+      return;
+    }
+    if (billStatus.needsReconciliation && billStatus.invoice) {
+      setAuthorizedInvoiceResult(billStatus.invoice);
+      setUnknownOpId(billStatus.invoice.operationId || null);
+      setShowPosFiscalModal(true);
+      return;
+    }
+
+    // 2. Determinar condición fiscal sugerida según emisor y receptor
+    const initialName = (validatedCustomer?.businessName || (saleData.customerName && saleData.customerName !== 'Cliente Local'))
+      ? (validatedCustomer?.businessName || saleData.customerName)
+      : 'Consumidor Final';
+
+    const initialCond = (validatedCustomer?.taxCondition) || 'Consumidor Final';
+    const taxRule = determineInvoiceType('Responsable Inscripto', initialCond as any);
+
+    setFiscalCustomerName(initialName);
+    setFiscalTaxCondition(initialCond);
+    setFiscalInvoiceType(taxRule.invoiceType as 'A' | 'B' | 'C');
+    setFiscalTypeReason(taxRule.reason);
+
+    // 3. Documento inicial según condición fiscal
+    if (initialCond === 'Consumidor Final') {
+      if (validatedCustomer?.dni || saleData.customerDni) {
+        setFiscalDocType('DNI');
+        setFiscalDocNumber(validatedCustomer?.dni || saleData.customerDni || '');
+      } else {
+        setFiscalDocType('SIN_IDENTIFICAR');
+        setFiscalDocNumber('');
+      }
+    } else if (initialCond === 'Responsable Inscripto' || initialCond === 'Monotributista') {
+      setFiscalDocType('CUIT');
+      setFiscalDocNumber(validatedCustomer?.cuit || validatedCustomer?.dni || saleData.customerDni || '');
+    } else {
+      setFiscalDocType(validatedCustomer?.cuit ? 'CUIT' : 'DNI');
+      setFiscalDocNumber(validatedCustomer?.cuit || validatedCustomer?.dni || saleData.customerDni || '');
+    }
+
+    setFiscalCustomerAddress(validatedCustomer?.fiscalAddress || validatedCustomer?.address || '');
+    setFiscalPointOfSale(1);
+    setFiscalError('');
+    setAuthorizedInvoiceResult(null);
+    setUnknownOpId(null);
+    setFiscalCustomerSearch('');
+    setShowFiscalCustomerSearchDropdown(false);
+    setShowPosFiscalModal(true);
+
+    fetchNextVoucherNumber(1, taxRule.invoiceType);
+  };
+
+  // Clientes filtrados para búsqueda rápida en el modal fiscal
+  const matchedFiscalCustomers = useMemo(() => {
+    if (!fiscalCustomerSearch.trim()) return [];
+    const q = fiscalCustomerSearch.toLowerCase().trim();
+    return customers.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      (c.businessName && c.businessName.toLowerCase().includes(q)) ||
+      (c.phone && c.phone.includes(q)) ||
+      (c.cuit && c.cuit.includes(q)) ||
+      (c.dni && c.dni.includes(q))
+    ).slice(0, 5);
+  }, [customers, fiscalCustomerSearch]);
+
+  const handleSelectCustomerForFiscal = (cust: typeof customers[0]) => {
+    const targetCond = cust.taxCondition || 'Consumidor Final';
+    const targetName = cust.businessName || cust.name;
+    const targetDoc = (targetCond === 'Responsable Inscripto' || targetCond === 'Monotributista')
+      ? (cust.cuit || cust.dni || '')
+      : (cust.dni || cust.cuit || '');
+    const targetDocType = (targetCond === 'Responsable Inscripto' || targetCond === 'Monotributista')
+      ? 'CUIT'
+      : (targetDoc ? 'DNI' : 'SIN_IDENTIFICAR');
+
+    setFiscalCustomerName(targetName);
+    setFiscalTaxCondition(targetCond);
+    setFiscalDocNumber(targetDoc);
+    setFiscalDocType(targetDocType);
+    setFiscalCustomerAddress(cust.fiscalAddress || cust.address || '');
+
+    const rule = determineInvoiceType('Responsable Inscripto', targetCond as any);
+    setFiscalInvoiceType(rule.invoiceType as 'A' | 'B' | 'C');
+    setFiscalTypeReason(rule.reason);
+    fetchNextVoucherNumber(fiscalPointOfSale, rule.invoiceType);
+    setShowFiscalCustomerSearchDropdown(false);
+    setFiscalCustomerSearch('');
+  };
+
+  const handleResetToAnonymousCf = () => {
+    setFiscalCustomerName('Consumidor Final');
+    setFiscalTaxCondition('Consumidor Final');
+    setFiscalDocNumber('');
+    setFiscalDocType('SIN_IDENTIFICAR');
+    setFiscalCustomerAddress('');
+
+    const rule = determineInvoiceType('Responsable Inscripto', 'Consumidor Final');
+    setFiscalInvoiceType(rule.invoiceType as 'A' | 'B' | 'C');
+    setFiscalTypeReason(rule.reason);
+    fetchNextVoucherNumber(fiscalPointOfSale, rule.invoiceType);
+    setShowFiscalCustomerSearchDropdown(false);
+    setFiscalCustomerSearch('');
+  };
+
+  // Cambio de condición fiscal por el cajero
+  const handleFiscalTaxConditionChange = (newCond: string) => {
+    setFiscalTaxCondition(newCond);
+    const rule = determineInvoiceType('Responsable Inscripto', newCond as any);
+    setFiscalInvoiceType(rule.invoiceType as 'A' | 'B' | 'C');
+    setFiscalTypeReason(rule.reason);
+
+    if (newCond === 'Responsable Inscripto' || newCond === 'Monotributista') {
+      setFiscalDocType('CUIT');
+    } else if (newCond === 'Consumidor Final') {
+      if (!fiscalDocNumber || fiscalDocNumber === '0') {
+        setFiscalDocType('SIN_IDENTIFICAR');
+      } else {
+        setFiscalDocType('DNI');
+      }
+    }
+
+    fetchNextVoucherNumber(fiscalPointOfSale, rule.invoiceType);
+  };
+
+  // Autorización en ARCA
+  const handleAuthorizeFiscal = async () => {
+    if (!lastConfirmedSale) return;
+    setFiscalError('');
+
+    // Validaciones estrictas antes de emitir
+    if (!fiscalCustomerName.trim()) {
+      setFiscalError('Debe indicar la razón social o nombre del cliente.');
+      return;
+    }
+
+    if (fiscalInvoiceType === 'A') {
+      const cuitVal = validateCuit(fiscalDocNumber);
+      if (!cuitVal.valid) {
+        setFiscalError(`Factura A exige un CUIT válido: ${cuitVal.error}`);
+        return;
+      }
+    }
+
+    if (fiscalTaxCondition === 'Consumidor Final' && isCfDniMandatory && (!fiscalDocNumber || fiscalDocNumber === '0')) {
+      setFiscalError(`Para ventas a Consumidor Final superiores a $${CF_DNI_REQUIRED_LIMIT.toLocaleString('es-AR')}, ARCA exige identificar al cliente con DNI.`);
+      return;
+    }
+
+    if (fiscalItems.length === 0) {
+      setFiscalError('La venta no contiene ítems para facturar.');
+      return;
+    }
+
+    const missingFiscalCode = fiscalItems.find(i => !(i.codigoMtx || i.barcode || i.gtin || i.ean || '').trim());
+    if (missingFiscalCode) {
+      setFiscalError(`El producto "${missingFiscalCode.description}" no posee código de barras registrado. ARCA WSMTXCA exige código de barras comercial.`);
+      return;
+    }
+
+    setIsAuthorizingFiscal(true);
+    setFiscalAuthStep('Validando reglas fiscales y conectando con ARCA WSMTXCA...');
+
+    try {
+      setFiscalAuthStep('Enviando comprobante al servicio fiscal de ARCA...');
+
+      const response = await billingService.authorizeInvoice({
+        saleIds: [lastConfirmedSale.orderId],
+        pointOfSale: fiscalPointOfSale,
+        invoiceType: fiscalInvoiceType,
+        customer: {
+          name: fiscalCustomerName,
+          documentType: (fiscalDocType === 'SIN_IDENTIFICAR' || !fiscalDocType) ? 'DNI' : fiscalDocType,
+          documentNumber: (fiscalDocType === 'SIN_IDENTIFICAR' || !fiscalDocNumber) ? '0' : fiscalDocNumber,
+          cuit: (fiscalInvoiceType === 'A' || fiscalDocType === 'CUIT') ? fiscalDocNumber : undefined,
+          taxCondition: fiscalTaxCondition,
+          address: fiscalCustomerAddress,
+          phone: lastConfirmedSale.customerPhone
+        },
+        items: fiscalItems,
+        pricesIncludeTax: true,
+        requestedBy: cashierName || 'Cajero POS'
+      });
+
+      const isCaeValid = Boolean(
+        response.success &&
+        response.status === 'AUTORIZADA' &&
+        response.invoice?.cae &&
+        /^\d{14}$/.test(String(response.invoice.cae).trim())
+      );
+
+      if (isCaeValid && response.invoice) {
+        setFiscalAuthStep('¡Comprobante autorizado con CAE por ARCA!');
+
+        const pv = response.invoice.pointOfSale || response.invoice.point_of_sale || fiscalPointOfSale || 1;
+        const num = response.invoice.invoiceNumber || response.invoice.invoice_number || 1;
+        const folioStr = response.invoice.folio && !response.invoice.folio.includes('undefined')
+          ? response.invoice.folio
+          : `${String(pv).padStart(4, '0')}-${String(num).padStart(8, '0')}`;
+
+        const authorizedInv = addInvoice({
+          ...response.invoice,
+          id: response.invoice.id,
+          pointOfSale: pv,
+          invoiceNumber: num,
+          folio: folioStr,
+          clientName: fiscalCustomerName,
+          clientCuit: fiscalDocNumber || 'Consumidor Final',
+          direction: 'venta',
+          status: 'AUTORIZADA',
+          type: fiscalInvoiceType,
+          saleId: lastConfirmedSale.orderId,
+          saleIds: [lastConfirmedSale.orderId],
+          qrDataUrl: response.qrDataUrl,
+          paymentMethod: lastConfirmedSale.paymentMethod
+        });
+
+        await saleRepository.markSaleAsBilled(lastConfirmedSale.orderId, response.invoice.id);
+        await refreshInvoices();
+        setAuthorizedInvoiceResult(authorizedInv);
+
+        // Envío directo a la impresora térmica mediante FiscalTicketPrinter
+        setFiscalPrinterInvoice(authorizedInv);
+        setShowFiscalPrinterModal(true);
+        setShowPosFiscalModal(false);
+        setShowSuccessModal(null);
+      } else if (response.status === 'ESTADO_DESCONOCIDO') {
+        setUnknownOpId(response.operationId || null);
+        setFiscalError(
+          'Tiempo de espera agotado con ARCA. La operación quedó en ESTADO_DESCONOCIDO. Por seguridad fiscal, ARCA prohíbe reintentar inmediatamente. Utilice el botón Reconciliar para comprobar si ARCA emitió el CAE.'
+        );
+      } else {
+        const errMsg = response.error
+          ? `${response.error.title}: ${response.error.reason} (${response.error.suggestedAction})`
+          : (response.message || 'La solicitud fue rechazada por ARCA.');
+        setFiscalError(`La factura no fue autorizada por ARCA. No se puede imprimir el comprobante fiscal. Motivo: ${errMsg}`);
+      }
+    } catch (err: any) {
+      console.error('Error autorizando comprobante en POS:', err);
+      setFiscalError(`Error de comunicación con el servicio fiscal: ${err.message}`);
+    } finally {
+      setIsAuthorizingFiscal(false);
+    }
+  };
+
+  // Emisión rápida de factura electrónica directa desde el modal de confirmación de venta
+  const handleQuickFiscalInvoice = async () => {
+    if (!showSuccessModal || isAuthorizingFiscal) return;
+    setQuickFiscalError(null);
+
+    // 1. Si ya está facturada, reimprimir directamente con la factura existente (0 llamadas a ARCA)
+    const billStatus = checkSaleBilledStatus(showSuccessModal.orderId);
+    if (billStatus.isBilled && billStatus.invoice) {
+      setFiscalPrinterInvoice(billStatus.invoice);
+      setShowFiscalPrinterModal(true);
+      return;
+    }
+
+    if (billStatus.needsReconciliation && billStatus.invoice) {
+      setAuthorizedInvoiceResult(billStatus.invoice);
+      setUnknownOpId(billStatus.invoice.operationId || null);
+      setShowPosFiscalModal(true);
+      return;
+    }
+
+    if (!lastConfirmedSale) {
+      setQuickFiscalError('No se encontraron los datos de la última venta confirmada.');
+      return;
+    }
+
+    // 2. Determinar condición fiscal y receptor
+    const customerCond = validatedCustomer?.taxCondition || 'Consumidor Final';
+    const customerName = validatedCustomer?.businessName || (lastConfirmedSale.customerName && lastConfirmedSale.customerName !== 'Cliente Local' ? lastConfirmedSale.customerName : 'Consumidor Final');
+    const taxRule = determineInvoiceType('Responsable Inscripto', customerCond as any);
+    const invoiceType = taxRule.invoiceType as 'A' | 'B' | 'C';
+
+    let docType = 'DNI';
+    let docNumber = '0';
+    if (customerCond === 'Consumidor Final') {
+      if (validatedCustomer?.dni || lastConfirmedSale.customerDni) {
+        docType = 'DNI';
+        docNumber = (validatedCustomer?.dni || lastConfirmedSale.customerDni || '').replace(/\D/g, '');
+      } else {
+        docType = 'DNI';
+        docNumber = '0';
+      }
+    } else {
+      docType = 'CUIT';
+      docNumber = (validatedCustomer?.cuit || validatedCustomer?.dni || lastConfirmedSale.customerDni || '').replace(/\D/g, '');
+    }
+
+    // 3. Validación de umbral ARCA para Consumidor Final ($191.624)
+    if (invoiceType === 'B' && customerCond === 'Consumidor Final' && lastConfirmedSale.total >= CF_DNI_REQUIRED_LIMIT) {
+      if (!docNumber || docNumber === '0') {
+        openFiscalFlow(lastConfirmedSale);
+        return;
+      }
+    }
+
+    // 4. Validación de CUIT para Factura A
+    if (invoiceType === 'A') {
+      const cuitVal = validateCuit(docNumber);
+      if (!cuitVal.valid) {
+        setQuickFiscalError(`Para Factura A se exige CUIT válido: ${cuitVal.error}.`);
+        openFiscalFlow(lastConfirmedSale);
+        return;
+      }
+    }
+
+    // 5. Validación de ítems
+    if (fiscalItems.length === 0) {
+      setQuickFiscalError('La venta no contiene ítems para facturar.');
+      return;
+    }
+
+    const missingFiscalCode = fiscalItems.find(i => !(i.codigoMtx || i.barcode || i.gtin || i.ean || '').trim());
+    if (missingFiscalCode) {
+      setQuickFiscalError(`El producto "${missingFiscalCode.description}" no posee código de barras registrado para ARCA WSMTXCA.`);
+      openFiscalFlow(lastConfirmedSale);
+      return;
+    }
+
+    setIsAuthorizingFiscal(true);
+    setQuickFiscalStep('Procesando venta...');
+
+    try {
+      setQuickFiscalStep('Generando comprobante electrónico...');
+      await new Promise(r => setTimeout(r, 200));
+
+      setQuickFiscalStep('Solicitando autorización a ARCA...');
+
+      const response = await billingService.authorizeInvoice({
+        saleIds: [lastConfirmedSale.orderId],
+        pointOfSale: fiscalPointOfSale || 1,
+        invoiceType: invoiceType,
+        customer: {
+          name: customerName,
+          documentType: docType,
+          documentNumber: docNumber,
+          cuit: (invoiceType === 'A' || docType === 'CUIT') ? docNumber : undefined,
+          taxCondition: customerCond,
+          address: validatedCustomer?.fiscalAddress || validatedCustomer?.address || '',
+          phone: lastConfirmedSale.customerPhone
+        },
+        items: fiscalItems,
+        pricesIncludeTax: true,
+        requestedBy: cashierName || 'Cajero POS'
+      });
+
+      const isCaeValid = Boolean(
+        response.success &&
+        response.status === 'AUTORIZADA' &&
+        response.invoice?.cae &&
+        /^\d{14}$/.test(String(response.invoice.cae).trim())
+      );
+
+      if (isCaeValid && response.invoice) {
+        setQuickFiscalStep('¡Autorizada con CAE por ARCA!');
+
+        const pv = response.invoice.pointOfSale || response.invoice.point_of_sale || fiscalPointOfSale || 1;
+        const num = response.invoice.invoiceNumber || response.invoice.invoice_number || 1;
+        const folioStr = response.invoice.folio && !response.invoice.folio.includes('undefined')
+          ? response.invoice.folio
+          : `${String(pv).padStart(4, '0')}-${String(num).padStart(8, '0')}`;
+
+        const authorizedInv = addInvoice({
+          ...response.invoice,
+          id: response.invoice.id,
+          pointOfSale: pv,
+          invoiceNumber: num,
+          folio: folioStr,
+          clientName: customerName,
+          clientCuit: docNumber || 'Consumidor Final',
+          direction: 'venta',
+          status: 'AUTORIZADA',
+          type: invoiceType,
+          saleId: lastConfirmedSale.orderId,
+          saleIds: [lastConfirmedSale.orderId],
+          qrDataUrl: response.qrDataUrl,
+          paymentMethod: lastConfirmedSale.paymentMethod
+        });
+
+        await saleRepository.markSaleAsBilled(lastConfirmedSale.orderId, response.invoice.id);
+        await refreshInvoices();
+
+        setFiscalPrinterInvoice(authorizedInv);
+        setShowFiscalPrinterModal(true);
+        setShowSuccessModal(null);
+      } else if (response.status === 'ESTADO_DESCONOCIDO') {
+        setUnknownOpId(response.operationId || null);
+        setQuickFiscalError(
+          'No fue posible determinar si ARCA autorizó el comprobante. La factura NO será impresa hasta verificar su estado. Utilice el botón Reconciliar.'
+        );
+      } else {
+        const errorDetail = response.error
+          ? `${response.error.title}: ${response.error.reason}`
+          : (response.message || 'La factura fue rechazada por ARCA.');
+        setQuickFiscalError(
+          `La factura no fue autorizada por ARCA. No se puede imprimir el comprobante fiscal. Motivo: ${errorDetail}`
+        );
+      }
+    } catch (err: any) {
+      console.error('[POS] Error autorizando comprobante rápido:', err);
+      setQuickFiscalError(`Error de comunicación con el servicio fiscal: ${err.message}`);
+    } finally {
+      setIsAuthorizingFiscal(false);
+      setQuickFiscalStep(null);
+    }
+  };
+
+  // Reconciliación de operación en ESTADO_DESCONOCIDO
+  const handleReconcileFiscal = async () => {
+    const opId = unknownOpId || authorizedInvoiceResult?.operationId;
+    if (!opId) {
+      setFiscalError('No se encontró el identificador de la operación para reconciliar.');
+      return;
+    }
+
+    setIsReconciling(true);
+    setFiscalError('');
+    try {
+      const res = await billingService.reconcileOperation(opId);
+      if (res.status === 'AUTORIZADA' && res.invoice) {
+        const authorizedInv = addInvoice({
+          ...res.invoice,
+          id: res.invoice.id,
+          folio: `${String(res.invoice.pointOfSale).padStart(4, '0')}-${String(res.invoice.invoiceNumber).padStart(8, '0')}`,
+          status: 'AUTORIZADA',
+          type: res.invoice.invoiceType || fiscalInvoiceType,
+          saleId: lastConfirmedSale?.orderId || 'POS',
+          saleIds: lastConfirmedSale ? [lastConfirmedSale.orderId] : [],
+          qrDataUrl: res.qrDataUrl
+        });
+        await refreshInvoices();
+        setAuthorizedInvoiceResult(authorizedInv);
+        setUnknownOpId(null);
+      } else if (res.status === 'RECHAZADA') {
+        setFiscalError('ARCA confirmó que el comprobante no fue emitido. Ahora puede volver a intentar la autorización.');
+        setUnknownOpId(null);
+      } else {
+        setFiscalError('La operación aún no pudo ser reconciliada con ARCA. Intente nuevamente en unos instantes.');
+      }
+    } catch (err: any) {
+      setFiscalError(`Error durante la reconciliación: ${err.message}`);
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  // Envío seguro de Factura Fiscal por WhatsApp (Separado de ticket comercial y sin localhost)
+  const handleSendWhatsAppFiscal = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!showWhatsAppFiscalModal?.invoice) return;
+
+    const phone = cleanAndFormatPhone(whatsappFiscalPhone);
+    if (!phone) {
+      setWhatsappFiscalError('Por favor ingresá un número de teléfono celular válido.');
+      return;
+    }
+
+    setIsSendingWhatsAppFiscal(true);
+    setWhatsappFiscalError('');
+
+    try {
+      const inv = showWhatsAppFiscalModal.invoice;
+      // Regla 5: NO usar localhost como URL de factura. Usar URL pública configurada o dominio actual.
+      const isLocal = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1');
+      const publicBaseUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string) || 'https://la-martina.vercel.app';
+      const safeOrigin = isLocal ? publicBaseUrl : window.location.origin;
+      const invoiceUrl = `${safeOrigin}/factura/${inv.id}`;
+
+      const pvStr = String(inv.pointOfSale || 1).padStart(4, '0');
+      const numStr = String(inv.invoiceNumber || 1).padStart(8, '0');
+
+      let msg = `*SUPERMERCADO LA MARTINA* 🛒\n`;
+      msg += `*Factura Electrónica ARCA*\n\n`;
+      msg += `Estimado/a *${inv.clientName || 'Cliente'}*:\n`;
+      msg += `Le enviamos los datos de su comprobante electrónico oficial:\n\n`;
+      msg += `▸ *Tipo:* Factura ${inv.type}\n`;
+      msg += `▸ *Número:* ${pvStr}-${numStr}\n`;
+      msg += `▸ *CAE:* ${inv.cae || 'N/A'}\n`;
+      msg += `▸ *Vto. CAE:* ${inv.caeExpirationDate || 'N/A'}\n`;
+      msg += `▸ *Total:* $${formatCurrency(inv.total, true, true)}\n\n`;
+      msg += `📥 *Ver y Descargar Factura Oficial en PDF:*\n${invoiceUrl}\n\n`;
+      msg += `¡Muchas gracias por su compra!`;
+
+      const encoded = encodeURIComponent(msg);
+      window.open(`https://wa.me/${phone}?text=${encoded}`, '_blank');
+
+      setWhatsappFiscalSuccess(true);
+      setTimeout(() => {
+        setShowWhatsAppFiscalModal(null);
+        setWhatsappFiscalSuccess(false);
+      }, 1500);
+    } catch (err: any) {
+      setWhatsappFiscalError(`Error al preparar el mensaje: ${err.message}`);
+    } finally {
+      setIsSendingWhatsAppFiscal(false);
+    }
+  };
+
   // Keyboard events logic
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!showModal || showPaymentModal || showManualModal || showDiscountModal || showPriceModal || showCloseConfirm || showSuccessModal || showWhatsAppTicketModal) return;
+      if (!showModal || showPaymentModal || showManualModal || showDiscountModal || showPriceModal || showCloseConfirm || showSuccessModal || showWhatsAppTicketModal || showPosFiscalModal || showWhatsAppFiscalModal) return;
       if (e.key === 'F2') { e.preventDefault(); if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } return; }
       if (e.key === 'F4') { e.preventDefault(); setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); setSearchQty(1); setSearchQtyStr('1'); return; }
       if (document.activeElement === inputRef.current) return;
@@ -1135,7 +1815,7 @@ export const POS: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showModal, showPaymentModal, showManualModal, showDiscountModal, showPriceModal, showCloseConfirm, showSuccessModal, cart, selectedIndex]);
+  }, [showModal, showPaymentModal, showManualModal, showDiscountModal, showPriceModal, showCloseConfirm, showSuccessModal, showWhatsAppTicketModal, showPosFiscalModal, showWhatsAppFiscalModal, cart, selectedIndex]);
 
   useEffect(() => {
     if (!showPaymentModal) return;
@@ -1145,26 +1825,29 @@ export const POS: React.FC = () => {
         if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') { e.preventDefault(); ccInputRef.current?.blur(); setSelectedPaymentMethod('transfer'); }
         return;
       }
-      if (selectedPaymentMethod === 'cuenta_corriente' && validatedCustomer && e.key === 'Enter') { e.preventDefault(); handleCompleteSale(false); return; }
-      const idx = PAYMENT_METHODS.findIndex(m => m.id === selectedPaymentMethod);
-      if (e.key === 'ArrowRight') { e.preventDefault(); if (idx % 2 === 0) setSelectedPaymentMethod(PAYMENT_METHODS[idx + 1].id); }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); if (idx % 2 !== 0) setSelectedPaymentMethod(PAYMENT_METHODS[idx - 1].id); }
-      if (e.key === 'ArrowDown') { e.preventDefault(); if (idx < 2) setSelectedPaymentMethod(PAYMENT_METHODS[idx + 2].id); }
-      if (e.key === 'ArrowUp') { e.preventDefault(); if (idx >= 2) setSelectedPaymentMethod(PAYMENT_METHODS[idx - 2].id); }
-      if (e.key === 'Enter' && selectedPaymentMethod !== 'cuenta_corriente') { e.preventDefault(); handleCompleteSale(false); }
-      if (e.key === 'Escape') { e.preventDefault(); setShowPaymentModal(false); }
+      if (e.key === 'Enter') {
+        if (isSubmittingSale) return;
+        e.preventDefault();
+        handleCompleteSale();
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); setShowPaymentModal(false); return; }
     };
     window.addEventListener('keydown', handlePaymentKeyDown);
     return () => window.removeEventListener('keydown', handlePaymentKeyDown);
-  }, [showPaymentModal, selectedPaymentMethod, validatedCustomer, ccDni]);
+  }, [showPaymentModal, selectedPaymentMethod, validatedCustomer, cartWithDiscounts, cartTotal, globalDiscount, isSubmittingSale]);
 
   useEffect(() => {
     if (showPaymentModal && selectedPaymentMethod === 'cuenta_corriente' && !validatedCustomer) setTimeout(() => ccInputRef.current?.focus(), 100);
   }, [selectedPaymentMethod, showPaymentModal, validatedCustomer]);
 
   useEffect(() => {
-    if (!showSuccessModal) return;
+    if (!showSuccessModal || showPosFiscalModal || showFiscalPrinterModal) return;
     const handleSuccessKeyDown = (e: KeyboardEvent) => {
+      if (isAuthorizingFiscal) {
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'Enter' || e.key === 'Escape') {
         e.preventDefault();
         setShowSuccessModal(null);
@@ -1173,14 +1856,13 @@ export const POS: React.FC = () => {
     };
     window.addEventListener('keydown', handleSuccessKeyDown);
     return () => window.removeEventListener('keydown', handleSuccessKeyDown);
-  }, [showSuccessModal]);
+  }, [showSuccessModal, showPosFiscalModal, showFiscalPrinterModal, isAuthorizingFiscal]);
 
-  const hasPosOpenModal = showModal || showCloseConfirm || !!selectedMovement || !!showTicket || showCashOpenModal || showGenericModal || !!showLimitWarning || showPrePurchaseModal || !!showWhatsAppTicketModal;
+  const hasPosOpenModal = showModal || showCloseConfirm || !!selectedMovement || !!showTicket || showCashOpenModal || showGenericModal || !!showLimitWarning || showPrePurchaseModal || !!showWhatsAppTicketModal || showPosFiscalModal || showFiscalPrinterModal || !!showWhatsAppFiscalModal || !!enlargedQrUrl;
   useScrollLock(hasPosOpenModal);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500 flex flex-col pb-20">
-      {/* Header Portal for Buttons */}
       {headerPortal && createPortal(
         <div className="flex gap-3 items-center">
           <button onClick={handleOpenPOS} className="bg-primary hover:bg-primary/90 text-white font-bold px-6 py-2 rounded-full transition-all flex items-center gap-2 shadow-lg shadow-primary/20 text-xs">
@@ -1221,41 +1903,41 @@ export const POS: React.FC = () => {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm relative overflow-hidden">
-          <span className="absolute top-6 right-6 bg-error/10 text-error text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">En Vivo</span>
-          <div className="w-12 h-12 bg-[#FFD700] rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-[#8B6508]">account_balance_wallet</span></div>
-          <p className="text-sm font-medium text-on-surface-variant">Total</p>
-          <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.totalToday)}</p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 flex-shrink-0">
+        <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm relative overflow-hidden">
+          <span className="absolute top-4 right-4 sm:top-6 sm:right-6 bg-error/10 text-error text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">En Vivo</span>
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#FFD700] rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4"><span className="material-symbols-outlined text-[#8B6508] text-[20px] sm:text-[24px]">account_balance_wallet</span></div>
+          <p className="text-xs sm:text-sm font-medium text-on-surface-variant">Total</p>
+          <p className="text-xl sm:text-3xl font-black text-on-background mt-1 truncate">${formatCurrency(stats.totalToday)}</p>
         </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm relative">
-          <div className="w-12 h-12 bg-surface-container-highest rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-on-surface-variant">payments</span></div>
-          <p className="text-sm font-medium text-on-surface-variant">Efectivo</p>
-          <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.cash)}</p>
+        <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm relative">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-surface-container-highest rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4"><span className="material-symbols-outlined text-on-surface-variant text-[20px] sm:text-[24px]">payments</span></div>
+          <p className="text-xs sm:text-sm font-medium text-on-surface-variant">Efectivo</p>
+          <p className="text-xl sm:text-3xl font-black text-on-background mt-1 truncate">${formatCurrency(stats.cash)}</p>
           {isCashRegisterOpen && (
-            <div className="absolute top-5 right-6 text-right flex flex-col gap-0.5">
-              <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Inicio: ${formatCurrency(stats.initialAmount, true, true)}</p>
-              <p className="text-[11px] font-bold text-green-600 uppercase tracking-wider">Total: ${formatCurrency(stats.cashTotal, true, true)}</p>
+            <div className="mt-2 pt-2 border-t border-outline-variant/10 sm:border-0 sm:mt-0 sm:pt-0 sm:absolute sm:top-5 sm:right-6 sm:text-right flex flex-col gap-0.5">
+              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider truncate">Inicio: ${formatCurrency(stats.initialAmount, true, true)}</p>
+              <p className="text-[10px] font-bold text-green-600 uppercase tracking-wider truncate">Total: ${formatCurrency(stats.cashTotal, true, true)}</p>
             </div>
           )}
         </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm">
-          <div className="w-12 h-12 bg-surface-container-highest rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-on-surface-variant">account_balance</span></div>
-          <p className="text-sm font-medium text-on-surface-variant">Transferencia</p>
-          <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.transfer)}</p>
+        <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-surface-container-highest rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4"><span className="material-symbols-outlined text-on-surface-variant text-[20px] sm:text-[24px]">account_balance</span></div>
+          <p className="text-xs sm:text-sm font-medium text-on-surface-variant">Transferencia</p>
+          <p className="text-xl sm:text-3xl font-black text-on-background mt-1 truncate">${formatCurrency(stats.transfer)}</p>
         </div>
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm">
-          <div className="w-12 h-12 bg-surface-container-highest rounded-2xl flex items-center justify-center mb-4"><span className="material-symbols-outlined text-on-surface-variant">credit_card</span></div>
-          <p className="text-sm font-medium text-on-surface-variant">Tarjeta</p>
-          <p className="text-3xl font-black text-on-background mt-1">${formatCurrency(stats.card)}</p>
+        <div className="bg-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-surface-container-highest rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4"><span className="material-symbols-outlined text-on-surface-variant text-[20px] sm:text-[24px]">credit_card</span></div>
+          <p className="text-xs sm:text-sm font-medium text-on-surface-variant">Tarjeta</p>
+          <p className="text-xl sm:text-3xl font-black text-on-background mt-1 truncate">${formatCurrency(stats.card)}</p>
         </div>
       </div>
 
       {/* Activity Table */}
       <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden mb-8">
-        <div className="p-6 border-b border-outline-variant/10"><h2 className="text-xl font-bold">Actividad de Caja Reciente</h2></div>
-        <div>
-          <table className="w-full text-left">
+        <div className="p-4 sm:p-6 border-b border-outline-variant/10"><h2 className="text-lg sm:text-xl font-bold">Actividad de Caja Reciente</h2></div>
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left min-w-[900px]">
             <thead className="sticky top-0 bg-white z-10"><tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider"><th className="px-6 py-4">Hora</th><th className="px-6 py-4">Tipo</th><th className="px-6 py-4">Descripción</th><th className="px-6 py-4">Pago</th><th className="px-6 py-4">Responsable</th><th className="px-6 py-4 text-right">Monto</th><th className="px-4 py-4 w-16"></th></tr></thead>
             <tbody className="divide-y divide-outline-variant/10">
               {recentActivity.map(act => (
@@ -1279,11 +1961,11 @@ export const POS: React.FC = () => {
       {showModal && (
         <div className="fixed inset-0 z-[200] flex animate-in fade-in duration-200 overflow-hidden">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowModal(false)} />
-          <div className="absolute inset-4 bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-row border border-outline-variant/20 animate-in zoom-in-95 duration-300">
-            <button onClick={() => setShowModal(false)} className="absolute top-4 right-4 z-50 w-10 h-10 bg-black/10 hover:bg-black/20 rounded-full flex items-center justify-center text-black"><span className="material-symbols-outlined">close</span></button>
-            <div className="w-2/3 flex flex-col border-r border-outline-variant/10 bg-[#fefefe] h-full overflow-hidden">
+          <div className="absolute inset-2 sm:inset-4 bg-white rounded-2xl sm:rounded-3xl shadow-2xl overflow-y-auto lg:overflow-hidden flex flex-col lg:flex-row border border-outline-variant/20 animate-in zoom-in-95 duration-300">
+            <button onClick={() => setShowModal(false)} className="absolute top-3 right-3 sm:top-4 sm:right-4 z-50 w-9 h-9 sm:w-10 sm:h-10 bg-black/10 hover:bg-black/20 rounded-full flex items-center justify-center text-black"><span className="material-symbols-outlined text-[20px]">close</span></button>
+            <div className="w-full lg:w-2/3 shrink-0 lg:shrink flex flex-col border-b lg:border-b-0 lg:border-r border-outline-variant/10 bg-[#fefefe] min-h-[460px] lg:h-full lg:overflow-hidden">
               {/* TABS BAR */}
-              <div className="flex items-center gap-1 px-8 pt-6 pb-0 flex-shrink-0">
+              <div className="flex items-center gap-1 px-4 sm:px-8 pt-4 sm:pt-6 pb-0 flex-shrink-0 overflow-x-auto hide-scrollbar">
                 {tabs.map((tab, i) => (
                   <button key={tab.id} onClick={() => setActiveTabId(tab.id)}
                     className={`relative px-4 py-2 rounded-t-xl text-xs font-bold transition-all flex items-center gap-2 ${activeTabId === tab.id ? 'bg-white text-primary border border-b-0 border-outline-variant/20 shadow-sm -mb-[1px] z-10' : 'text-on-surface-variant hover:bg-white/50'}`}>
@@ -1300,18 +1982,19 @@ export const POS: React.FC = () => {
                     className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-all text-sm font-bold ml-1">+</button>
                 )}
               </div>
-              <div className="flex-1 flex flex-col p-8 pt-4 overflow-hidden">
-                <div className="flex gap-4 mb-6 relative">
-                  <form onSubmit={(e) => { e.preventDefault(); handleAddItem(searchCode); }} className="flex-1 flex gap-4">
-                    <div className="flex-1 relative">
-                      <label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Busca o escanea Producto</label>
+              <div className="flex-none lg:flex-1 flex flex-col p-2 sm:p-8 pt-3 sm:pt-4 lg:overflow-hidden">
+                <div className="flex gap-4 mb-4 sm:mb-6 relative">
+                  <form onSubmit={(e) => { e.preventDefault(); handleAddItem(searchCode); }} className="flex-1 flex flex-row gap-2 sm:gap-4 items-end">
+                    <div className="flex-1 relative transition-all duration-300">
+                      <label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider truncate"><span className="sm:hidden">Buscar / Escanear</span><span className="hidden sm:inline">Busca o escanea Producto</span></label>
                       <div className="relative">
                         <input
                           ref={inputRef}
                           type="text"
                           value={searchCode}
                           onChange={e => { setSearchCode(e.target.value); setShowSuggestions(true); setFocusedSuggestionIndex(0); }}
-                          onFocus={() => { if (filteredProducts.length > 0) setShowSuggestions(true); }}
+                          onFocus={() => { if (filteredProducts.length > 0) setShowSuggestions(true); setIsSearchFocused(true); }}
+                          onBlur={() => { setTimeout(() => setIsSearchFocused(false), 200); }}
                           onKeyDown={(e) => {
                             if (e.key === 'ArrowDown') {
                               e.preventDefault();
@@ -1357,9 +2040,14 @@ export const POS: React.FC = () => {
                             }
                           }}
                           placeholder="Código o nombre..."
-                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-4 px-5 focus:outline-none focus:border-[#9c1c1c] focus:ring-4 focus:ring-[#9c1c1c]/10 font-bold text-lg"
+                          className="w-full bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl py-4 pl-4 pr-14 sm:pr-12 focus:outline-none focus:border-[#9c1c1c] focus:ring-4 focus:ring-[#9c1c1c]/10 font-bold text-lg"
                         />
-                        <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                          <button type="button" onClick={() => setShowBarcodeScanner(true)} className="sm:hidden w-10 h-10 rounded-xl flex items-center justify-center bg-primary text-white shadow-md hover:bg-primary/90 active:scale-95 transition-all">
+                            <span className="material-symbols-outlined text-[20px]">barcode_scanner</span>
+                          </button>
+                          <span className="material-symbols-outlined hidden sm:block text-on-surface-variant mr-2">search</span>
+                        </div>
                       </div>
                       {showSuggestions && filteredProducts.length > 0 && (
                         <div className="absolute top-full left-0 right-0 z-[300] mt-2 bg-white rounded-2xl shadow-2xl border border-outline-variant/20 overflow-hidden">
@@ -1380,8 +2068,12 @@ export const POS: React.FC = () => {
                                     : 'hover:bg-surface-container-low'
                                   }`}
                               >
-                                <div className={`w-10 h-10 rounded-lg overflow-hidden border ${isOutOfStock ? 'bg-red-100 border-red-200' : 'bg-surface-container-lowest border-outline-variant/10'}`}>
-                                  <img src={p.image} alt="" className={`w-full h-full object-contain ${isOutOfStock ? 'opacity-50' : ''}`} />
+                                <div className={`w-10 h-10 rounded-lg overflow-hidden border flex items-center justify-center ${isOutOfStock ? 'bg-red-100 border-red-200' : 'bg-surface-container-lowest border-outline-variant/10'}`}>
+                                  {p.image && p.image.trim() !== '' ? (
+                                    <img src={p.image} alt="" className={`w-full h-full object-contain ${isOutOfStock ? 'opacity-50' : ''}`} />
+                                  ) : (
+                                    <span className="material-symbols-outlined text-[18px] text-on-surface-variant/40">image</span>
+                                  )}
                                 </div>
                                 <div className="flex-1">
                                   <p className={`font-bold text-sm ${isOutOfStock ? 'text-red-700' : ''}`}>{p.name}</p>
@@ -1400,35 +2092,53 @@ export const POS: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    <div className="w-36"><label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider">Cant. (F8/*)</label><div className="flex bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl overflow-hidden h-[60px]"><button type="button" onClick={() => { const n = Math.max(0.01, parseFloat((searchQty - (searchQty > 1 ? 1 : 0.1)).toFixed(2))); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">-</button><input ref={qtyInputRef} type="text" inputMode="decimal" className="flex-1 w-full text-center font-bold text-xl bg-transparent outline-none" value={searchQtyStr} onChange={e => { const raw = e.target.value.replace(',', '.'); if (/^\d*\.?\d{0,2}$/.test(raw)) { setSearchQtyStr(raw); const n = parseFloat(raw); if (!isNaN(n) && n > 0) setSearchQty(n); } }} onBlur={() => { if (!searchQtyStr || isNaN(parseFloat(searchQtyStr))) { setSearchQtyStr('1'); setSearchQty(1); } }} /><button type="button" onClick={() => { const n = parseFloat((searchQty + 1).toFixed(2)); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">+</button></div></div>
+                    <div className={`transition-all duration-300 overflow-hidden ${isSearchFocused ? 'w-0 opacity-0 sm:w-36 sm:opacity-100' : 'w-[100px] sm:w-36 opacity-100'}`}>
+                      <label className="text-[11px] font-bold text-on-surface-variant uppercase mb-1 block tracking-wider truncate"><span className="sm:hidden">Cant.</span><span className="hidden sm:inline">Cant. (F8/*)</span></label>
+                      <div className="flex bg-surface-container-lowest border-2 border-outline-variant/20 rounded-xl overflow-hidden h-[54px] sm:h-[60px]">
+                        <button type="button" onClick={() => { const n = Math.max(0.01, parseFloat((searchQty - (searchQty > 1 ? 1 : 0.1)).toFixed(2))); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-8 sm:w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">-</button>
+                        <input ref={qtyInputRef} type="text" inputMode="decimal" className="flex-1 w-full text-center font-bold text-lg sm:text-xl bg-transparent outline-none px-0" value={searchQtyStr} onChange={e => { const raw = e.target.value.replace(',', '.'); if (/^\d*\.?\d{0,2}$/.test(raw)) { setSearchQtyStr(raw); const n = parseFloat(raw); if (!isNaN(n) && n > 0) setSearchQty(n); } }} onBlur={() => { if (!searchQtyStr || isNaN(parseFloat(searchQtyStr))) { setSearchQtyStr('1'); setSearchQty(1); } }} />
+                        <button type="button" onClick={() => { const n = parseFloat((searchQty + 1).toFixed(2)); setSearchQty(n); setSearchQtyStr(n.toString()); }} className="w-8 sm:w-10 flex items-center justify-center hover:bg-black/5 text-xl font-bold">+</button>
+                      </div>
+                    </div>
                   </form>
                 </div>
-                <div className="flex-1 mt-2 border border-outline-variant/20 rounded-2xl overflow-hidden flex flex-col bg-white shadow-sm min-h-0 relative">
-                  <div className="flex-1 overflow-y-auto no-scrollbar">
-                    <table className="w-full text-left table-fixed border-separate border-spacing-0">
-                      <thead className="bg-[#fcfcfc] sticky top-0 z-20"><tr className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider"><th className="px-6 py-4 w-20 text-center border-b border-outline-variant/20">#</th><th className="px-6 py-4 border-b border-outline-variant/20">Descripción</th><th className="px-6 py-4 w-32 text-center border-b border-outline-variant/20">Cant.</th><th className="px-6 py-4 w-40 text-right border-b border-outline-variant/20">Precio Unit.</th><th className="px-6 py-4 w-40 text-right border-b border-outline-variant/20">Total</th></tr></thead>
-                      <tbody className="divide-y divide-outline-variant/5">
+                <div className="flex-none lg:flex-1 mt-2 border border-outline-variant/20 rounded-2xl lg:overflow-hidden flex flex-col bg-white shadow-sm lg:min-h-0 relative">
+                  <div className="flex-none lg:flex-1 overflow-x-hidden overflow-y-visible lg:overflow-y-auto no-scrollbar w-full">
+                    <table className="w-full text-left block lg:table table-auto lg:table-fixed border-separate border-spacing-0 lg:min-w-0">
+                      <thead className="bg-[#fcfcfc] sticky top-0 z-20 block lg:table-header-group border-b border-outline-variant/20 lg:border-none">
+                        <tr className="text-[10px] lg:text-[11px] font-bold text-on-surface-variant uppercase tracking-wider flex lg:table-row w-full">
+                          <th className="order-1 lg:order-none w-[105px] lg:w-32 px-1 lg:px-6 py-2 lg:py-4 text-center lg:border-b border-outline-variant/20 block lg:table-cell">Cant.</th>
+                          <th className="order-2 lg:order-none w-[75px] lg:w-32 px-2 lg:px-6 py-2 lg:py-4 text-right lg:border-b border-outline-variant/20 block lg:table-cell">Total</th>
+                          <th className="order-3 lg:order-none flex-1 px-2 lg:px-6 py-2 lg:py-4 lg:border-b border-outline-variant/20 block lg:table-cell text-left">Desc.</th>
+                          <th className="order-4 lg:order-none w-10 lg:w-16 px-1 lg:px-6 py-2 lg:py-4 text-center lg:border-b border-outline-variant/20 block lg:table-cell"></th>
+                          <th className="hidden lg:table-cell px-6 py-4 w-32 text-right border-b border-outline-variant/20">Precio Unit.</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-outline-variant/10 lg:divide-outline-variant/5 block lg:table-row-group w-full">
                         {cartWithDiscounts.map((item, idx) => {
                           const itemStock = item.productId !== 'GENERIC' && item.productId !== 'PRODUCTO_COMUN' && !item.productId.startsWith('GENERICO-') ? getStock(item.productId) : null;
                           const isItemOutOfStock = itemStock !== null && itemStock === 0;
                           return (
-                            <tr key={item.id} onClick={() => setSelectedIndex(idx)} className={`group transition-colors relative ${isItemOutOfStock ? 'bg-red-50' : ''}`}>
-                              <td className="px-6 py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-[70px]"><button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 flex items-center justify-center bg-red-100 text-error opacity-0 group-hover:opacity-100 transition-all z-10"><span className="material-symbols-outlined text-[20px]">delete</span></button><div className="flex items-center justify-center h-full">{selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}</div></td>
-                              <td className="px-6 py-5 font-black text-sm text-on-background uppercase truncate align-middle h-[70px]">
-                                <div className="flex flex-col justify-center h-full">
-                                  <span>{item.name}</span>
+                            <tr key={item.id} onClick={() => setSelectedIndex(idx)} className={`group transition-colors relative flex lg:table-row items-center w-full py-2 lg:py-0 border-b border-outline-variant/10 lg:border-none ${isItemOutOfStock ? 'bg-red-50' : ''}`}>
+                              <td className="order-4 lg:order-none w-10 lg:w-16 px-1 lg:px-6 py-1 lg:py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-auto lg:h-[70px] block lg:table-cell shrink-0">
+                                <button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 m-1 lg:m-0 flex items-center justify-center bg-red-100 text-error opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all z-10 rounded-lg lg:rounded-none"><span className="material-symbols-outlined text-[18px] lg:text-[20px]">delete</span></button>
+                                <div className="hidden lg:flex items-center justify-center h-full">{selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}</div>
+                              </td>
+                              <td className="order-3 lg:order-none flex-1 min-w-0 px-2 lg:px-6 py-1 lg:py-5 font-black text-[11px] lg:text-sm text-on-background uppercase align-middle h-auto lg:h-[70px] block lg:table-cell">
+                                <div className="flex flex-col justify-center h-full overflow-hidden">
+                                  <span className="truncate w-full block">{item.name}</span>
                                   {item.offerLabel && (
-                                    <span className="text-[10px] text-error font-extrabold flex items-center gap-0.5 lowercase tracking-wider mt-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full">
-                                      <span className="material-symbols-outlined text-[12px]">local_offer</span>
+                                    <span className="text-[9px] lg:text-[10px] text-error font-extrabold flex items-center gap-0.5 lowercase tracking-wider mt-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full truncate max-w-full">
+                                      <span className="material-symbols-outlined text-[10px] lg:text-[12px]">local_offer</span>
                                       {item.offerLabel}
                                     </span>
                                   )}
                                 </div>
                               </td>
-                              <td className="px-6 py-5 text-center font-bold text-sm align-middle h-[70px]">
-                                <div className="flex items-center justify-center h-full">
-                                  <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute">
-                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">-</button>
+                              <td className="order-1 lg:order-none w-[105px] lg:w-32 shrink-0 px-0 lg:px-6 py-1 lg:py-5 text-center font-bold text-sm align-middle h-auto lg:h-[70px] block lg:table-cell">
+                                <div className="flex items-center justify-center h-full w-full">
+                                  <div className="flex items-center justify-between lg:justify-center gap-1 lg:gap-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity w-full lg:absolute lg:inset-x-0">
+                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-surface-container-low hover:bg-black/10 flex items-center justify-center shrink-0">-</button>
                                     {item.saleType === 'weight' ? (
                                       inlineWeightEdit?.idx === idx ? (
                                         <input
@@ -1436,7 +2146,7 @@ export const POS: React.FC = () => {
                                           type="text"
                                           inputMode="decimal"
                                           value={inlineWeightEdit.str}
-                                          className="w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary"
+                                          className="w-12 lg:w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary text-xs lg:text-sm"
                                           onChange={(e) => {
                                             const raw = e.target.value.replace(',', '.');
                                             if (/^\d*\.?\d{0,2}$/.test(raw)) setInlineWeightEdit({ idx, str: raw });
@@ -1460,20 +2170,20 @@ export const POS: React.FC = () => {
                                       ) : (
                                         <button
                                           onClick={(e) => { e.stopPropagation(); setInlineWeightEdit({ idx, str: parseFloat(item.quantity.toFixed(2)).toString() }); }}
-                                          className="w-12 text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate"
+                                          className="flex-1 lg:w-12 text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate text-xs lg:text-sm"
                                         >{parseFloat(item.quantity.toFixed(2)).toString()}</button>
                                       )
                                     ) : (
-                                      <span className="w-8 text-center">{item.quantity}</span>
+                                      <span className="flex-1 lg:w-8 text-center text-xs lg:text-sm">{item.quantity}</span>
                                     )}
-                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-6 h-6 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center">+</button>
+                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-surface-container-low hover:bg-black/10 flex items-center justify-center shrink-0">+</button>
                                   </div>
-                                  <span className="group-hover:hidden">
+                                  <span className="hidden lg:inline group-hover:hidden">
                                     {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg` : item.quantity}
                                   </span>
                                 </div>
                               </td>
-                              <td className="px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px]">
+                              <td className="hidden lg:table-cell px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px]">
                                 <div className="flex flex-col justify-center items-end h-full">
                                   {item.price === 0 ? (
                                     <button onClick={() => { setShowPriceModal({ idx, name: item.name }); setPriceInput(''); }} className="text-primary hover:underline bg-primary/10 px-2 py-1 rounded text-xs">Ingresar Precio</button>
@@ -1489,20 +2199,22 @@ export const POS: React.FC = () => {
                                   )}
                                 </div>
                               </td>
-                              <td className="px-6 py-5 text-right font-black text-[#9c1c1c] align-middle h-[70px]"><div className="flex items-center justify-end h-full">$ {formatCurrency(item.finalPrice * item.quantity, true, true)}</div></td>
+                              <td className="order-2 lg:order-none w-[75px] lg:w-32 shrink-0 px-2 lg:px-6 py-1 lg:py-5 text-right font-black text-[#9c1c1c] align-middle h-auto lg:h-[70px] block lg:table-cell">
+                                <div className="flex items-center justify-end h-full text-[13px] lg:text-base">${formatCurrency(item.finalPrice * item.quantity, true, true)}</div>
+                              </td>
                             </tr>
                           );
                         })}
-                        {cart.length === 0 && (<tr><td colSpan={5} className="px-6 py-16 text-center text-on-surface-variant">Escanea un producto para comenzar.</td></tr>)}
+                        {cart.length === 0 && (<tr><td colSpan={5} className="py-16 text-on-surface-variant"><div className="w-full max-w-[280px] sm:max-w-none mx-auto text-center sticky left-0 sm:static">Escanea un producto para comenzar.</div></td></tr>)}
                       </tbody>
                     </table>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 mt-6 flex-shrink-0 flex-wrap">
-                  <button onClick={() => { setDiscountInput(globalDiscount.toString()); setShowDiscountModal(true); }} className={`flex items-center gap-2 border border-outline-variant/20 px-4 py-2.5 rounded-xl font-bold text-xs transition-all shrink-0 ${globalDiscount > 0 ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-lowest'}`}><span className="material-symbols-outlined text-[16px]">percent</span> {globalDiscount > 0 ? `Descuento ${globalDiscount}% (F9)` : 'Aplicar Descuento (F9)'}</button>
+                  <button onClick={() => { setDiscountInput(globalDiscount.toString()); setShowDiscountModal(true); }} className={`flex items-center gap-2 border border-outline-variant/20 px-4 py-2.5 rounded-xl font-bold text-xs transition-all shrink-0 ${globalDiscount > 0 ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:bg-surface-container-lowest'}`}><span className="material-symbols-outlined text-[16px]">percent</span> <span className="sm:hidden">Descuento</span><span className="hidden sm:inline">{globalDiscount > 0 ? `Descuento ${globalDiscount}% (F9)` : 'Aplicar Descuento (F9)'}</span></button>
 
                   {/* F-Keys Shortcuts Bar */}
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="hidden sm:flex items-center gap-1.5 flex-wrap">
                     <button
                       type="button"
                       onClick={() => { inputRef.current?.focus(); inputRef.current?.select(); }}
@@ -1589,13 +2301,13 @@ export const POS: React.FC = () => {
                   </div>
 
                   <div className="flex-1"></div>
-                  <p className="text-[10px] text-on-surface-variant font-bold uppercase self-center tracking-widest shrink-0">↑↓ navegar • Del borrar</p>
+                  <p className="hidden sm:block text-[10px] text-on-surface-variant font-bold uppercase self-center tracking-widest shrink-0">↑↓ navegar • Del borrar</p>
                 </div>
               </div>{/* close tab content wrapper */}
             </div>
 
-            <div className="w-1/3 bg-[#f8f9fa] flex flex-col relative h-full overflow-hidden">
-              <div className="flex-1 overflow-y-auto no-scrollbar p-5 pb-32">
+            <div className="w-full lg:w-1/3 shrink-0 lg:shrink bg-[#f8f9fa] flex flex-col relative h-auto lg:h-full lg:overflow-hidden">
+              <div className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-5 pb-8 sm:pb-32">
                 {/* Asociar Cliente Widget */}
                 <div className="bg-white rounded-3xl p-5 border border-outline-variant/10 shadow-sm mb-5 shrink-0">
                   <div className="flex justify-between items-center mb-3">
@@ -1656,11 +2368,11 @@ export const POS: React.FC = () => {
                   {ccError && !validatedCustomer && <p className="text-error text-[10px] font-bold mt-1.5 ml-1">{ccError}</p>}
                 </div>
 
-                <div className="bg-[#b31414] text-white rounded-3xl p-5 shadow-[0_8px_30px_rgb(179,20,20,0.3)] mb-6 relative overflow-hidden shrink-0">
+                <div className="bg-[#b31414] text-white rounded-3xl p-4 sm:p-5 shadow-[0_8px_30px_rgb(179,20,20,0.3)] mb-4 sm:mb-6 relative overflow-hidden shrink-0">
                   <span className="material-symbols-outlined absolute -right-6 -bottom-6 text-[150px] opacity-10">point_of_sale</span>
                   <p className="font-bold text-xs tracking-[0.2em] uppercase mb-2 text-white/80">Monto Final</p>
-                  <p className="text-6xl font-black mb-6 flex items-start gap-2"><span className="text-2xl mt-2">$</span> {formatCurrency(cartTotal, true, true)}</p>
-                  <div className="flex justify-between text-xs font-bold text-white/80 pt-5 border-t border-white/20">
+                  <p className="text-3xl sm:text-5xl lg:text-6xl font-black mb-4 sm:mb-6 flex items-start gap-1 sm:gap-2"><span className="text-xl sm:text-2xl mt-1 sm:mt-2">$</span> <span className="truncate">{formatCurrency(cartTotal, true, true)}</span></p>
+                  <div className="flex justify-between text-xs font-bold text-white/80 pt-4 sm:pt-5 border-t border-white/20">
                     <div className="flex flex-col gap-1">
                       <span>Subtotal: $ {formatCurrency(subtotal, true, true)}</span>
                       {globalDiscount > 0 && <span className="text-white/60">Desc ({globalDiscount}%): -${formatCurrency(discountAmount, true, true)}</span>}
@@ -1669,15 +2381,15 @@ export const POS: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex gap-3 mb-8 shrink-0">
-                  <button onClick={() => { setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }} className="flex-1 bg-white border border-outline-variant/10 rounded-2xl py-6 flex flex-col items-center justify-center gap-1 font-bold text-[10px] text-error shadow-sm hover:bg-error/5 transition-all"><span className="material-symbols-outlined text-[20px]">receipt_long</span> F4 - Nuevo</button>
-                  <button onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }} className={`flex-[1] bg-[#ffeb3b] text-black rounded-2xl py-4 flex flex-col items-center justify-center gap-1 font-black text-xs shadow-lg transition-all border border-[#fdd835] ${cart.length === 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02] active:scale-95'}`}><span className="material-symbols-outlined text-[22px]">credit_card</span>F2 - COBRAR</button>
+                <div className="flex gap-2.5 sm:gap-3 mb-4 sm:mb-8 shrink-0">
+                  <button onClick={() => { setCart([]); setGlobalDiscount(0); updateTab({ shoppingSessionId: null }); }} className="flex-1 bg-white border border-outline-variant/10 rounded-2xl py-4 sm:py-6 flex flex-col items-center justify-center gap-1 font-bold text-[10px] text-error shadow-sm hover:bg-error/5 transition-all"><span className="material-symbols-outlined text-[18px] sm:text-[20px]">receipt_long</span> F4 - Nuevo</button>
+                  <button onClick={() => { if (cart.length > 0) { inputRef.current?.blur(); setShowPaymentModal(true); } }} className={`flex-[1] bg-[#ffeb3b] text-black rounded-2xl py-3 sm:py-4 flex flex-col items-center justify-center gap-1 font-black text-xs shadow-lg transition-all border border-[#fdd835] ${cart.length === 0 ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02] active:scale-95'}`}><span className="material-symbols-outlined text-[20px] sm:text-[22px]">credit_card</span>F2 - COBRAR</button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
                   <button
                     onClick={() => setShowGenericModal(true)}
-                    className="bg-primary hover:bg-[#9c1c1c] text-black rounded-2xl py-8 flex items-center justify-center gap-1.5 font-bold shadow-md shadow-yellow-200/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs w-full"
+                    className="bg-primary hover:bg-[#9c1c1c] text-black rounded-2xl py-4 sm:py-8 flex items-center justify-center gap-1.5 font-bold shadow-md shadow-yellow-200/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs w-full"
                   >
                     <span className="material-symbols-outlined text-[18px] shrink-0">add_shopping_cart</span>
                     <span className="font-black truncate">Prod. Común</span>
@@ -1689,7 +2401,7 @@ export const POS: React.FC = () => {
                       setPrePurchaseError('');
                       setShowPrePurchaseModal(true);
                     }}
-                    className="bg-green-600 hover:bg-green-700 text-white rounded-2xl py-8 flex items-center justify-center gap-1.5 font-bold shadow-md shadow-green-200/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs w-full"
+                    className="bg-green-600 hover:bg-green-700 text-white rounded-2xl py-4 sm:py-8 flex items-center justify-center gap-1.5 font-bold shadow-md shadow-green-200/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-xs w-full"
                   >
                     <span className="material-symbols-outlined text-[18px] shrink-0">assignment_turned_in</span>
                     <span className="font-black truncate">Pre-compra</span>
@@ -1700,19 +2412,19 @@ export const POS: React.FC = () => {
 
             </div>
 
-            {showPaymentModal && (
-              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[250] flex items-center justify-center p-8 animate-in fade-in">
-                <div className="bg-white rounded-[3rem] w-full max-w-2xl max-h-[90vh] shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col">
-                  <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest flex-shrink-0"><h3 className="text-2xl font-black">Finalizar Venta</h3><button onClick={() => setShowPaymentModal(false)} className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center"><span className="material-symbols-outlined">close</span></button></div>
-                  <div className="p-5 flex-1 overflow-y-auto no-scrollbar">
-                    <div className="text-center mb-8"><p className="text-sm font-bold text-on-surface-variant uppercase mb-2 tracking-widest">Total a Pagar</p><p className="text-6xl font-black text-primary">${formatCurrency(cartTotal, true, true)}</p></div>
-                    <div className="grid grid-cols-2 gap-4 mb-8">
+            {showPaymentModal && createPortal(
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-3 sm:p-8 animate-in fade-in">
+                <div className="bg-white rounded-3xl sm:rounded-[3rem] w-full max-w-2xl max-h-[92vh] shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col">
+                  <div className="p-4 sm:p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest flex-shrink-0"><h3 className="text-xl sm:text-2xl font-black">Finalizar Venta</h3><button onClick={() => setShowPaymentModal(false)} className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center"><span className="material-symbols-outlined text-[20px]">close</span></button></div>
+                  <div className="p-4 sm:p-5 flex-1 overflow-y-auto no-scrollbar">
+                    <div className="text-center mb-6 sm:mb-8"><p className="text-xs sm:text-sm font-bold text-on-surface-variant uppercase mb-1 sm:mb-2 tracking-widest">Total a Pagar</p><p className="text-4xl sm:text-6xl font-black text-primary">${formatCurrency(cartTotal, true, true)}</p></div>
+                    <div className="grid grid-cols-2 gap-2.5 sm:gap-4 mb-6 sm:mb-8">
                       {PAYMENT_METHODS
                         .filter(m => m.id !== 'cuenta_corriente' || (validatedCustomer && validatedCustomer.hasCurrentAccount))
                         .map(m => (
-                          <button key={m.id} onClick={() => { setSelectedPaymentMethod(m.id); setCcError(''); }} className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${selectedPaymentMethod === m.id ? 'border-primary bg-primary/5 text-primary scale-[1.02] shadow-lg shadow-primary/10' : 'border-outline-variant/10 text-on-surface-variant hover:bg-surface-container-lowest'}`}>
-                            <span className="material-symbols-outlined text-[32px]">{m.icon}</span>
-                            <span className="font-bold">{m.label}</span>
+                          <button key={m.id} onClick={() => { setSelectedPaymentMethod(m.id); setCcError(''); }} className={`p-4 sm:p-6 rounded-2xl border-2 flex flex-col items-center gap-2 sm:gap-3 transition-all ${selectedPaymentMethod === m.id ? 'border-primary bg-primary/5 text-primary scale-[1.02] shadow-lg shadow-primary/10' : 'border-outline-variant/10 text-on-surface-variant hover:bg-surface-container-lowest'}`}>
+                            <span className="material-symbols-outlined text-[26px] sm:text-[32px]">{m.icon}</span>
+                            <span className="font-bold text-xs sm:text-base">{m.label}</span>
                           </button>
                         ))
                       }
@@ -1741,56 +2453,124 @@ export const POS: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="p-8 border-t border-outline-variant/10 bg-surface-container-lowest flex-shrink-0"><button onClick={() => handleCompleteSale(false)} className="w-full bg-primary text-white font-black text-xl py-6 rounded-2xl shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-transform">Confirmar y Cobrar (Enter)</button><p className="text-center text-[10px] font-bold text-on-surface-variant uppercase mt-4 tracking-widest">Enter para cobrar</p></div>
+                  <div className="p-4 sm:p-8 border-t border-outline-variant/10 bg-surface-container-lowest flex-shrink-0">
+                    <button 
+                      disabled={isSubmittingSale || cart.length === 0}
+                      onClick={() => handleCompleteSale(false)} 
+                      className={`w-full text-white font-black text-base sm:text-xl py-4 sm:py-6 rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3 ${
+                        isSubmittingSale
+                          ? 'bg-gray-400 cursor-not-allowed opacity-80'
+                          : 'bg-primary hover:scale-[1.02] active:scale-[0.98]'
+                      }`}
+                    >
+                      {isSubmittingSale ? (
+                        <>
+                          <span className="inline-block w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></span>
+                          <span>Procesando venta...</span>
+                        </>
+                      ) : (
+                        'Confirmar y Cobrar (Enter)'
+                      )}
+                    </button>
+                    <p className="text-center text-[10px] font-bold text-on-surface-variant uppercase mt-4 tracking-widest">
+                      {isSubmittingSale ? 'Guardando operación en caja...' : 'Enter para cobrar'}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
 
-            {showDiscountModal && (
-              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-8 animate-in fade-in">
+            {showDiscountModal && createPortal(
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-8 animate-in fade-in">
                 <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 p-8"><h3 className="text-xl font-black mb-6 text-center">Aplicar Descuento</h3><div className="relative mb-6"><input ref={discountRef} type="number" value={discountInput} onChange={e => setDiscountInput(e.target.value)} placeholder="0" className="w-full bg-surface-container-low border-2 border-outline-variant/10 rounded-2xl py-4 px-6 text-4xl font-black text-center outline-none focus:border-primary" /><span className="absolute right-6 top-1/2 -translate-y-1/2 text-2xl font-black text-on-surface-variant opacity-50">%</span></div><div className="flex gap-3"><button onClick={() => setShowDiscountModal(false)} className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-xl transition-colors">Cancelar</button><button onClick={() => { const val = parseFloat(discountInput); if (!isNaN(val) && val >= 0 && val <= 100) setGlobalDiscount(val); setShowDiscountModal(false); }} className="flex-1 bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all">Aplicar</button></div></div>
-              </div>
+              </div>,
+              document.body
             )}
 
-            {showPriceModal && (
-              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-8 animate-in fade-in">
+            {showPriceModal && createPortal(
+              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-8 animate-in fade-in">
                 <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 p-8"><h3 className="text-xl font-black mb-2 text-center">Ingresar Precio</h3><p className="text-sm text-on-surface-variant text-center mb-6">{showPriceModal.name}</p><div className="relative mb-6"><span className="absolute left-6 top-1/2 -translate-y-1/2 text-2xl font-black text-on-surface-variant opacity-50">$</span><input ref={priceRef} type="number" value={priceInput} onChange={e => setPriceInput(e.target.value)} placeholder="0.00" className="w-full bg-surface-container-low border-2 border-outline-variant/10 rounded-2xl py-4 px-12 text-3xl font-black text-center outline-none focus:border-primary" /></div><div className="flex gap-3"><button onClick={() => setShowPriceModal(null)} className="flex-1 py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-xl transition-colors">Cancelar</button><button onClick={() => { const val = parseFloat(priceInput); if (!isNaN(val) && val >= 0) { setCart(cArr => cArr.map((c, i) => i === showPriceModal.idx ? { ...c, price: val } : c)); setShowPriceModal(null); } }} className="flex-1 bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all">Guardar</button></div></div>
-              </div>
+              </div>,
+              document.body
             )}
 
-            {showCloseConfirm && (
-              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-8 animate-in fade-in">
-                <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95 p-8 text-center"><div className="w-16 h-16 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto mb-6"><span className="material-symbols-outlined text-[32px]">lock</span></div><h3 className="text-xl font-black mb-2">¿Cerrar Caja Diaria?</h3><p className="text-sm text-on-surface-variant mb-8 leading-relaxed">Esta acción guardará el resumen en analíticas y reiniciará la actividad actual. ¿Deseas continuar?</p><div className="flex flex-col gap-3"><button onClick={handleCashClose} className="w-full bg-error text-white font-bold py-4 rounded-2xl shadow-lg shadow-error/20 hover:bg-error/90 transition-all">Confirmar Cierre</button><button onClick={() => setShowCloseConfirm(false)} className="w-full py-4 font-bold text-on-surface-variant hover:bg-black/5 rounded-2xl transition-colors">Cancelar</button></div></div>
-              </div>
-            )}
 
-            {/* SUCCESS MODAL WITH WHATSAPP BUTTON */}
-            {showSuccessModal && (
-              <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-[500] flex items-center justify-center p-8 animate-in fade-in">
-                <div className="bg-white rounded-[3rem] w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 p-10 text-center relative">
-                  <div className="w-20 h-20 bg-[#e6fcf0] text-[#00c853] rounded-[2rem] flex items-center justify-center mx-auto mb-6">
-                    <span className="material-symbols-outlined text-[42px] font-black">check</span>
+            {/* SUCCESS MODAL: VENTA CONFIRMADA */}
+            {showSuccessModal && createPortal(
+              <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in">
+                <div className="bg-white rounded-[2rem] sm:rounded-[2.5rem] w-full max-w-sm sm:max-w-md shadow-2xl overflow-y-auto max-h-[92vh] animate-in zoom-in-95 p-5 sm:p-7 text-center relative my-auto">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 bg-[#e6fcf0] text-[#00c853] rounded-[1.5rem] flex items-center justify-center mx-auto mb-4">
+                    <span className="material-symbols-outlined text-[32px] sm:text-[36px] font-black">check</span>
                   </div>
-                  <h3 className="text-2xl font-black mb-2 text-[#2d2828]">¡Venta Exitosa!</h3>
-                  <p className="text-on-surface-variant mb-8 font-medium text-sm text-[#5d5454]">La operación #{showSuccessModal.orderId} se ha registrado correctamente.</p>
+                  <h3 className="text-xl sm:text-2xl font-black mb-1 text-[#2d2828]">Venta confirmada</h3>
+                  <p className="text-on-surface-variant mb-4 font-medium text-xs sm:text-sm text-[#5d5454] truncate">
+                    Operación #{showSuccessModal.orderId} cobrada correctamente.
+                  </p>
 
-                  <div className="bg-[#f5f3f3] rounded-[1.75rem] p-6 mb-8 text-left space-y-3.5">
-                    <div className="flex justify-between items-center"><span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider">Cliente</span><span className="font-extrabold text-sm text-[#2d2828]">{showSuccessModal.customer}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider">Total</span><span className="text-lg font-black text-[#b71c1c]">${formatCurrency(showSuccessModal.total, true, true)}</span></div>
-                    <div className="flex justify-between items-center"><span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider">Pago</span><span className="text-[10px] font-black uppercase bg-white text-[#2d2828] px-3 py-1 rounded-full border border-outline-variant/10 shadow-sm">{getPaymentMethodDisplay(showSuccessModal.paymentMethod)}</span></div>
+                  <div className="bg-[#f5f3f3] rounded-2xl p-4 mb-4 text-left space-y-2.5">
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider shrink-0">Cliente</span>
+                      <span className="font-extrabold text-xs sm:text-sm text-[#2d2828] truncate">{showSuccessModal.customer}</span>
+                    </div>
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider shrink-0">Total</span>
+                      <span className="text-base sm:text-lg font-black text-[#b71c1c]">${formatCurrency(showSuccessModal.total, true, true)}</span>
+                    </div>
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-[10px] font-black text-[#8c8282] uppercase tracking-wider shrink-0">Pago</span>
+                      <span className="text-[10px] font-black uppercase bg-white text-[#2d2828] px-2.5 py-0.5 rounded-full border border-outline-variant/10 shadow-xs">
+                        {getPaymentMethodDisplay(showSuccessModal.paymentMethod)}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="space-y-3">
+                  {/* Facturación Fiscal Status Indicator */}
+                  {(() => {
+                    const billStatus = checkSaleBilledStatus(showSuccessModal.orderId);
+                    if (billStatus.isBilled && billStatus.invoice) {
+                      return (
+                        <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-left flex items-center gap-2.5">
+                          <span className="material-symbols-outlined text-emerald-600 text-[20px] shrink-0">verified</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-black text-emerald-950 truncate">
+                              Factura {billStatus.invoice.type} #{billStatus.invoice.folio || billStatus.invoice.invoiceNumber} Autorizada
+                            </p>
+                            <p className="text-[10px] font-mono text-emerald-700 truncate">CAE: {billStatus.invoice.cae}</p>
+                          </div>
+                        </div>
+                      );
+                    }
+                    if (billStatus.needsReconciliation) {
+                      return (
+                        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-left flex items-center gap-2.5">
+                          <span className="material-symbols-outlined text-amber-600 text-[20px] shrink-0">warning</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-black text-amber-950">Estado Desconocido</p>
+                            <p className="text-[10px] text-amber-800">Requiere reconciliar con ARCA.</p>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  <div className="space-y-2.5">
+                    {/* Acción 1: Imprimir ticket de venta */}
                     {lastSaleTicket && (
                       <button
+                        type="button"
                         onClick={() => { setShowTicket(lastSaleTicket); }}
-                        className="w-full bg-[#b71c1c] text-white font-black py-4.5 rounded-[1.25rem] shadow-lg shadow-red-900/10 hover:bg-[#a31919] transition-all flex items-center justify-center gap-2.5 text-sm"
+                        className="w-full bg-[#3d3333] hover:bg-[#2b2424] text-white font-black py-3 rounded-2xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer"
                       >
-                        <span className="material-symbols-outlined text-[20px]">print</span>
-                        Imprimir Ticket
+                        <span className="material-symbols-outlined text-[18px]">print</span>
+                        1. Imprimir ticket de venta
                       </button>
                     )}
+
+                    {/* Acción 2: Enviar por WhatsApp (ticket comercial) */}
                     <button
+                      type="button"
                       onClick={() => {
                         const initialPhone = showSuccessModal.phone || (validatedCustomer?.phone || '');
                         setWhatsappTicketPhone(initialPhone);
@@ -1804,20 +2584,122 @@ export const POS: React.FC = () => {
                           setTimeout(() => whatsappPhoneInputRef.current?.focus(), 150);
                         }
                       }}
-                      className="w-full bg-[#20ba56] text-white font-black py-4.5 rounded-[1.25rem] shadow-lg shadow-green-500/10 hover:bg-[#1caa4e] transition-all flex items-center justify-center gap-2.5 text-sm"
+                      className="w-full bg-[#20ba56] hover:bg-[#1caa4e] text-white font-black py-3 rounded-2xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[20px]">chat</span>
-                      Notificar por WhatsApp
+                      <span className="material-symbols-outlined text-[18px]">chat</span>
+                      2. Enviar ticket por WhatsApp
                     </button>
+
+                    {/* Acción 3: Realizar factura electrónica o Reimprimir */}
+                    {(() => {
+                      const billStatus = checkSaleBilledStatus(showSuccessModal.orderId);
+                      if (billStatus.isBilled && billStatus.invoice) {
+                        return (
+                          <div className="space-y-2">
+                            <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-950 font-bold">
+                              <span className="flex items-center gap-1.5 truncate">
+                                <span className="material-symbols-outlined text-emerald-700 text-[16px] shrink-0">verified</span>
+                                <span className="truncate">Venta facturada ({billStatus.invoice.type || 'B'} #{billStatus.invoice.folio || `${String(billStatus.invoice.pointOfSale).padStart(4, '0')}-${String(billStatus.invoice.invoiceNumber).padStart(8, '0')}`})</span>
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFiscalPrinterInvoice(billStatus.invoice!);
+                                  setShowFiscalPrinterModal(true);
+                                }}
+                                className="flex-1 bg-[#1b5e20] hover:bg-[#144a19] text-white font-black py-3 rounded-2xl shadow-sm transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer min-w-0"
+                              >
+                                <span className="material-symbols-outlined text-[16px] shrink-0">print</span>
+                                <span className="truncate">3. Reimprimir Ticket</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (billStatus.invoice?.id) {
+                                    billingService.openInvoicePdf(billStatus.invoice.id);
+                                  }
+                                }}
+                                className="bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-black py-3 px-3 rounded-2xl transition-all flex items-center justify-center gap-1 text-xs cursor-pointer shrink-0"
+                                title="Ver comprobante oficial en PDF"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                                <span>Ver PDF</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (billStatus.needsReconciliation) {
+                        return (
+                          <div className="space-y-2">
+                            <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-950 font-bold">
+                              <span className="material-symbols-outlined text-amber-700 text-[16px] shrink-0">sync_problem</span>
+                              <span className="truncate">Comprobante en estado desconocido con ARCA.</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (billStatus.invoice) {
+                                  setAuthorizedInvoiceResult(billStatus.invoice);
+                                  setUnknownOpId(billStatus.invoice.operationId || null);
+                                }
+                                setShowPosFiscalModal(true);
+                              }}
+                              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-black py-3 rounded-2xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">sync_problem</span>
+                              3. Reconciliar Factura con ARCA
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            disabled={isAuthorizingFiscal}
+                            onClick={() => {
+                              if (lastConfirmedSale) {
+                                openFiscalFlow(lastConfirmedSale);
+                              }
+                            }}
+                            className="w-full bg-[#b71c1c] hover:bg-[#a31919] text-white font-black py-3.5 px-3 rounded-2xl shadow-md shadow-red-900/10 transition-all flex items-center justify-center gap-2 text-xs sm:text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <span className={`material-symbols-outlined text-[18px] shrink-0 ${isAuthorizingFiscal ? 'animate-spin' : ''}`}>
+                              {isAuthorizingFiscal ? 'progress_activity' : 'receipt_long'}
+                            </span>
+                            <span className="truncate">{isAuthorizingFiscal ? (quickFiscalStep || 'Autorizando con ARCA...') : '3. Realizar factura electrónica'}</span>
+                          </button>
+                          {quickFiscalError && (
+                            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 font-medium space-y-1 text-left animate-in fade-in break-words">
+                              <p className="font-bold flex items-center gap-1 text-red-950">
+                                <span className="material-symbols-outlined text-[16px]">error</span>
+                                Aviso de Facturación
+                              </p>
+                              <p className="break-words leading-relaxed">{quickFiscalError}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Acción 4: Finalizar */}
                     <button
-                      onClick={() => { setShowSuccessModal(null); setTimeout(() => inputRef.current?.focus(), 100); }}
-                      className="w-full py-3 font-black text-sm text-[#5d5454] hover:bg-black/5 rounded-[1.25rem] transition-colors mt-2"
+                      type="button"
+                      onClick={() => {
+                        setShowSuccessModal(null);
+                        setTimeout(() => inputRef.current?.focus(), 100);
+                      }}
+                      className="w-full py-2.5 font-black text-xs sm:text-sm text-[#5d5454] hover:bg-black/5 rounded-2xl transition-colors cursor-pointer"
                     >
-                      Cerrar
+                      4. Finalizar
                     </button>
                   </div>
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
         </div>
@@ -1910,6 +2792,14 @@ export const POS: React.FC = () => {
       {showTicket && (
         <TicketPrinter ticket={showTicket} onClose={() => setShowTicket(null)} />
       )}
+
+      {/* Fiscal Ticket Printer (Impresión Térmica Directa sin window.print()) */}
+      <FiscalTicketPrinter
+        invoice={fiscalPrinterInvoice}
+        isOpen={showFiscalPrinterModal}
+        autoPrint={true}
+        onClose={() => setShowFiscalPrinterModal(false)}
+      />
       {/* Cash Register Open Modal */}
       {showCashOpenModal && (() => {
         const lastDailyClose = cashCloses.find(c => c.period === 'diario');
@@ -2217,13 +3107,26 @@ export const POS: React.FC = () => {
               </button>
               {currentAccountConfig.allowOverride ? (
                 <button
+                  disabled={isSubmittingSale}
                   onClick={() => {
+                    if (isSubmittingSale) return;
                     setShowLimitWarning(null);
                     handleCompleteSale(true);
                   }}
-                  className="flex-[2] bg-red-600 text-white font-black py-4 rounded-2xl hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
+                  className={`flex-[2] text-white font-black py-4 rounded-2xl transition-colors shadow-lg flex items-center justify-center gap-2 ${
+                    isSubmittingSale
+                      ? 'bg-gray-400 cursor-not-allowed opacity-80'
+                      : 'bg-red-600 hover:bg-red-700 shadow-red-600/20'
+                  }`}
                 >
-                  Continuar de todas formas
+                  {isSubmittingSale ? (
+                    <>
+                      <span className="inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      <span>Procesando...</span>
+                    </>
+                  ) : (
+                    'Continuar de todas formas'
+                  )}
                 </button>
               ) : (
                 <div className="flex-[2] bg-surface-container-high text-on-surface-variant font-bold py-4 rounded-2xl text-center text-xs px-2 flex items-center justify-center opacity-70">
@@ -2358,7 +3261,7 @@ export const POS: React.FC = () => {
                     ref={whatsappPhoneInputRef}
                     type="tel"
                     required
-                    placeholder="Ej: 2634877314 o 5492634877314"
+                    placeholder="Ej: 2614421234 o 5492614421234"
                     value={whatsappTicketPhone}
                     onChange={e => {
                       setWhatsappTicketPhone(e.target.value);
@@ -2517,6 +3420,803 @@ export const POS: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* ─── MODAL FISCAL POS: EMISIÓN Y CONSULTA ARCA ──────────────── */}
+      {showPosFiscalModal && (
+        <div className="fixed inset-0 z-[700] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95">
+
+            {/* POST-CAE: VISTA COMPROBANTE AUTORIZADO POR ARCA */}
+            {authorizedInvoiceResult && authorizedInvoiceResult.status === 'AUTORIZADA' ? (
+              <>
+                {/* Header post-CAE */}
+                <div className="p-6 border-b border-outline-variant/10 bg-[#e6fcf0] flex justify-between items-center shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-md shadow-emerald-700/20">
+                      <span className="material-symbols-outlined text-[28px]">verified</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300">
+                        Comprobante Oficial Autorizado por ARCA
+                      </span>
+                      <h3 className="text-xl font-black text-emerald-950 mt-1">
+                        Factura {authorizedInvoiceResult.type} #{authorizedInvoiceResult.folio || `${String(authorizedInvoiceResult.pointOfSale).padStart(4, '0')}-${String(authorizedInvoiceResult.invoiceNumber).padStart(8, '0')}`}
+                      </h3>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowPosFiscalModal(false);
+                      setShowSuccessModal(null);
+                      setTimeout(() => inputRef.current?.focus(), 100);
+                    }}
+                    className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-black/5 text-neutral-600 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+
+                {/* Body post-CAE */}
+                <div className="p-6 overflow-y-auto space-y-6 flex-1 text-left">
+                  {/* Highlight Banner CAE */}
+                  <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200/80 rounded-2xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-1">Código de Autorización Electrónico (CAE)</p>
+                      <p className="text-2xl font-mono font-black text-emerald-950 tracking-wider">
+                        {authorizedInvoiceResult.cae || 'N/A'}
+                      </p>
+                      <p className="text-xs text-emerald-700 font-medium mt-1">
+                        Vencimiento CAE: <span className="font-bold font-mono">{authorizedInvoiceResult.caeExpirationDate || 'N/A'}</span>
+                      </p>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-1">Total Facturado</p>
+                      <p className="text-2xl font-black text-[#b71c1c]">
+                        ${formatCurrency(authorizedInvoiceResult.total, true, true)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 2 Column Details: QR & Receptor */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    {/* Left: Metadata */}
+                    <div className="md:col-span-2 bg-[#f9f8f8] rounded-2xl p-5 border border-outline-variant/10 space-y-3">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-[#8c8282] border-b border-outline-variant/10 pb-2">
+                        Datos del Comprobante y Receptor
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <span className="text-[#8c8282] block text-[10px] font-bold uppercase">Tipo y Número</span>
+                          <span className="font-bold text-neutral-800">
+                            Factura {authorizedInvoiceResult.type} ({authorizedInvoiceResult.pointOfSale ? String(authorizedInvoiceResult.pointOfSale).padStart(4, '0') : '0001'}-{authorizedInvoiceResult.invoiceNumber ? String(authorizedInvoiceResult.invoiceNumber).padStart(8, '0') : '1'})
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[#8c8282] block text-[10px] font-bold uppercase">Fecha de Emisión</span>
+                          <span className="font-bold text-neutral-800">{authorizedInvoiceResult.date?.split(',')[0] || new Date().toLocaleDateString('es-AR')}</span>
+                        </div>
+                        <div>
+                          <span className="text-[#8c8282] block text-[10px] font-bold uppercase">Cliente / Razón Social</span>
+                          <span className="font-bold text-neutral-800">{authorizedInvoiceResult.clientName || 'Consumidor Final'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[#8c8282] block text-[10px] font-bold uppercase">CUIT / DNI</span>
+                          <span className="font-bold font-mono text-neutral-800">{authorizedInvoiceResult.clientCuit || 'Sin identificar (CF)'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[#8c8282] block text-[10px] font-bold uppercase">Venta POS Asociada</span>
+                          <span className="font-mono text-neutral-800">#{authorizedInvoiceResult.saleId || lastConfirmedSale?.orderId}</span>
+                        </div>
+                        <div>
+                          <span className="text-[#8c8282] block text-[10px] font-bold uppercase">Servicio Utilizado</span>
+                          <span className="font-bold text-emerald-700">{authorizedInvoiceResult.serviceUsed || 'WSMTXCA'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: QR Fiscal con Zoom */}
+                    <div className="bg-[#f9f8f8] rounded-2xl p-5 border border-outline-variant/10 flex flex-col items-center justify-center text-center">
+                      {authorizedInvoiceResult.qrDataUrl ? (
+                        <>
+                          <div
+                            onClick={() => setEnlargedQrUrl(authorizedInvoiceResult.qrDataUrl || null)}
+                            className="bg-white p-2.5 rounded-2xl border-2 border-neutral-200 shadow-sm cursor-pointer hover:scale-105 transition-transform group relative"
+                            title="Hacé clic para ampliar el código QR"
+                          >
+                            <img src={authorizedInvoiceResult.qrDataUrl} alt="QR Fiscal Oficial ARCA" className="w-28 h-28 object-contain" />
+                            <div className="absolute inset-0 bg-black/40 rounded-2xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white">
+                              <span className="material-symbols-outlined text-[24px]">zoom_in</span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-[#8c8282] font-semibold mt-2 cursor-pointer hover:text-primary transition-colors" onClick={() => setEnlargedQrUrl(authorizedInvoiceResult.qrDataUrl || null)}>
+                            🔍 Clic para ampliar QR
+                          </span>
+                        </>
+                      ) : (
+                        <div className="text-center p-4 text-xs text-[#8c8282]">
+                          <span className="material-symbols-outlined text-[32px] text-neutral-400">qr_code</span>
+                          <p>QR no disponible</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Items Table */}
+                  {authorizedInvoiceResult.items && authorizedInvoiceResult.items.length > 0 && (
+                    <div className="border border-outline-variant/10 rounded-2xl overflow-hidden">
+                      <div className="bg-neutral-100 px-4 py-2 text-[10px] font-black uppercase text-[#8c8282] flex justify-between">
+                        <span>Ítem / Descripción</span>
+                        <span>Total</span>
+                      </div>
+                      <div className="divide-y divide-neutral-100 max-h-40 overflow-y-auto">
+                        {authorizedInvoiceResult.items.map((item, idx) => (
+                          <div key={idx} className="px-4 py-2.5 flex justify-between items-center text-xs">
+                            <div>
+                              <p className="font-bold text-neutral-800">{item.description}</p>
+                              <p className="text-[10px] text-[#8c8282]">
+                                {item.quantity} {item.unit || 'un.'} x ${formatCurrency(item.price, true, true)}
+                                {item.codigoMtx && <span className="ml-2 font-mono text-[9px] bg-neutral-100 px-1 py-0.5 rounded">MTX: {item.codigoMtx}</span>}
+                              </p>
+                            </div>
+                            <span className="font-bold text-neutral-900">${formatCurrency(item.total, true, true)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="bg-neutral-50 px-4 py-3 border-t border-outline-variant/10 flex justify-between items-center text-xs">
+                        <div className="space-x-4 text-[#8c8282]">
+                          <span>Neto: <b className="text-neutral-800">${formatCurrency(authorizedInvoiceResult.subtotalNet ?? authorizedInvoiceResult.subtotal, true, true)}</b></span>
+                          <span>IVA: <b className="text-neutral-800">${formatCurrency(authorizedInvoiceResult.taxes, true, true)}</b></span>
+                        </div>
+                        <div className="text-sm font-black text-[#b71c1c]">
+                          Total: ${formatCurrency(authorizedInvoiceResult.total, true, true)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer post-CAE: Acciones fiscales (Reglas 8 y 9) */}
+                <div className="p-6 border-t border-outline-variant/10 bg-surface-container-lowest flex flex-wrap gap-3 shrink-0">
+                  {/* Imprimir Factura (Solo mostrada después de CAE) */}
+                  <button
+                    onClick={() => {
+                      const printUrl = `/api/arca/invoices/${authorizedInvoiceResult.id}/pdf`;
+                      const printWin = window.open(printUrl, '_blank');
+                      if (printWin) printWin.focus();
+                    }}
+                    className="flex-1 min-w-[140px] bg-[#3d3333] hover:bg-[#2b2424] text-white font-black py-3.5 px-4 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">print</span>
+                    Imprimir Factura
+                  </button>
+
+                  {/* Ver PDF Oficial */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (authorizedInvoiceResult?.id) {
+                        billingService.openInvoicePdf(authorizedInvoiceResult.id);
+                      }
+                    }}
+                    className="flex-1 min-w-[140px] bg-blue-600 hover:bg-blue-700 text-white font-black py-3.5 px-4 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 text-xs text-center cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
+                    Ver PDF Oficial
+                  </button>
+
+                  {/* Enviar Factura por WhatsApp */}
+                  <button
+                    onClick={() => {
+                      const clientPhone = lastConfirmedSale?.customerPhone || '';
+                      setWhatsappFiscalPhone(clientPhone);
+                      setWhatsappFiscalError('');
+                      setWhatsappFiscalSuccess(false);
+                      setShowWhatsAppFiscalModal({
+                        invoice: authorizedInvoiceResult,
+                        phone: clientPhone
+                      });
+                      setTimeout(() => whatsappFiscalPhoneInputRef.current?.focus(), 150);
+                    }}
+                    className="flex-1 min-w-[140px] bg-[#20ba56] hover:bg-[#1caa4e] text-white font-black py-3.5 px-4 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">chat</span>
+                    Enviar por WhatsApp
+                  </button>
+
+                  {/* Finalizar */}
+                  <button
+                    onClick={() => {
+                      setShowPosFiscalModal(false);
+                      setShowSuccessModal(null);
+                      setTimeout(() => inputRef.current?.focus(), 100);
+                    }}
+                    className="py-3.5 px-6 font-bold text-neutral-600 hover:bg-black/5 rounded-2xl text-xs transition-colors cursor-pointer"
+                  >
+                    Finalizar
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* PRE-AUTHORIZATION VIEW: DETERMINACIÓN Y RESUMEN PREVIO (Reglas 1, 2, 6, 7) */
+              <>
+                {/* Header pre-autorización */}
+                <div className="p-6 border-b border-outline-variant/10 bg-surface-container-lowest flex justify-between items-center shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary/10 text-primary rounded-2xl flex items-center justify-center">
+                      <span className="material-symbols-outlined">receipt_long</span>
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-neutral-900">
+                        Emisión de Factura Electrónica ARCA
+                      </h3>
+                      <p className="text-xs text-neutral-500 font-medium">
+                        Venta #{lastConfirmedSale?.orderId} • La venta ya fue cobrada y registrada independientemente
+                      </p>
+                    </div>
+                  </div>
+                  {!isAuthorizingFiscal && (
+                    <button
+                      onClick={() => setShowPosFiscalModal(false)}
+                      className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 text-neutral-500 transition-colors cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Body pre-autorización */}
+                <div className="p-6 overflow-y-auto space-y-6 flex-1 text-left">
+                  {/* Alert Error */}
+                  {fiscalError && (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-800 text-xs flex items-start gap-3">
+                      <span className="material-symbols-outlined text-red-600 shrink-0 text-[20px]">error</span>
+                      <div className="flex-1">
+                        <p className="font-bold">Atención Fiscal</p>
+                        <p className="mt-0.5 leading-relaxed">{fiscalError}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Warning Estado Desconocido (Regla 3) */}
+                  {unknownOpId && (
+                    <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-900 text-xs flex items-start gap-3">
+                      <span className="material-symbols-outlined text-amber-600 shrink-0 text-[24px]">sync_problem</span>
+                      <div className="flex-1">
+                        <p className="font-black text-sm">Operación en ESTADO_DESCONOCIDO</p>
+                        <p className="mt-1 leading-relaxed text-amber-800">
+                          Se agotó el tiempo de espera con ARCA. Por seguridad fiscal estricta, ARCA prohíbe volver a emitir sin verificar antes si el CAE fue generado.
+                        </p>
+                        <div className="mt-3">
+                          <button
+                            onClick={handleReconcileFiscal}
+                            disabled={isReconciling}
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2 rounded-xl text-xs flex items-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
+                          >
+                            {isReconciling ? (
+                              <>
+                                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                                <span>Reconciliando con ARCA...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="material-symbols-outlined text-[16px]">sync</span>
+                                <span>Reconciliar Operación con ARCA</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Regla 1: Determinación de Comprobante según Condición Fiscal */}
+                  <div className="bg-[#f9f8f8] rounded-2xl p-5 border border-outline-variant/10 space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-[#8c8282]">
+                      1. Condición Fiscal y Tipo de Comprobante (Reglas ARCA)
+                    </h4>
+
+                    {/* Selector de Condición del Receptor */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {(['Consumidor Final', 'Responsable Inscripto', 'Monotributista', 'Exento'] as const).map(cond => (
+                        <button
+                          key={cond}
+                          type="button"
+                          disabled={isAuthorizingFiscal}
+                          onClick={() => handleFiscalTaxConditionChange(cond)}
+                          className={`py-2.5 px-3 rounded-xl text-xs font-black border transition-all cursor-pointer ${fiscalTaxCondition === cond
+                              ? 'bg-neutral-900 text-white border-neutral-900 shadow-sm'
+                              : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50'
+                            }`}
+                        >
+                          {cond}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Explicación y Tipo Sugerido */}
+                    <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3.5 flex items-start gap-3 text-xs">
+                      <span className="material-symbols-outlined text-blue-600 text-[20px] shrink-0 mt-0.5">balance</span>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-blue-950">Tipo sugerido: Factura {fiscalInvoiceType}</span>
+                          <span className="text-[10px] bg-blue-200/80 text-blue-900 font-bold px-2 py-0.5 rounded-full">
+                            Determinado por Normativa Fiscal
+                          </span>
+                        </div>
+                        <p className="text-blue-800 text-[11px] mt-1 leading-relaxed">
+                          {fiscalTypeReason}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Botones de Comprobante (Control estricto según condición) */}
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 pt-1">
+                      <span className="text-xs font-bold text-neutral-600 shrink-0">Tipo de Comprobante:</span>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={fiscalTaxCondition === 'Responsable Inscripto' || fiscalTaxCondition === 'Monotributista' || isAuthorizingFiscal}
+                          onClick={() => {
+                            setFiscalInvoiceType('B');
+                            fetchNextVoucherNumber(fiscalPointOfSale, 'B');
+                          }}
+                          className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${fiscalInvoiceType === 'B'
+                              ? 'bg-primary text-white border-primary shadow-sm'
+                              : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50 disabled:opacity-40 disabled:cursor-not-allowed'
+                            }`}
+                        >
+                          Factura B
+                        </button>
+                        <button
+                          type="button"
+                          disabled={fiscalTaxCondition === 'Consumidor Final' || fiscalTaxCondition === 'Exento' || isAuthorizingFiscal}
+                          onClick={() => {
+                            setFiscalInvoiceType('A');
+                            fetchNextVoucherNumber(fiscalPointOfSale, 'A');
+                          }}
+                          className={`px-4 py-2 rounded-xl text-xs font-black border transition-all ${fiscalInvoiceType === 'A'
+                              ? 'bg-primary text-white border-primary shadow-sm'
+                              : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50 disabled:opacity-40 disabled:cursor-not-allowed'
+                            }`}
+                        >
+                          Factura A
+                        </button>
+                      </div>
+                      {(fiscalTaxCondition === 'Consumidor Final' || fiscalTaxCondition === 'Exento') && (
+                        <span className="text-[10px] text-neutral-500 italic">
+                          (Factura A bloqueada para Consumidor Final)
+                        </span>
+                      )}
+                      {(fiscalTaxCondition === 'Responsable Inscripto' || fiscalTaxCondition === 'Monotributista') && (
+                        <span className="text-[10px] text-neutral-500 italic">
+                          (Factura A obligatoria por RG 5003)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 2. Datos del Cliente / Receptor */}
+                  <div className="bg-[#f9f8f8] rounded-2xl p-5 border border-outline-variant/10 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-[#8c8282]">
+                        2. Datos del Cliente / Receptor
+                      </h4>
+                      {fiscalTaxCondition !== 'Consumidor Final' && (
+                        <button
+                          type="button"
+                          onClick={handleResetToAnonymousCf}
+                          className="text-[11px] font-bold text-neutral-500 hover:text-primary transition-colors cursor-pointer"
+                        >
+                          Restablecer a Consumidor Final
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Buscador de Cliente Registrado */}
+                    <div className="relative">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 text-[18px]">
+                            person_search
+                          </span>
+                          <input
+                            type="text"
+                            placeholder="Buscar en clientes registrados (Nombre, CUIT, DNI, Teléfono)..."
+                            value={fiscalCustomerSearch}
+                            onChange={e => {
+                              setFiscalCustomerSearch(e.target.value);
+                              setShowFiscalCustomerSearchDropdown(true);
+                            }}
+                            onFocus={() => {
+                              if (fiscalCustomerSearch.trim()) setShowFiscalCustomerSearchDropdown(true);
+                            }}
+                            className="w-full bg-white border border-neutral-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-neutral-800 outline-none focus:border-primary"
+                          />
+                        </div>
+                        {fiscalCustomerSearch && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFiscalCustomerSearch('');
+                              setShowFiscalCustomerSearchDropdown(false);
+                            }}
+                            className="text-neutral-400 hover:text-neutral-600 p-1 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">close</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown con resultados */}
+                      {showFiscalCustomerSearchDropdown && matchedFiscalCustomers.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white rounded-xl border border-outline-variant/20 shadow-xl overflow-hidden divide-y divide-neutral-100 max-h-48 overflow-y-auto">
+                          {matchedFiscalCustomers.map(cust => (
+                            <div
+                              key={cust.id}
+                              onClick={() => handleSelectCustomerForFiscal(cust)}
+                              className="p-2.5 hover:bg-neutral-50 cursor-pointer flex items-center justify-between transition-colors"
+                            >
+                              <div>
+                                <p className="text-xs font-bold text-neutral-800">
+                                  {cust.businessName || cust.name}
+                                  {cust.businessName && cust.name && cust.businessName !== cust.name && (
+                                    <span className="text-[10px] text-neutral-400 ml-1 font-normal">({cust.name})</span>
+                                  )}
+                                </p>
+                                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-neutral-500">
+                                  {cust.cuit && <span>CUIT: <strong className="font-mono">{cust.cuit}</strong></span>}
+                                  {cust.dni && <span>DNI: {cust.dni}</span>}
+                                  <span>{cust.phone}</span>
+                                </div>
+                              </div>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                cust.taxCondition === 'Responsable Inscripto' ? 'bg-purple-100 text-purple-700' :
+                                cust.taxCondition === 'Monotributista' ? 'bg-blue-100 text-blue-700' :
+                                'bg-neutral-100 text-neutral-600'
+                              }`}>
+                                {cust.taxCondition || 'Consumidor Final'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Razón Social */}
+                      <div>
+                        <label className="text-[10px] font-bold text-neutral-600 uppercase mb-1 block">
+                          Razón Social / Nombre <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          disabled={isAuthorizingFiscal}
+                          value={fiscalCustomerName}
+                          onChange={e => setFiscalCustomerName(e.target.value)}
+                          placeholder="Nombre del cliente o razón social"
+                          className="w-full bg-white border border-neutral-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-neutral-800 outline-none focus:border-primary"
+                        />
+                      </div>
+
+                      {/* Documento (Regla 6: Consumidor Final DNI no exigido < 344.488) */}
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[10px] font-bold text-neutral-600 uppercase">
+                            {fiscalInvoiceType === 'A' ? 'CUIT del Cliente *' : (fiscalTaxCondition === 'Consumidor Final' ? 'DNI del Cliente' : 'CUIT / DNI *')}
+                          </label>
+                          {fiscalTaxCondition === 'Consumidor Final' && (
+                            <span className="text-[9px] text-neutral-500">
+                              {isCfDniMandatory ? 'Obligatorio (> $344.488)' : 'Opcional según ARCA'}
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          disabled={isAuthorizingFiscal}
+                          value={fiscalDocNumber}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFiscalDocNumber(val);
+                            if (fiscalTaxCondition === 'Consumidor Final') {
+                              setFiscalDocType(val.trim() ? 'DNI' : 'SIN_IDENTIFICAR');
+                            }
+                          }}
+                          placeholder={
+                            fiscalInvoiceType === 'A'
+                              ? 'CUIT (11 dígitos sin guiones)'
+                              : (fiscalTaxCondition === 'Consumidor Final' ? (isCfDniMandatory ? 'DNI obligatorio' : 'Opcional a pedido del cliente') : 'Número de documento')
+                          }
+                          className="w-full bg-white border border-neutral-200 rounded-xl px-3.5 py-2.5 text-xs font-bold font-mono text-neutral-800 outline-none focus:border-primary"
+                        />
+                        {/* Validación en tiempo real para CUIT */}
+                        {fiscalInvoiceType === 'A' && fiscalDocNumber && (
+                          <div className="mt-1 text-[10px]">
+                            {validateCuit(fiscalDocNumber).valid ? (
+                              <span className="text-emerald-700 font-bold flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[14px]">check_circle</span> CUIT Válido (Módulo 11 oficial)
+                              </span>
+                            ) : (
+                              <span className="text-red-600 font-bold flex items-center gap-1">
+                                <span className="material-symbols-outlined text-[14px]">cancel</span> {validateCuit(fiscalDocNumber).error}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Punto de Venta y Próximo Número (Regla 7, 10, 11) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="bg-[#f9f8f8] rounded-2xl p-4 border border-outline-variant/10 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold text-neutral-500 uppercase block">Punto de Venta</span>
+                        <span className="text-lg font-black text-neutral-800">
+                          {String(fiscalPointOfSale).padStart(4, '0')}
+                        </span>
+                      </div>
+                      <span className="text-[10px] bg-neutral-200 text-neutral-700 font-bold px-2 py-0.5 rounded-md">
+                        Comercio Principal
+                      </span>
+                    </div>
+
+                    <div className="bg-[#f9f8f8] rounded-2xl p-4 border border-outline-variant/10 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold text-neutral-500 uppercase block">Próximo Número Oficial</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {isLoadingNextNumber ? (
+                            <div className="flex items-center gap-1.5 text-xs text-neutral-500">
+                              <div className="w-3.5 h-3.5 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                              <span>Consultando a ARCA...</span>
+                            </div>
+                          ) : fiscalNextNumber !== null ? (
+                            <span className="text-lg font-black font-mono text-neutral-900">
+                              {String(fiscalNextNumber).padStart(8, '0')}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-red-600 font-bold">Sin respuesta ARCA</span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md border border-emerald-200">
+                        Consultado a ARCA
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 4. Lista de Productos Resuelta (Regla 7) */}
+                  <div className="border border-outline-variant/10 rounded-2xl overflow-hidden">
+                    <div className="bg-neutral-100 px-4 py-2.5 text-[10px] font-black uppercase text-[#8c8282] grid grid-cols-12 gap-2">
+                      <span className="col-span-6">Producto</span>
+                      <span className="col-span-2 text-center">Cant.</span>
+                      <span className="col-span-2 text-right">Unitario</span>
+                      <span className="col-span-2 text-right">Subtotal</span>
+                    </div>
+                    <div className="divide-y divide-neutral-100 max-h-44 overflow-y-auto">
+                      {fiscalItems.map((item, idx) => {
+                        const hasBarcode = !!(item.codigoMtx || item.barcode || item.gtin || item.ean || '').trim();
+                        return (
+                          <div key={idx} className="px-4 py-2.5 grid grid-cols-12 gap-2 items-center text-xs">
+                            <div className="col-span-6">
+                              <p className="font-bold text-neutral-800 truncate">{item.description}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                {hasBarcode ? (
+                                  <span className="text-[9px] font-mono bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
+                                    MTX: {item.codigoMtx || item.barcode}
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-bold bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.2 rounded">
+                                    Sin código fiscal MTX
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <span className="col-span-2 text-center font-bold text-neutral-700">
+                              {item.quantity} {item.unit || 'un.'}
+                            </span>
+                            <span className="col-span-2 text-right font-medium text-neutral-600">
+                              ${formatCurrency(item.price, true, true)}
+                            </span>
+                            <span className="col-span-2 text-right font-bold text-neutral-900">
+                              ${formatCurrency(item.total, true, true)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 5. Totales Fiscales (Regla 7) */}
+                  <div className="bg-neutral-50 rounded-2xl p-5 border border-outline-variant/10 space-y-2">
+                    <div className="flex justify-between text-xs text-neutral-600">
+                      <span>Subtotal Neto Gravado</span>
+                      <span className="font-bold text-neutral-800">${formatCurrency(fiscalCalculations.subtotalNet, true, true)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-neutral-600">
+                      <span>IVA Discriminado (21%)</span>
+                      <span className="font-bold text-neutral-800">${formatCurrency(fiscalCalculations.taxes, true, true)}</span>
+                    </div>
+                    <div className="flex justify-between text-base font-black pt-2 border-t border-neutral-200">
+                      <span className="text-neutral-900">TOTAL FACTURA {fiscalInvoiceType}</span>
+                      <span className="text-[#b71c1c] text-lg">${formatCurrency(fiscalCalculations.total, true, true)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer pre-autorización */}
+                <div className="p-6 border-t border-outline-variant/10 bg-surface-container-lowest flex gap-3 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isAuthorizingFiscal}
+                    onClick={() => setShowPosFiscalModal(false)}
+                    className="flex-1 py-3.5 font-bold text-neutral-600 hover:bg-black/5 rounded-2xl text-xs transition-colors cursor-pointer"
+                  >
+                    Volver a Caja
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      isAuthorizingFiscal ||
+                      isLoadingNextNumber ||
+                      fiscalNextNumber === null ||
+                      !fiscalCustomerName.trim() ||
+                      (fiscalInvoiceType === 'A' && !validateCuit(fiscalDocNumber).valid) ||
+                      (fiscalTaxCondition === 'Consumidor Final' && isCfDniMandatory && (!fiscalDocNumber || fiscalDocNumber === '0')) ||
+                      fiscalItems.length === 0 ||
+                      fiscalItems.some(i => !(i.barcode || i.codigoMtx || '').trim())
+                    }
+                    onClick={handleAuthorizeFiscal}
+                    className="flex-[2] bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3.5 rounded-2xl shadow-lg shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isAuthorizingFiscal ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                        <span>{fiscalAuthStep || 'Conectando con ARCA...'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-symbols-outlined text-[18px]">verified</span>
+                        <span>Confirmar y Solicitar CAE a ARCA</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL WHATSAPP FACTURA FISCAL (Regla 5) ─────────────────── */}
+      {showWhatsAppFiscalModal && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden p-8 animate-in zoom-in-95 text-left relative">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-[#e6fcf0] text-[#20ba56] rounded-2xl flex items-center justify-center">
+                <span className="material-symbols-outlined text-[26px]">chat</span>
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-neutral-900">Enviar Factura por WhatsApp</h3>
+                <p className="text-xs text-neutral-500 font-medium">Factura {showWhatsAppFiscalModal.invoice.type} #{showWhatsAppFiscalModal.invoice.folio || showWhatsAppFiscalModal.invoice.invoiceNumber}</p>
+              </div>
+            </div>
+
+            {whatsappFiscalError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl font-medium">
+                {whatsappFiscalError}
+              </div>
+            )}
+
+            {whatsappFiscalSuccess && (
+              <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 text-xs rounded-xl font-bold flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">check</span> Mensaje generado correctamente
+              </div>
+            )}
+
+            {/* Aviso de entorno seguro / No localhost (Regla 5) */}
+            {(window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')) && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-blue-800 text-[11px] rounded-xl flex items-start gap-2">
+                <span className="material-symbols-outlined text-blue-600 text-[18px] shrink-0">info</span>
+                <span>
+                  <b>Entrega Segura de PDF:</b> En entorno local se utilizará la URL pública configurada para que el cliente pueda abrir el PDF desde su teléfono.
+                </span>
+              </div>
+            )}
+
+            <form onSubmit={handleSendWhatsAppFiscal} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-neutral-700 uppercase mb-1.5 block">
+                  Número de Celular del Cliente
+                </label>
+                <div className="relative">
+                  <input
+                    ref={whatsappFiscalPhoneInputRef}
+                    type="tel"
+                    required
+                    disabled={isSendingWhatsAppFiscal || whatsappFiscalSuccess}
+                    value={whatsappFiscalPhone}
+                    onChange={e => setWhatsappFiscalPhone(e.target.value)}
+                    placeholder="Ej: 3794123456"
+                    className="w-full bg-[#f9f8f8] border border-neutral-200 rounded-2xl py-3.5 px-4 text-sm font-bold text-neutral-800 outline-none focus:border-[#20ba56]"
+                  />
+                  <span className="absolute right-3 top-3.5 text-[10px] text-neutral-400 font-mono">AR (+54 9)</span>
+                </div>
+              </div>
+
+              {/* Vista Previa del Mensaje Fiscal */}
+              <div className="bg-[#f5f3f3] rounded-2xl p-4 text-[11px] text-neutral-700 space-y-1 font-mono">
+                <p className="font-bold text-neutral-900">Vista previa del mensaje:</p>
+                <p className="text-[#20ba56] font-bold">SUPERMERCADO LA MARTINA - Factura Electrónica 📄</p>
+                <p>Estimado/a {showWhatsAppFiscalModal.invoice.clientName || 'Cliente'}:</p>
+                <p>Comprobante: Factura {showWhatsAppFiscalModal.invoice.type} #{showWhatsAppFiscalModal.invoice.folio}</p>
+                <p>CAE: {showWhatsAppFiscalModal.invoice.cae}</p>
+                <p>Total: ${formatCurrency(showWhatsAppFiscalModal.invoice.total, true, true)}</p>
+                <p className="text-blue-600 font-bold truncate">Descarga PDF: /api/arca/invoices/{showWhatsAppFiscalModal.invoice.id}/pdf</p>
+              </div>
+
+              <div className="pt-3 flex gap-3">
+                <button
+                  type="button"
+                  disabled={isSendingWhatsAppFiscal || whatsappFiscalSuccess}
+                  onClick={() => setShowWhatsAppFiscalModal(null)}
+                  className="flex-1 py-3.5 font-bold text-neutral-600 hover:bg-black/5 rounded-2xl text-xs transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingWhatsAppFiscal || whatsappFiscalSuccess || !whatsappFiscalPhone.trim()}
+                  className="flex-[2] bg-[#20ba56] hover:bg-[#1caa4e] text-white font-black py-3.5 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 text-xs cursor-pointer disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-[18px]">send</span>
+                  Enviar Factura
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL ZOOM QR FISCAL ──────────────────────────────────── */}
+      {enlargedQrUrl && (
+        <div
+          className="fixed inset-0 bg-black/85 z-[700] flex items-center justify-center p-6 backdrop-blur-md animate-in fade-in cursor-pointer"
+          onClick={() => setEnlargedQrUrl(null)}
+        >
+          <div
+            className="bg-white p-8 rounded-[2.5rem] shadow-2xl flex flex-col items-center max-w-sm w-full text-center cursor-default"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mb-3">
+              <span className="material-symbols-outlined text-[24px]">qr_code_scanner</span>
+            </div>
+            <h4 className="font-black text-base text-neutral-900 mb-1">Código QR Fiscal Oficial ARCA</h4>
+            <p className="text-xs text-neutral-500 mb-6 leading-relaxed">
+              Acercá la cámara del celular para escanear y validar el CAE directamente en el portal oficial de ARCA.
+            </p>
+            <div className="p-4 bg-white border-2 border-neutral-200 rounded-3xl shadow-inner mb-6">
+              <img src={enlargedQrUrl} alt="QR Fiscal Oficial Ampliado" className="w-64 h-64 object-contain" />
+            </div>
+            <button
+              onClick={() => setEnlargedQrUrl(null)}
+              className="w-full py-3.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-bold rounded-2xl transition-colors text-xs cursor-pointer"
+            >
+              Cerrar Vista de QR
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Barcode Scanner Modal */}
+      {showBarcodeScanner && (
+        <BarcodeScannerModal
+          open={showBarcodeScanner}
+          onClose={() => setShowBarcodeScanner(false)}
+          onDetected={(code) => {
+            setSearchCode(code);
+            handleAddItem(code);
+          }}
+        />
       )}
     </div>
   );

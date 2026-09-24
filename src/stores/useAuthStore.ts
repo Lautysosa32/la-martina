@@ -27,6 +27,7 @@ export interface Order {
   delivery_reference?: string | null;
   delivery_notes?: string | null;
   delivery_method?: 'retiro' | 'envio';
+  checkoutToken?: string;
 }
 
 export interface GuestProfile {
@@ -107,7 +108,7 @@ const loadCachedEmployeeProfile = (): Employee | null => {
   try {
     const saved = localStorage.getItem('la-martina-employee-profile');
     if (saved) return JSON.parse(saved);
-  } catch (_) {}
+  } catch (err) { console.warn('Storage Error:', err); }
   return null;
 };
 
@@ -115,7 +116,7 @@ const loadCachedPermissions = (): PermissionKey[] => {
   try {
     const saved = localStorage.getItem('la-martina-permissions');
     if (saved) return JSON.parse(saved);
-  } catch (_) {}
+  } catch (err) { console.warn('Storage Error:', err); }
   return [];
 };
 
@@ -123,7 +124,7 @@ const loadCachedCustomerProfile = (): CustomerProfile | null => {
   try {
     const saved = localStorage.getItem('la-martina-customer-profile');
     if (saved) return JSON.parse(saved);
-  } catch (_) {}
+  } catch (err) { console.warn('Storage Error:', err); }
   return null;
 };
 
@@ -182,7 +183,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
           if (cust) {
             customerProfile = cust;
-            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
           } else {
             customerProfile = loadCachedCustomerProfile();
           }
@@ -196,7 +197,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             try {
               localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
               localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
-            } catch (_) {}
+            } catch (err) { console.warn('Storage Error:', err); }
             customerProfile = null;
           } else {
             const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
@@ -204,7 +205,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               customerProfile = cust;
               employeeProfile = null;
               permissions = [];
-              try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+              try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
             } else {
               const cachedEmp = loadCachedEmployeeProfile();
               if (cachedEmp && cachedEmp.user_id === session.user.id) {
@@ -253,7 +254,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
           if (cust) {
             customerProfile = cust;
-            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
           } else {
             customerProfile = loadCachedCustomerProfile();
           }
@@ -269,14 +270,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               try {
                 localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
                 localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
-              } catch (_) {}
+              } catch (err) { console.warn('Storage Error:', err); }
             } else {
               const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
               if (cust) {
                 customerProfile = cust;
                 employeeProfile = null;
                 permissions = [];
-                try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (_) {}
+                try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
               } else {
                 const cached = loadCachedEmployeeProfile();
                 if (cached && cached.user_id === session.user.id) {
@@ -329,7 +330,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         try {
           localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
           localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
-        } catch (_) {}
+        } catch (err) { console.warn('Storage Error:', err); }
       }
       set({ employeeProfile, permissions, loading: false });
     }
@@ -342,7 +343,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       localStorage.removeItem('la-martina-employee-profile');
       localStorage.removeItem('la-martina-permissions');
-    } catch (_) {}
+    } catch (err) { console.warn('Storage Error:', err); }
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error("❌ Error al cerrar sesión:", error.message);
@@ -470,14 +471,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       try {
         localStorage.removeItem('la-martina-employee-profile');
         localStorage.removeItem('la-martina-permissions');
-      } catch (_) {}
+      } catch (err) { console.warn('Storage Error:', err); }
 
       let profileData = await customersService.getProfileByUserId(data.user.id, phone);
 
       if (profileData) {
         try {
           localStorage.setItem('la-martina-customer-profile', JSON.stringify(profileData));
-        } catch (_) {}
+        } catch (err) { console.warn('Storage Error:', err); }
       }
 
       console.log("✅ Login exitoso. Perfil encontrado:", profileData);
@@ -502,7 +503,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       localStorage.removeItem('la-martina-customer-profile');
       localStorage.removeItem('la-martina-user');
-    } catch (_) {}
+    } catch (err) { console.warn('Storage Error:', err); }
     set({ loading: true });
     await supabase.auth.signOut();
     set({ 

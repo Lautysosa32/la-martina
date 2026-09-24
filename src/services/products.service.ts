@@ -1,6 +1,7 @@
 import api from '../lib/axios';
 import { Product, CreateProductInput, UpdateProductInput, SupabaseProduct } from '../types/product.types';
 import { catalogCache, TTL } from './catalogCache';
+import { ProductWeeklySalesStat } from '../utils/replenishment';
 
 // Columnas estrictas para vistas de catálogo y listas (Ahorro crítico de Egress)
 export const PRODUCT_CATALOG_SELECT = 'id,name,brand,category_id,subcategory_id,price,original_price,barcode,image,format,is_new,discount,badge,stock,sale_type,is_paused';
@@ -8,8 +9,8 @@ export const PRODUCT_CATALOG_SELECT = 'id,name,brand,category_id,subcategory_id,
 // Columnas mínimas para autocompletado y búsqueda rápida en navbar
 export const PRODUCT_AUTOCOMPLETE_SELECT = 'id,name,brand,price,image,category_id';
 
-// Columnas para panel de bajo stock en administración
-export const PRODUCT_LOW_STOCK_SELECT = 'id,name,brand,category_id,subcategory_id,price,stock,min_stock,image,badge,updated_at,is_paused';
+export { PRODUCT_LOW_STOCK_SELECT, buildLowStockPaginatedUrl } from '../utils/lowStockUrl';
+import { buildLowStockPaginatedUrl } from '../utils/lowStockUrl';
 
 // Convert from frontend camelCase to Supabase snake_case
 const toSupabaseProduct = (input: Partial<CreateProductInput>): Partial<SupabaseProduct> => {
@@ -31,6 +32,7 @@ const toSupabaseProduct = (input: Partial<CreateProductInput>): Partial<Supabase
     ...(input.stock !== undefined && { stock: input.stock }),
     ...(input.saleType !== undefined && { sale_type: input.saleType }),
     ...(input.isPaused !== undefined && { is_paused: input.isPaused }),
+    updated_at: new Date().toISOString()
   };
 };
 
@@ -231,9 +233,9 @@ export const productsService = {
   },
 
   /**
-   * Búsqueda rápida con debounce para el Header navbar (6 items, solo 6 columnas ultra-ligeras)
+   * Búsqueda rápida con debounce para el Header navbar (5 items, solo 6 columnas ultra-ligeras)
    */
-  async searchProductsQuick(query: string, limit: number = 6): Promise<Product[]> {
+  async searchProductsQuick(query: string, limit: number = 5): Promise<Product[]> {
     const clean = query.trim();
     if (clean.length < 2) return [];
 
@@ -400,8 +402,7 @@ export const productsService = {
    * Obtiene productos con bajo stock paginados para el panel de administración
    */
   async getLowStockProductsPaginated(params: { page: number; limit: number }): Promise<{ data: Product[]; total: number; outOfStockTotal: number; lowStockTotal: number }> {
-    const offset = (params.page - 1) * params.limit;
-    const url = `/products?select=${PRODUCT_LOW_STOCK_SELECT}&stock=lte.15&is_paused=eq.false&order=stock.asc,updated_at.desc&limit=${params.limit}&offset=${offset}`;
+    const url = buildLowStockPaginatedUrl(params);
 
     const [response, outOfStockRes, lowStockRes] = await Promise.all([
       api.get<any[]>(url, { headers: { 'Prefer': 'count=exact' } }),
@@ -456,6 +457,65 @@ export const productsService = {
     }
 
     return all;
+  },
+
+  /**
+   * Obtiene estadísticas semanales de ventas para reposición de inventario
+   */
+  /**
+   * Obtiene estadísticas semanales de ventas mediante la función RPC optimizada (retorna JSONB).
+   */
+  async getReplenishmentStats(hWeeks: number = 16): Promise<ProductWeeklySalesStat[]> {
+    try {
+      const cacheKey = `replenishment_stats_${hWeeks}`;
+      const cached = catalogCache.get<ProductWeeklySalesStat[]>(cacheKey);
+      if (cached && Array.isArray(cached) && cached.length > 0) return cached;
+      
+      const response = await api.post<ProductWeeklySalesStat[]>('/rpc/get_product_weekly_sales_stats', { h_weeks: hWeeks });
+      const stats = Array.isArray(response.data) ? response.data : [];
+      
+      if (stats.length > 0) {
+        catalogCache.set(cacheKey, stats, 24 * 60 * 60 * 1000);
+      }
+      return stats;
+    } catch (err) {
+      console.error('Error fetching replenishment stats:', err);
+      // Propagate to trigger the store's fallback
+      throw err;
+    }
+  },
+
+  /**
+   * Obtiene el stock actual de todos los productos (liviano)
+   */
+  async getLiveStock(): Promise<{ id: string; stock: number }[]> {
+    const PAGE_SIZE = 1000;
+    let allStock: { id: string; stock: number }[] = [];
+    let offset = 0;
+    let keepFetching = true;
+    let iterations = 0;
+
+    while (keepFetching) {
+      iterations++;
+      if (iterations > 1000) {
+        throw new Error('Live stock pagination exceeded maximum limit of 1000 iterations');
+      }
+
+      const response = await api.get<any[]>(`/products?select=id,stock&is_paused=eq.false&limit=${PAGE_SIZE}&offset=${offset}`);
+      if (response.data && response.data.length > 0) {
+        const batch = response.data.map(p => ({ id: p.id, stock: p.stock ?? 0 }));
+        allStock = [...allStock, ...batch];
+        if (batch.length < PAGE_SIZE) {
+          keepFetching = false;
+        } else {
+          offset += PAGE_SIZE;
+        }
+      } else {
+        keepFetching = false;
+      }
+    }
+    
+    return allStock;
   },
 
   /**

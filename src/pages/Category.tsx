@@ -267,37 +267,6 @@ export const Category: React.FC = () => {
           </span>
         </div>
 
-        {/* Barra horizontal de subcategorías con scroll rápido */}
-        {currentCategorySubcategories.length > 0 && (
-          <div className="flex items-center gap-2 overflow-x-auto pt-4 pb-1 no-scrollbar">
-            <Link
-              to={`/category/${id}`}
-              className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
-                !subId
-                  ? 'bg-primary text-white shadow-xs'
-                  : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/20'
-              }`}
-            >
-              <span>Todas</span>
-            </Link>
-            {currentCategorySubcategories.map(sub => {
-              const isSelected = subId === sub.id || subId === sub.id.replace(`${id}-`, '');
-              return (
-                <Link
-                  key={sub.id}
-                  to={`/category/${id}/${sub.id}`}
-                  className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
-                    isSelected
-                      ? 'bg-primary text-white shadow-xs'
-                      : 'bg-white text-on-surface hover:bg-surface-container-high border border-outline-variant/20'
-                  }`}
-                >
-                  <span>{sub.title}</span>
-                </Link>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       {/* Main Layout: Sidebar (Desktop) + Products Area */}
@@ -613,13 +582,13 @@ export const Category: React.FC = () => {
 
       {/* Mobile Filters Drawer */}
       {isFilterOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end lg:hidden">
+        <div className="fixed inset-0 z-50 flex justify-start lg:hidden">
           <div
             className="fixed inset-0 bg-black/50 backdrop-blur-xs animate-in fade-in duration-300"
             onClick={() => setIsFilterOpen(false)}
           />
 
-          <div className="relative w-full max-w-xs bg-white h-full shadow-2xl p-6 flex flex-col justify-between overflow-y-auto z-10 animate-in slide-in-from-right duration-300">
+          <div className="relative w-full max-w-xs bg-white h-full shadow-2xl p-6 flex flex-col justify-between overflow-y-auto z-10 animate-in slide-in-from-left duration-300">
             <div>
               <div className="flex items-center justify-between border-b border-outline-variant/15 pb-4 mb-6">
                 <h3 className="font-bold text-lg text-on-surface flex items-center gap-2">

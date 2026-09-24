@@ -35,6 +35,7 @@ import { Settings } from './pages/Admin/Settings';
 import { WhatsAppMessages } from './pages/Admin/WhatsAppMessages';
 import { Expenses } from './pages/Admin/Expenses';
 import { AdminLogin } from './pages/AdminLogin';
+import { PublicInvoice } from './pages/PublicInvoice';
 
 function ScrollToTop() {
   const { pathname, search } = useLocation();
@@ -71,6 +72,11 @@ export default function App() {
         <Route path="/calculadora-compras" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><ShoppingCalculator /></main><Footer /></>} />
         <Route path="/terms" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><TermsAndConditions /></main><Footer /></>} />
         <Route path="/privacy" element={<><Header /><main className="flex-grow pt-[64px] lg:pt-[130px]"><PrivacyPolicy /></main><Footer /></>} />
+
+        {/* Rutas Públicas de Comprobantes Fiscales ARCA */}
+        <Route path="/factura/:id" element={<PublicInvoice />} />
+        <Route path="/comprobante/:id" element={<PublicInvoice />} />
+        <Route path="/api/arca/invoices/:id/pdf" element={<PublicInvoice />} />
 
         {/* Rutas Administrativas */}
         <Route path="/admin/login" element={<AdminLogin />} />

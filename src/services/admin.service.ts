@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import api from '../lib/axios';
 import { catalogCache, TTL } from './catalogCache';
+import { settingsRepository } from '../offline/repositories/settingsRepository';
 import { 
   AdminOrder, CashMovement, CashClose, Offer, 
   CustomerProfile, TicketConfig, CurrentAccountConfig, 
@@ -14,8 +15,7 @@ const BRANCH_ID = 'main';
 export const fetchOrders = async (): Promise<AdminOrder[]> => {
   const { data, error } = await supabase.from('orders').select('*, order_items(*)').eq('branch_id', BRANCH_ID).order('created_at', { ascending: false });
   if (error) { 
-    console.error('Error fetching orders:', error); 
-    alert(`Error AL CARGAR órdenes: ${error.message}`);
+    console.error('Error fetching orders from Supabase:', error); 
     return []; 
   }
   
@@ -173,38 +173,32 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
   if (order.delivery_notes !== undefined) dbOrder.delivery_notes = order.delivery_notes;
   if (order.delivery_method !== undefined) dbOrder.delivery_method = order.delivery_method;
 
-  const { error } = await supabase.from('orders').insert(dbOrder);
-  if (error) {
-    console.warn('Inserción con columnas extendidas de delivery falló, reintentando con columnas estándar:', error.message);
+  let orderError = null;
+  if (order.checkoutToken) {
+    // Si hay token, usar RPC (invitado seguro)
+    const { error } = await supabase.rpc('create_guest_order', {
+      p_order: dbOrder,
+      p_token: order.checkoutToken
+    });
+    orderError = error;
+  } else {
+    // Si no hay token, intentar inserción normal (funcionará solo para empleados por RLS)
+    const { error } = await supabase.from('orders').insert(dbOrder);
     
-    // Inserción segura garantizada con columnas estándar de Supabase
-    const standardDbOrder: any = {
-      id: order.id,
-      branch_id: BRANCH_ID,
-      date: order.date,
-      timestamp: order.timestamp || Date.now(),
-      customer: order.customer,
-      phone: order.phone,
-      address: fullAddress,
-      delivery_time: order.deliveryTime,
-      method: order.method,
-      payment_method: order.paymentMethod,
-      payment_status: order.paymentStatus || 'Pendiente',
-      status: sanitizedStatus,
-      total: order.total,
-      paid_amount: order.paidAmount ?? (order.paymentStatus === 'Pagado' ? order.total : 0),
-      discount: order.discount,
-      discount_label: order.discountLabel,
-      source: order.source || 'web'
-    };
-    if (order.dni) standardDbOrder.dni = order.dni;
-
-    const { error: retryError } = await supabase.from('orders').insert(standardDbOrder);
-    if (retryError) {
-      console.error('Error insertando orden estándar:', retryError);
-      alert(`Error guardando orden: ${retryError.message}`);
-      return;
+    if (error) {
+      console.warn('Inserción con columnas extendidas de delivery falló, reintentando con estándar:', error.message);
+      
+      const standardDbOrder: any = { ...dbOrder };
+      const { error: retryError } = await supabase.from('orders').insert(standardDbOrder);
+      if (retryError) {
+        orderError = retryError;
+      }
     }
+  }
+
+  if (orderError) {
+    console.error('Error insertando orden:', orderError);
+    throw new Error(`Error guardando orden: ${orderError.message}`);
   }
 
   if (order.items && order.items.length > 0) {
@@ -230,7 +224,7 @@ export const insertOrder = async (order: AdminOrder): Promise<void> => {
           console.error('Error inserting fallback order items:', retryErr);
         }
       } else {
-        alert(`Error guardando ítems: ${itemsError.message}`);
+        console.error('Error guardando ítems de la orden:', itemsError);
       }
     }
   }
@@ -344,7 +338,7 @@ export const insertCashMovement = async (mov: CashMovement): Promise<void> => {
   const { error } = await supabase.from('cash_movements').insert(dbMov);
   if (error) {
     console.error('Error inserting cash movement:', error);
-    alert(`Error guardando movimiento de caja: ${error.message}`);
+    throw new Error('Error al registrar movimiento de caja en base de datos.');
   }
 };
 
@@ -404,7 +398,7 @@ export const insertCashClose = async (close: CashClose): Promise<void> => {
   const { error } = await supabase.from('cash_closes').insert(dbClose);
   if (error) {
     console.error('Error inserting cash close:', error);
-    alert(`Error guardando cierre de caja: ${error.message}. Por favor contactá a soporte o revisá la base de datos.`);
+    throw new Error('Error guardando cierre de caja en base de datos. Por favor contactá a soporte o revisá la base de datos.');
   }
 };
 
@@ -416,14 +410,14 @@ const getCachedOffers = async (): Promise<Offer[]> => {
   try {
     const local = localStorage.getItem('la_martina_offers');
     if (local) return JSON.parse(local);
-  } catch (_) {}
+  } catch (err) { console.error('JSON/Storage Error:', err); }
   return [];
 };
 
 const saveOffersToSettings = async (offersList: Offer[]): Promise<void> => {
   try {
     localStorage.setItem('la_martina_offers', JSON.stringify(offersList));
-  } catch (_) {}
+  } catch (err) { console.error('JSON/Storage Error:', err); }
   await saveSetting('admin_offers', offersList);
 };
 
@@ -434,7 +428,7 @@ export const fetchOffers = async (): Promise<Offer[]> => {
       const mapped = data.map((dbOffer: any) => {
         let metadata: any = {};
         if (dbOffer.description && typeof dbOffer.description === 'string' && dbOffer.description.trim().startsWith('{')) {
-          try { metadata = JSON.parse(dbOffer.description); } catch (_) {}
+          try { metadata = JSON.parse(dbOffer.description); } catch (err) { console.error('JSON/Storage Error:', err); }
         }
         const targetIds = metadata.targetIds || (dbOffer.target_id && dbOffer.target_id.includes(',') ? dbOffer.target_id.split(',').map((s: string) => s.trim()) : (dbOffer.target_id ? [dbOffer.target_id] : []));
         return {
@@ -553,7 +547,7 @@ export const updateOfferInDb = async (id: string, updates: Partial<Offer>): Prom
     }
 
     await supabase.from('offers').update(payload).eq('id', id).eq('branch_id', BRANCH_ID);
-  } catch (_) {}
+  } catch (err) { console.error('JSON/Storage Error:', err); }
 };
 
 export const deleteOfferInDb = async (id: string): Promise<void> => {
@@ -565,7 +559,7 @@ export const deleteOfferInDb = async (id: string): Promise<void> => {
   // 2. Intentar eliminación SQL
   try {
     await supabase.from('offers').delete().eq('id', id).eq('branch_id', BRANCH_ID);
-  } catch (_) {}
+  } catch (err) { console.error('JSON/Storage Error:', err); }
 };
 
 // ─── CUSTOMER PROFILES ──────────────────────────────────────────────────
@@ -575,41 +569,194 @@ export const fetchCustomerProfiles = async (): Promise<Record<string, CustomerPr
   
   const profiles: Record<string, CustomerProfile> = {};
   data?.forEach((prof: any) => {
-    profiles[prof.phone] = prof as CustomerProfile; // Primary tracking by phone
+    const isFiscal = Boolean(
+      (prof.cuit && String(prof.cuit).trim().length > 0) ||
+      (prof.business_name && String(prof.business_name).trim().length > 0) ||
+      (prof.tax_condition && prof.tax_condition !== 'Consumidor Final')
+    );
+
+    const rawFirst = (prof.nombre || prof.name || '').trim();
+    const rawLast = (prof.apellido || prof.last_name || '').trim();
+    let cleanFullName = rawFirst;
+    if (rawLast && rawFirst) {
+      if (!rawFirst.toLowerCase().includes(rawLast.toLowerCase())) {
+        cleanFullName = `${rawFirst} ${rawLast}`;
+      }
+    } else if (!cleanFullName) {
+      cleanFullName = rawLast;
+    }
+
+    profiles[prof.phone] = {
+      ...prof,
+      name: cleanFullName,
+      nombre: cleanFullName,
+      address: prof.address || prof.direccion || prof.fiscal_address || '',
+      direccion: prof.direccion || prof.address || prof.fiscal_address || '',
+      last_name: (rawLast && !cleanFullName.toLowerCase().includes(rawLast.toLowerCase())) ? rawLast : '',
+      apellido: (rawLast && !cleanFullName.toLowerCase().includes(rawLast.toLowerCase())) ? rawLast : '',
+      businessName: prof.business_name || '',
+      business_name: prof.business_name || '',
+      fiscalAddress: prof.fiscal_address || prof.address || prof.direccion || '',
+      fiscal_address: prof.fiscal_address || prof.address || prof.direccion || '',
+      taxCondition: prof.tax_condition || 'Consumidor Final',
+      tax_condition: prof.tax_condition || 'Consumidor Final',
+      documentType: prof.document_type || (prof.cuit ? 'CUIT' : 'DNI'),
+      document_type: prof.document_type || (prof.cuit ? 'CUIT' : 'DNI'),
+      cuit: prof.cuit || '',
+      dni: prof.dni || '',
+      birthday: prof.birthday || '',
+      email: prof.email || '',
+      isFiscal,
+      is_fiscal: isFiscal,
+    } as CustomerProfile;
   });
   return profiles;
 };
 
-export const upsertCustomerProfile = async (profile: CustomerProfile): Promise<void> => {
-  const dbProfile = { ...profile, branch_id: BRANCH_ID, dni: profile.dni || profile.phone }; // Ensure DNI is present
-  const { error } = await supabase.from('customer_profiles').upsert(
-    dbProfile,
-    { onConflict: 'phone, branch_id' }
-  );
-  if (error) console.error('Error upserting customer profile:', error);
+export const sanitizeCustomerProfileForDb = (profile: any) => {
+  const cleanDni = (profile.dni && profile.dni !== profile.phone) ? profile.dni : (profile.cuit || null);
+  const nameVal = (profile.name || profile.nombre || '').trim();
+  const rawLast = (profile.last_name || profile.apellido || '').trim();
+  const lastNameToSave = (rawLast && !nameVal.toLowerCase().includes(rawLast.toLowerCase())) ? rawLast : null;
+
+  const businessVal = profile.business_name || profile.businessName || '';
+  const fiscalAddrVal = profile.fiscal_address || profile.fiscalAddress || profile.direccion || profile.address || '';
+  const taxCondVal = profile.tax_condition || profile.taxCondition || 'Consumidor Final';
+  const docTypeVal = profile.document_type || profile.documentType || (profile.cuit ? 'CUIT' : 'DNI');
+
+  const payload: Record<string, any> = {
+    branch_id: BRANCH_ID,
+    phone: profile.phone,
+    dni: cleanDni ? String(cleanDni).trim() : null,
+    name: nameVal,
+    nombre: nameVal,
+    last_name: lastNameToSave,
+    apellido: lastNameToSave,
+    email: profile.email ? String(profile.email).trim() : null,
+    address: profile.address || profile.direccion || fiscalAddrVal || null,
+    direccion: profile.direccion || profile.address || fiscalAddrVal || null,
+    birthday: profile.birthday ? String(profile.birthday).trim() : null,
+    cuit: profile.cuit ? String(profile.cuit).trim() : null,
+    business_name: businessVal ? String(businessVal).trim() : null,
+    fiscal_address: fiscalAddrVal ? String(fiscalAddrVal).trim() : null,
+    tax_condition: taxCondVal,
+    document_type: docTypeVal,
+    hasCurrentAccount: Boolean(profile.hasCurrentAccount),
+    creditLimit: profile.creditLimit !== undefined && profile.creditLimit !== null ? Number(profile.creditLimit) : 50000,
+    isManual: profile.isManual !== undefined ? Boolean(profile.isManual) : true,
+    useCustomAccountLimits: Boolean(profile.useCustomAccountLimits),
+    customDebtLimit: profile.customDebtLimit !== undefined && profile.customDebtLimit !== null ? Number(profile.customDebtLimit) : null,
+    customDebtDays: profile.customDebtDays !== undefined && profile.customDebtDays !== null ? Number(profile.customDebtDays) : null,
+    accountLimitNotes: profile.accountLimitNotes || null,
+    updated_at: new Date().toISOString()
+  };
+
+  if (profile.id) payload.id = profile.id;
+  if (profile.user_id) payload.user_id = profile.user_id;
+
+  return payload;
+};
+
+const normalizePhone = (p: string): string => {
+  let cleaned = (p || '').replace(/\D/g, '');
+  if (cleaned.startsWith('54')) cleaned = cleaned.substring(2);
+  return '+54' + cleaned;
+};
+
+export const upsertCustomerProfile = async (profile: CustomerProfile, oldPhone?: string): Promise<{ success: boolean; error?: any }> => {
+  try {
+    const payload = sanitizeCustomerProfileForDb(profile);
+    const newPhone = normalizePhone(profile.phone);
+    const prevPhone = oldPhone ? normalizePhone(oldPhone) : newPhone;
+    payload.phone = newPhone;
+
+    // Build unique list of phones to try matching (avoids .or() which breaks URL encoding of '+')
+    const phonesToTry = Array.from(
+      new Set([prevPhone, newPhone, profile.phone, oldPhone].filter(Boolean) as string[])
+    );
+
+    // 1. Try direct UPDATE with .eq() per phone variant (reliable URL-encoding of '+')
+    for (const ph of phonesToTry) {
+      const { data: updatedData, error: updateError } = await supabase
+        .from('customer_profiles')
+        .update(payload)
+        .eq('phone', ph)
+        .eq('branch_id', BRANCH_ID)
+        .select('phone');
+
+      if (updateError) {
+        console.warn(`upsertCustomerProfile: update error for phone ${ph}:`, updateError);
+        continue;
+      }
+      if (updatedData && updatedData.length > 0) {
+        return { success: true };
+      }
+    }
+
+    // 2. Fallback to upsert if profile did not exist previously
+    const { error: upsertError } = await supabase.from('customer_profiles').upsert(
+      payload,
+      { onConflict: 'phone, branch_id' }
+    );
+    if (upsertError) {
+      console.error('Error upserting customer profile in DB:', upsertError);
+      return { success: false, error: upsertError };
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('Exception in upsertCustomerProfile:', err);
+    return { success: false, error: err };
+  }
 };
 
 // ─── SETTINGS (Key-Value Store) ─────────────────────────────────────────
 export const fetchSetting = async <T>(key: string, defaultValue: T): Promise<T> => {
-  const { data, error } = await supabase
-    .from('settings')
-    .select('value')
-    .eq('key', key)
-    .eq('branch_id', BRANCH_ID)
-    .maybeSingle();
-    
-  if (error && error.code !== 'PGRST116') {
-    console.error(`Error fetching setting ${key}:`, error);
+  try {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', key)
+      .eq('branch_id', BRANCH_ID)
+      .maybeSingle();
+      
+    if (!error && data?.value !== undefined && data.value !== null) {
+      settingsRepository.setSetting(key, data.value).catch(() => {});
+      return data.value as T;
+    }
+
+    if (error && error.code !== 'PGRST116') {
+      console.error(`Error fetching setting ${key}:`, error);
+    }
+  } catch (err) {
+    console.error(`Exception fetching setting ${key}:`, err);
   }
-  return data?.value ? (data.value as T) : defaultValue;
+
+  // Fallback to offline local repository
+  try {
+    const cached = await settingsRepository.getSetting<T>(key, defaultValue);
+    return cached;
+  } catch {
+    return defaultValue;
+  }
 };
 
 export const saveSetting = async <T>(key: string, value: T): Promise<void> => {
+  // 1. Guardar de inmediato en almacenamiento local / caché
+  try {
+    await settingsRepository.setSetting(key, value);
+  } catch (err) {
+    console.warn(`Error guardando ${key} en caché local:`, err);
+  }
+
+  // 2. Persistir en la base de datos Supabase
   const { error } = await supabase.from('settings').upsert(
     { key, branch_id: BRANCH_ID, value },
     { onConflict: 'key, branch_id' }
   );
-  if (error) console.error(`Error saving setting ${key}:`, error);
+  if (error) {
+    console.error(`Error saving setting ${key} to Supabase:`, error);
+    throw error;
+  }
 };
 
 // ─── CATEGORIES ─────────────────────────────────────────────────────────

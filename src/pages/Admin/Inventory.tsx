@@ -30,7 +30,7 @@ export const Inventory: React.FC = () => {
 
   const {
     inventoryProducts, inventoryTotal, inventoryLoading, fetchInventoryProducts,
-    addProduct, updateProduct, deleteProduct, updateStock, bulkUpdatePrice, bulkTogglePause, bulkAddProducts,
+    addProduct, updateProduct, bulkUpdateProducts, deleteProduct, updateStock, bulkUpdatePrice, bulkTogglePause, bulkAddProducts,
     getProductByBarcode: findProductByBarcode, clearError, error: productsError
   } = useProductStore();
 
@@ -53,6 +53,7 @@ export const Inventory: React.FC = () => {
     isSearching: boolean;
   } | null>(null);
 
+  const [statusFilter, setStatusFilter] = useState<'active' | 'paused' | 'all'>('active');
   const [activeTab, setActiveTab] = useState('all');
   const [activeSubcategoryTab, setActiveSubcategoryTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -319,7 +320,19 @@ export const Inventory: React.FC = () => {
     });
   };
 
-  const sortedProducts = inventoryProducts;
+  const sortedProducts = useMemo(() => {
+    let prods = inventoryProducts;
+    if (statusFilter === 'active') {
+      prods = prods.filter(p => !p.isPaused);
+    } else if (statusFilter === 'paused') {
+      prods = prods.filter(p => Boolean(p.isPaused));
+    }
+    // Por defecto, priorizar productos activos primero
+    return [...prods].sort((a, b) => {
+      if (Boolean(a.isPaused) === Boolean(b.isPaused)) return 0;
+      return a.isPaused ? 1 : -1;
+    });
+  }, [inventoryProducts, statusFilter]);
 
   const allSelected = sortedProducts.length > 0 && sortedProducts.every(p => selectedIds.includes(p.id));
   const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -651,6 +664,11 @@ export const Inventory: React.FC = () => {
     try {
       // 1. Cache de subcategorías existentes y creadas durante esta importación
       const currentSubs = [...adminSubcategories];
+      const subMap = new Map<string, string>();
+      currentSubs.forEach(s => {
+        subMap.set(`${s.categoryId}:::${s.id.toLowerCase()}`, s.id);
+        subMap.set(`${s.categoryId}:::${s.title.toLowerCase()}`, s.id);
+      });
 
       const getCategory = (catName: string) => {
         if (!catName) return adminCategories[0];
@@ -665,12 +683,11 @@ export const Inventory: React.FC = () => {
         if (!subName || !subName.trim()) return null;
         const cleanSub = subName.trim();
         const cleanLower = cleanSub.toLowerCase();
+        const mapKey = `${catId}:::${cleanLower}`;
 
-        // Buscar si ya existe para esta categoría
-        const found = currentSubs.find(s =>
-          s.categoryId === catId && (s.id.toLowerCase() === cleanLower || s.title.toLowerCase() === cleanLower)
-        );
-        if (found) return found.id;
+        if (subMap.has(mapKey)) {
+          return subMap.get(mapKey)!;
+        }
 
         // Crear nueva subcategoría automáticamente en Supabase
         const slug = cleanLower.replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -687,6 +704,8 @@ export const Inventory: React.FC = () => {
         await insertSubcategory(newSub);
         addSubcategory(newSub);
         currentSubs.push(newSub);
+        subMap.set(mapKey, newSubId);
+        subMap.set(`${catId}:::${newSubId.toLowerCase()}`, newSubId);
         return newSubId;
       };
 
@@ -755,17 +774,16 @@ export const Inventory: React.FC = () => {
 
       let processedCount = 0;
 
-      // Aplicar modificaciones a productos existentes en paralelo por lotes
-      const batchSize = 30;
-      for (let i = 0; i < toUpdate.length; i += batchSize) {
-        const batch = toUpdate.slice(i, i + batchSize);
-        await Promise.all(batch.map(item => updateProduct(item.id, item.updates)));
-        processedCount += batch.length;
-        setImportProgress({
-          current: processedCount,
-          total: totalItemsToProcess,
-          percentage: Math.min(100, Math.round((processedCount / (totalItemsToProcess || 1)) * 100))
+      // Aplicar modificaciones a productos existentes de forma masiva y atómica
+      if (toUpdate.length > 0) {
+        await bulkUpdateProducts(toUpdate, (count) => {
+          setImportProgress({
+            current: count,
+            total: totalItemsToProcess,
+            percentage: Math.min(100, Math.round((count / (totalItemsToProcess || 1)) * 100))
+          });
         });
+        processedCount += toUpdate.length;
       }
 
       // Crear nuevos productos
@@ -1031,9 +1049,36 @@ export const Inventory: React.FC = () => {
       {/* Table Card */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-outline-variant/5 overflow-hidden w-full mt-4">
         <div className="p-5 border-b border-outline-variant/10 flex flex-col md:flex-row justify-between gap-4 items-center">
-          <div className="relative flex-1 max-w-sm w-full">
-            <input type="text" placeholder="Buscar por nombre, marca o código de barras..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="bg-surface-container-low border-none rounded-2xl px-5 py-3 pl-11 w-full text-sm outline-none focus:ring-2 ring-primary/10 transition-all" />
-            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto flex-1">
+            <div className="relative flex-1 max-w-sm w-full">
+              <input type="text" placeholder="Buscar por nombre, marca o código de barras..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="bg-surface-container-low border-none rounded-2xl px-5 py-3 pl-11 w-full text-sm outline-none focus:ring-2 ring-primary/10 transition-all" />
+              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+            </div>
+
+            {/* Selector de estado base: Activos por defecto, Desactivados o Todos */}
+            <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-2xl border border-outline-variant/10 text-xs font-bold shrink-0 self-stretch sm:self-auto justify-center">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('active')}
+                className={`px-3 py-2 rounded-xl transition-all ${statusFilter === 'active' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Activos
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('paused')}
+                className={`px-3 py-2 rounded-xl transition-all ${statusFilter === 'paused' ? 'bg-neutral-800 text-white dark:bg-neutral-200 dark:text-neutral-900 shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Desactivados
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-3 py-2 rounded-xl transition-all ${statusFilter === 'all' ? 'bg-white text-on-surface shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Todos
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {isSearchingExternal ? (
@@ -1049,7 +1094,7 @@ export const Inventory: React.FC = () => {
             )}
           </div>
         </div>
-        <div className="w-full overflow-hidden hidden md:block">
+        <div className="w-full overflow-x-auto hidden md:block">
           <table className="w-full text-left table-auto border-collapse">
             <thead>
               <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">
@@ -1113,8 +1158,19 @@ export const Inventory: React.FC = () => {
                       <td className="px-8 py-4 text-center"><input type="checkbox" checked={checked} onChange={() => toggleSelect(product.id)} className="accent-primary w-4 h-4 cursor-pointer" /></td>
                       <td className="px-8 py-4">
                         <div className="flex items-center gap-4 min-w-0">
-                          <div className="w-12 h-12 bg-surface-container-low rounded-xl p-1.5 shrink-0 flex items-center justify-center">
-                            <img src={product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
+                          <div className="w-12 h-12 bg-surface-container-low rounded-xl p-1.5 shrink-0 flex items-center justify-center overflow-hidden">
+                            {product.image && product.image.trim() !== '' ? (
+                              <img
+                                src={product.image}
+                                alt={product.name}
+                                className="w-full h-full object-contain mix-blend-multiply"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <span className="material-symbols-outlined text-[20px] text-on-surface-variant/40">image</span>
+                            )}
                           </div>
                           <div className="flex flex-col min-w-0 pr-2">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -1213,8 +1269,15 @@ export const Inventory: React.FC = () => {
 
                     {/* Miniatura de Imagen */}
                     <div className="w-10 h-10 bg-surface-container-low rounded-xl shrink-0 flex items-center justify-center border border-outline-variant/5 overflow-hidden">
-                      {product.image ? (
-                        <img src={product.image} alt="" aria-hidden="true" className="w-full h-full object-cover" />
+                      {product.image && product.image.trim() !== '' ? (
+                        <img
+                          src={product.image}
+                          alt={product.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
                       ) : (
                         <span className="material-symbols-outlined text-[20px] text-on-surface-variant/40">image</span>
                       )}
@@ -1278,7 +1341,21 @@ export const Inventory: React.FC = () => {
             </div>
             <div className="p-6 space-y-6">
               <div className="flex flex-col items-center bg-surface-container-lowest rounded-3xl p-6 border border-dashed border-outline-variant/20">
-                <img src={productForm.image} alt="" className="w-32 h-32 object-contain mb-4 bg-white rounded-xl p-2" />
+                {productForm.image && productForm.image.trim() !== '' ? (
+                  <img
+                    src={productForm.image}
+                    alt=""
+                    className="w-32 h-32 object-contain mb-4 bg-white rounded-xl p-2"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <div className="w-32 h-32 mb-4 bg-surface-container-low rounded-xl flex flex-col items-center justify-center text-on-surface-variant/40 border border-outline-variant/10">
+                    <span className="material-symbols-outlined text-4xl">image</span>
+                    <span className="text-[10px] font-bold mt-1">Sin imagen</span>
+                  </div>
+                )}
                 <input type="text" value={productForm.image} onChange={e => setProductForm({ ...productForm, image: e.target.value })} className="w-full max-w-sm bg-white rounded-xl px-4 py-2 text-[10px] outline-none border border-outline-variant/20 text-center" placeholder="Link de imagen..." />
               </div>
               {/* Código de Barras */}
@@ -1733,7 +1810,7 @@ export const Inventory: React.FC = () => {
                                 )}
                               </td>
                               <td className="px-4 py-3">
-                                {p.image ? (
+                                {p.image && p.image.trim() !== '' ? (
                                   <div className="w-10 h-10 rounded-lg bg-surface-container-low overflow-hidden border border-outline-variant/20 flex items-center justify-center p-0.5 shrink-0 shadow-xs">
                                     <img
                                       src={p.image}

@@ -108,22 +108,17 @@ No obstante, ningún sistema de seguridad es infalible. En caso de una brecha de
     },
     {
       title: '8. Cookies y Tecnologías Similares',
-      content: `El Sitio utiliza cookies y tecnologías de almacenamiento local para mejorar la experiencia del Usuario. Las categorías de cookies utilizadas son:
+      content: `El Sitio utiliza tecnologías de almacenamiento local para garantizar su funcionamiento esencial y mejorar la experiencia del Usuario.
 
-**Cookies estrictamente necesarias:**
-• Gestión de la sesión del Usuario y del carrito de compras.
-• Recordar preferencias de entrega y configuración del Sitio.
-• Garantizar la seguridad y el funcionamiento del Sitio.
+**No utilizamos cookies de seguimiento, análisis de terceros ni publicidad (como Google Analytics, Meta Pixel, etc.).**
 
-**Cookies de funcionalidad:**
-• Almacenar las preferencias del Usuario (idioma, ubicación, modo de visualización).
-• Mantener la lista de productos favoritos.
-• Recordar el estado de la calculadora de compras.
+Las tecnologías utilizadas son exclusivamente de carácter técnico y estrictamente necesarias:
 
-**Cookies de análisis (opcionales):**
-• Recopilar información anónima sobre el uso del Sitio para mejorar su funcionamiento y contenido.
+• **Autenticación y Seguridad**: Almacenamiento seguro de tokens de sesión para mantener al Usuario conectado.
+• **Funcionalidad Principal**: Gestión del carrito de compras y persistencia temporal del catálogo para optimizar la velocidad.
+• **Operación Offline**: Base de datos local (IndexedDB) para el funcionamiento del sistema de punto de venta (POS) y registro de pedidos sin conexión.
 
-El Usuario puede gestionar las cookies desde la configuración de su navegador. Desactivar cookies esenciales puede afectar el funcionamiento del Sitio.`
+Estas tecnologías son indispensables para el uso del Sitio. Su bloqueo desde el navegador impedirá el correcto funcionamiento de la plataforma.`
     },
     {
       title: '9. Derechos del Titular de los Datos (ARCO)',

@@ -83,6 +83,12 @@ export const employeesService = {
     return this.updateEmployee(id, { active: true });
   },
 
+  // Elimina permanentemente un empleado de la tabla (Hard delete)
+  async deleteEmployee(id: string): Promise<void> {
+    const { error } = await supabase.from('employees').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
   // Actualiza explícitamente los overrides de permisos
   async updateEmployeePermissions(id: string, overrides: PermissionsOverride): Promise<Employee> {
     return this.updateEmployee(id, { permissions_override: overrides });

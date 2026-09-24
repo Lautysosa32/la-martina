@@ -158,7 +158,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? item.originalPrice
         : item.price;
 
-      // Calculamos la oferta teórica para display (saber beneficio disponible)
+      // Calculamos la oferta real para el usuario actual (respeta restricciones de rango)
+      const calcActual = applyOffersToCartItem(
+        { productId: item.id, categoryId: item.categoryId, price: basePrice, quantity: item.quantity },
+        currentCustomer,
+        { forDisplay: false }
+      );
+
+      // Calculamos la oferta teórica para display público (saber beneficio disponible sin restricciones)
       const calcDisplay = applyOffersToCartItem(
         { productId: item.id, categoryId: item.categoryId, price: basePrice, quantity: item.quantity },
         currentCustomer,
@@ -167,28 +174,37 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const regularUnitPrice = basePrice;
 
-      // Determinamos el precio unitario exclusivo para miembros registrados
-      const memberUnitPrice = calcDisplay.finalPrice < regularUnitPrice
-        ? calcDisplay.finalPrice
+      // El precio real a pagar por el usuario si cumple con las condiciones de la oferta
+      const actualUnitPrice = calcActual.finalPrice < regularUnitPrice
+        ? calcActual.finalPrice
         : (item.price < regularUnitPrice ? item.price : regularUnitPrice);
 
-      // Descuento unitario si está registrado
-      const unitDiscount = Math.max(0, regularUnitPrice - memberUnitPrice);
-      const totalPotentialDiscount = unitDiscount * item.quantity;
+      // El precio "visual" mínimo posible para mostrar como beneficio de registro
+      const memberUnitPrice = calcDisplay.finalPrice < regularUnitPrice
+        ? calcDisplay.finalPrice
+        : actualUnitPrice;
 
-      const offerLabel = calcDisplay.offerLabel || (item.discount ? `${item.discount}% OFF` : (item.originalPrice && item.originalPrice > item.price ? 'Oferta' : null));
+      // Descuento unitario si NO está registrado (basado en el mejor precio público teórico)
+      const potentialUnitDiscount = Math.max(0, regularUnitPrice - memberUnitPrice);
+      const totalPotentialDiscount = potentialUnitDiscount * item.quantity;
+
+      // Descuento unitario REAL si SÍ está registrado y cumple las condiciones
+      const actualUnitDiscount = Math.max(0, regularUnitPrice - actualUnitPrice);
+      const totalActualDiscount = actualUnitDiscount * item.quantity;
+
+      const offerLabel = calcActual.offerLabel || calcDisplay.offerLabel || (item.discount ? `${item.discount}% OFF` : (item.originalPrice && item.originalPrice > item.price ? 'Oferta' : null));
 
       if (isAuthenticated) {
-        // Para usuario REGISTRADO: aplicamos el descuento a finalPrice y lineDiscount
+        // Para usuario REGISTRADO: aplicamos el descuento a finalPrice según calcActual (que sí valida rangos)
         return {
           ...item,
           regularPrice: regularUnitPrice,
-          memberPrice: memberUnitPrice,
-          finalPrice: memberUnitPrice,
-          lineDiscount: totalPotentialDiscount,
+          memberPrice: actualUnitPrice, // Solo para referencia, pero el que se usa es finalPrice
+          finalPrice: actualUnitPrice,
+          lineDiscount: totalActualDiscount,
           offerLabel: offerLabel,
-          offerId: calcDisplay.offerId,
-          discountedQuantity: calcDisplay.discountedQuantity || item.quantity,
+          offerId: calcActual.offerId,
+          discountedQuantity: calcActual.discountedQuantity || item.quantity,
           potentialDiscount: 0
         };
       } else {
@@ -202,7 +218,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           offerLabel: offerLabel,
           offerId: calcDisplay.offerId,
           discountedQuantity: 0,
-          potentialDiscount: totalPotentialDiscount // Monto que ahorraría si se registra
+          potentialDiscount: totalPotentialDiscount // Monto que ahorraría si se registra o cumple requisitos
         };
       }
     });

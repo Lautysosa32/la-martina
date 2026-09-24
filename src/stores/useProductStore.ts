@@ -4,11 +4,22 @@ import { productsService } from '../services/products.service';
 import { productRepository } from '../offline/repositories/productRepository';
 import { syncEngine } from '../offline/syncEngine';
 import { LocalProduct } from '../offline/types';
+import { fetchSetting } from '../services/admin.service';
+import { calculateProductReplenishment, buildDenseSalesHistory, defaultReplenishmentConfig, validateReplenishmentConfig, ReplenishmentConfig, ReplenishmentResult, parseReplenishmentRpcResponse, sortReplenishmentAlerts, paginateAlerts } from '../utils/replenishment';
+import { fetchLowStockDashboardProductsHandler } from '../utils/lowStockUrl';
+
+export type ProductWithReplenishment = Product & {
+  replenishmentResult?: ReplenishmentResult | null;
+  sku?: string;
+};
 
 interface ProductState {
   products: Product[];
   loading: boolean;
   error: string | null;
+  isReplenishmentEnabled: boolean;
+  replenishmentConfig: ReplenishmentConfig | null;
+  setReplenishmentConfig: (config: ReplenishmentConfig | null) => void;
   
   fetchProducts: () => Promise<void>;
   
@@ -18,12 +29,18 @@ interface ProductState {
   inventoryLoading: boolean;
   fetchInventoryProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string; sortBy?: string; sortDesc?: boolean }) => Promise<void>;
 
-  lowStockDashboardProducts: Product[];
+  lowStockDashboardProducts: ProductWithReplenishment[];
   lowStockDashboardTotal: number;
   lowStockDashboardLoading: boolean;
   outOfStockTotal: number;
   lowStockTotal: number;
-  fetchLowStockDashboardProducts: (params: { page: number; limit: number }) => Promise<void>;
+  
+  // For the PDF and internal usage
+  allReplenishmentAlerts: ProductWithReplenishment[];
+  allReplenishmentNoHistory: ProductWithReplenishment[];
+
+  fetchLowStockDashboardProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string }) => Promise<void>;
+  fetchAllReplenishmentAlerts: () => Promise<void>;
 
   addProduct: (product: CreateProductInput) => Promise<Product | null>;
   updateProduct: (id: string, updates: UpdateProductInput) => Promise<boolean>;
@@ -31,6 +48,7 @@ interface ProductState {
   updateStock: (id: string, stock: number) => Promise<boolean>;
   getProductByBarcode: (barcode: string) => Product | undefined;
   bulkAddProducts: (products: CreateProductInput[]) => Promise<boolean>;
+  bulkUpdateProducts: (items: { id: string; updates: UpdateProductInput }[], onProgress?: (processed: number) => void) => Promise<boolean>;
   bulkUpdatePrice: (ids: string[], percentage: number) => Promise<boolean>;
   bulkTogglePause: (ids: string[], forceState?: boolean) => Promise<boolean>;
   clearError: () => void;
@@ -42,6 +60,31 @@ const getErrorMessage = (err: any, defaultMessage: string): string => {
   }
   return err.message ? `${defaultMessage}: ${err.message}` : defaultMessage;
 };
+
+let isFetchingProducts = false;
+
+const toLocalProductFromStoreProduct = (p: Product): LocalProduct => ({
+  id: p.id,
+  branch_id: p.branchId || undefined,
+  name: p.name || '',
+  brand: p.brand || '',
+  category_id: p.categoryId || '',
+  subcategory_id: p.subcategoryId || null,
+  price: Number(p.price || 0),
+  original_price: p.originalPrice ? Number(p.originalPrice) : null,
+  barcode: p.barcode ? String(p.barcode).trim() : null,
+  image: p.image || '',
+  format: p.format || null,
+  stock: Number(p.stock ?? 0),
+  min_stock: Number(p.minStock ?? 0),
+  sale_type: p.saleType === 'weight' ? 'weight' : 'unit',
+  discount: p.discount ? String(p.discount) : null,
+  badge: p.badge || null,
+  is_new: Boolean(p.isNew),
+  active: true,
+  is_paused: Boolean(p.isPaused),
+  updated_at: p.updatedAt || new Date().toISOString()
+});
 
 export const useProductStore = create<ProductState>((set, get) => ({
   products: [],
@@ -57,8 +100,24 @@ export const useProductStore = create<ProductState>((set, get) => ({
   outOfStockTotal: 0,
   lowStockTotal: 0,
   lowStockDashboardLoading: false,
+  allReplenishmentAlerts: [],
+  allReplenishmentNoHistory: [],
+  replenishmentConfig: null,
+  isReplenishmentEnabled: false,
+
+  setReplenishmentConfig: (config) => {
+    set({
+      replenishmentConfig: config,
+      isReplenishmentEnabled: config ? config.enabled : false
+    });
+  },
 
   fetchProducts: async () => {
+    if (isFetchingProducts) {
+      console.log('⏳ Sincronización de catálogo ya en curso, ignorando llamada simultánea');
+      return;
+    }
+    isFetchingProducts = true;
     set({ loading: true, error: null });
     try {
       // 1. Hidratación inmediata desde IndexedDB local (0 ms de bloqueo para el POS)
@@ -134,6 +193,8 @@ export const useProductStore = create<ProductState>((set, get) => ({
         console.log('ℹ️ Operando con productos locales de IndexedDB');
         set({ loading: false });
       }
+    } finally {
+      isFetchingProducts = false;
     }
   },
 
@@ -154,19 +215,140 @@ export const useProductStore = create<ProductState>((set, get) => ({
   },
 
   fetchLowStockDashboardProducts: async (params) => {
-    set({ lowStockDashboardLoading: true, error: null });
     try {
-      const { data, total, outOfStockTotal, lowStockTotal } = await productsService.getLowStockProductsPaginated(params);
-      set({ 
-        lowStockDashboardProducts: data, 
-        lowStockDashboardTotal: total, 
-        outOfStockTotal,
-        lowStockTotal,
-        lowStockDashboardLoading: false 
+      await fetchLowStockDashboardProductsHandler(params, {
+        getCachedConfig: () => get().replenishmentConfig,
+        getConfig: async () => {
+          const cached = get().replenishmentConfig;
+          if (cached !== null) {
+            return cached;
+          }
+          try {
+            const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
+            const configError = validateReplenishmentConfig(rawConfig);
+            const config = configError ? (console.warn(`[REPLENISHMENT CONFIG] Configuración inválida: ${configError}. Usando defaults.`), defaultReplenishmentConfig) : rawConfig;
+            set({ replenishmentConfig: config, isReplenishmentEnabled: config.enabled });
+            return config;
+          } catch (err) {
+            console.error('❌ Error fetching replenishment config:', err);
+            const fallback = { ...defaultReplenishmentConfig, enabled: false };
+            set({ replenishmentConfig: fallback, isReplenishmentEnabled: false });
+            return fallback;
+          }
+        },
+        getLowStockProductsPaginated: (p) => productsService.getLowStockProductsPaginated(p),
+        fetchAllReplenishmentAlerts: () => get().fetchAllReplenishmentAlerts(),
+        getAllReplenishmentAlerts: () => get().allReplenishmentAlerts,
+        getProducts: () => get().products,
+        set: (state) => set(state)
       });
     } catch (err: any) {
       console.error('❌ Error fetching low stock products:', err);
       set({ error: getErrorMessage(err, 'Error al obtener alertas de stock'), lowStockDashboardLoading: false });
+    }
+  },
+
+  fetchAllReplenishmentAlerts: async () => {
+    try {
+      const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
+      const configError = validateReplenishmentConfig(rawConfig);
+      const config = configError ? (console.warn(`[REPLENISHMENT CONFIG] Configuración inválida: ${configError}. Usando defaults.`), defaultReplenishmentConfig) : rawConfig;
+      if (!config.enabled) return;
+
+      const now = new Date();
+      // Clave: Fecha (YYYY-MM-DD) + config_updated_at (simulado aquí con H y otros parámetros críticos)
+      // Como no tenemos config.updated_at en el payload crudo, armamos un hash
+      const cacheKey = `replenishment_stats_${now.toLocaleDateString('es-AR')}_H${config.historyWeeks}`;
+      
+      let stats = [];
+      let usingCache = false;
+
+      // 1. Intentar obtener liveStock (si falla, usar catálogo local)
+      let liveStock = [];
+      try {
+        liveStock = await productsService.getLiveStock();
+      } catch (lsErr) {
+        console.error('❌ Error fetching live stock, falling back to local catalog:', lsErr);
+        const currentProducts = get().products;
+        liveStock = currentProducts.map(p => ({ id: p.id, stock: p.stock ?? 0 }));
+      }
+      
+      const liveStockMap = new Map(liveStock.map(ls => [ls.id, ls.stock]));
+      
+      // 2. Intentar obtener stats (si falla, buscar en localStorage crudo)
+      try {
+        stats = await productsService.getReplenishmentStats(config.historyWeeks);
+        // Validar forma inmediatamente: si es formato viejo, lanza error para entrar en el fallback
+        parseReplenishmentRpcResponse(stats);
+        // Guardar stats crudos
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(stats));
+        } catch(e) {}
+      } catch (errStats) {
+        console.error('❌ Error fetching replenishment stats, attempting to use cache:', errStats);
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            stats = JSON.parse(cached);
+            usingCache = true;
+            console.log('✅ Utilizando caché de estadísticas de ventas.');
+          } else {
+            throw new Error('No cache found');
+          }
+        } catch (cacheErr) {
+          console.error('❌ No hay caché disponible. Haciendo fallback a lógica estática.');
+          // Fallback final: usar static logic temporalmente.
+          const { data, outOfStockTotal, lowStockTotal } = await productsService.getLowStockProductsPaginated({ page: 1, limit: 1000 });
+          set({ 
+            allReplenishmentAlerts: data as ProductWithReplenishment[],
+            allReplenishmentNoHistory: [],
+            outOfStockTotal,
+            lowStockTotal
+          });
+          return;
+        }
+      }
+      
+      // Combinar stock fresco con catálogo local (solo activos)
+      const currentProducts = get().products;
+      const activeProducts = currentProducts.filter(p => !p.isPaused);
+      const nowMs = Date.now();
+      
+      // Agrupamos stats mediante el parser compatible con JSONB y plano
+      const groupedStats = parseReplenishmentRpcResponse(stats);
+
+      const alerts: ProductWithReplenishment[] = [];
+      const noHistory: ProductWithReplenishment[] = [];
+
+      for (const p of activeProducts) {
+        const prodStats = groupedStats.get(p.id) || { weeks: [], firstSale: null };
+        const dense = buildDenseSalesHistory(p.createdAt || new Date().toISOString(), prodStats.firstSale, prodStats.weeks, config.historyWeeks, nowMs);
+        
+        const currentStock = liveStockMap.has(p.id) ? liveStockMap.get(p.id)! : (p.stock ?? 0);
+        
+        const res = calculateProductReplenishment({
+          ventasPorSemana: dense.ventasPorSemana,
+          semanasDisponibles: dense.semanasDisponibles,
+          stockActual: currentStock,
+          config
+        });
+        
+        const itemWithRep = p as ProductWithReplenishment;
+        itemWithRep.replenishmentResult = res;
+
+        if (res.status === 'REPOSICION') {
+          alerts.push({ ...itemWithRep, stock: currentStock });
+        } else if (res.status === 'SIN_HISTORIAL' && currentStock <= 0) {
+          noHistory.push({ ...itemWithRep, stock: currentStock });
+        }
+      }
+
+      // Ordenar alertas con la función pura real del store (diasCobertura ASC, nombre)
+      const sortedAlerts = sortReplenishmentAlerts(alerts);
+
+      set({ allReplenishmentAlerts: sortedAlerts, allReplenishmentNoHistory: noHistory });
+    } catch (err) {
+      console.error('Error fetching all replenishment alerts:', err);
     }
   },
 
@@ -402,6 +584,13 @@ export const useProductStore = create<ProductState>((set, get) => ({
     try {
       console.log(`🔄 Bulk adding ${products.length} products...`);
       const newProducts = await productsService.bulkCreateProducts(products);
+      
+      // Guardar inmediatamente en IndexedDB local
+      if (newProducts.length > 0) {
+        const localBatch: LocalProduct[] = newProducts.map(toLocalProductFromStoreProduct);
+        await productRepository.saveProducts(localBatch);
+      }
+
       set(state => ({
         products: [...state.products, ...newProducts],
         loading: false
@@ -411,6 +600,59 @@ export const useProductStore = create<ProductState>((set, get) => ({
     } catch (err: any) {
       console.error('❌ Error in bulk adding products:', err);
       set({ error: getErrorMessage(err, 'Error en importación masiva'), loading: false });
+      return false;
+    }
+  },
+
+  bulkUpdateProducts: async (items, onProgress) => {
+    set({ loading: true, error: null });
+    try {
+      console.log(`🔄 Bulk updating ${items.length} products...`);
+      const updatedProducts: Product[] = [];
+      const batchSize = 15;
+      let processed = 0;
+
+      for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchResults = await Promise.all(
+          batch.map(async item => {
+            try {
+              return await productsService.updateProduct(item.id, item.updates);
+            } catch (e) {
+              console.error(`Error updating product ${item.id} in bulk:`, e);
+              return null;
+            }
+          })
+        );
+        const validResults = batchResults.filter((p): p is Product => p !== null);
+        updatedProducts.push(...validResults);
+
+        // Guardar de inmediato este lote en IndexedDB local
+        if (validResults.length > 0) {
+          const localBatch: LocalProduct[] = validResults.map(toLocalProductFromStoreProduct);
+          await productRepository.saveProducts(localBatch);
+        }
+
+        processed += batch.length;
+        if (onProgress) {
+          onProgress(processed);
+        }
+      }
+
+      // Single atomic store update!
+      const updatedMap = new Map(updatedProducts.map(p => [p.id, p]));
+      set(state => ({
+        products: state.products.map(p => updatedMap.get(p.id) || p),
+        inventoryProducts: state.inventoryProducts.map(p => updatedMap.get(p.id) || p),
+        lowStockDashboardProducts: state.lowStockDashboardProducts.map(p => updatedMap.get(p.id) || p),
+        loading: false
+      }));
+
+      console.log(`✅ Bulk update successful: ${updatedProducts.length} products updated and persisted in local DB`);
+      return true;
+    } catch (err: any) {
+      console.error('❌ Error in bulk updating products:', err);
+      set({ error: getErrorMessage(err, 'Error al actualizar productos masivamente'), loading: false });
       return false;
     }
   },

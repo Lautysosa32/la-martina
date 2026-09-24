@@ -647,6 +647,13 @@ export const Analytics: React.FC = () => {
   };
 
 
+  const getCardAmountFontSize = (numStr: string) => {
+    if (numStr.length > 12) return 'text-[13px] sm:text-xl md:text-3xl';
+    if (numStr.length > 9) return 'text-[15px] sm:text-2xl md:text-3xl';
+    if (numStr.length > 7) return 'text-base sm:text-2xl md:text-3xl';
+    return 'text-lg sm:text-2xl md:text-3xl';
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       {portalTarget && employeeProfile?.role !== 'employee' && createPortal(
@@ -660,38 +667,40 @@ export const Analytics: React.FC = () => {
       )}
 
       {/* Financial Comparison Grid Dashboard */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-6">
         {/* Card 1: Ingresos */}
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md hover:border-outline-variant/20">
-          <div className="flex items-start justify-between">
-            <div className="space-y-1">
-              <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em]">Ingresos del Período</p>
-              <p className="text-3xl font-black text-on-background">${formatCurrency(periodComparison.revenue.current)}</p>
+        <div className="bg-white p-3.5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md hover:border-outline-variant/20 overflow-hidden">
+          <div>
+            <div className="flex items-center justify-between gap-1 mb-2">
+              <p className="text-[9px] sm:text-[10px] font-black text-on-surface-variant uppercase tracking-wider sm:tracking-[0.18em] truncate">Ingresos del Período</p>
+              <div className="w-8 h-8 sm:w-11 sm:h-11 rounded-lg sm:rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
+                <span className="material-symbols-outlined text-[18px] sm:text-[22px]">trending_up</span>
+              </div>
             </div>
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 shrink-0">
-              <span className="material-symbols-outlined text-[24px]">trending_up</span>
-            </div>
+            <p className={`${getCardAmountFontSize(formatCurrency(periodComparison.revenue.current))} font-black text-on-background tracking-tight tabular-nums leading-tight`}>
+              ${formatCurrency(periodComparison.revenue.current)}
+            </p>
           </div>
           
-          <div className="mt-6 pt-4 border-t border-outline-variant/5 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período Anterior</p>
-              <p className="text-sm font-bold text-on-surface-variant/80">${formatCurrency(periodComparison.revenue.previous)}</p>
+          <div className="mt-4 pt-3 sm:mt-6 sm:pt-4 border-t border-outline-variant/5 flex flex-col xs:flex-row xs:items-center justify-between gap-1.5 sm:gap-2">
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período Anterior</p>
+              <p className="text-xs sm:text-sm font-bold text-on-surface-variant/80 truncate">${formatCurrency(periodComparison.revenue.previous)}</p>
             </div>
             
             {periodComparison.revenue.diff !== null ? (
-              <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black ${
+              <div className={`self-start xs:self-auto inline-flex items-center gap-0.5 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-black shrink-0 ${
                 periodComparison.revenue.diff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
               }`}>
-                <span className="material-symbols-outlined text-[16px]">
+                <span className="material-symbols-outlined text-[13px] sm:text-[15px]">
                   {periodComparison.revenue.diff >= 0 ? 'arrow_upward' : 'arrow_downward'}
                 </span>
                 <span>
-                  {periodComparison.revenue.diff >= 0 ? '+' : ''}{periodComparison.revenue.diff.toFixed(1)}%
+                  {periodComparison.revenue.diff >= 0 ? '+' : ''}{Math.abs(periodComparison.revenue.diff) >= 100 ? Math.round(periodComparison.revenue.diff) : periodComparison.revenue.diff.toFixed(1)}%
                 </span>
               </div>
             ) : (
-              <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2.5 py-1.5 rounded-lg">
+              <span className="self-start xs:self-auto text-[9px] sm:text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2 py-1 rounded-md sm:rounded-lg shrink-0">
                 Sin Comparativa
               </span>
             )}
@@ -699,36 +708,38 @@ export const Analytics: React.FC = () => {
         </div>
 
         {/* Card 2: Egresos */}
-        <div className="bg-white p-6 rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md hover:border-outline-variant/20">
-          <div className="flex items-start justify-between">
-            <div className="space-y-1">
-              <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em]">Egresos del Período</p>
-              <p className="text-3xl font-black text-on-background">${formatCurrency(periodComparison.expenses.current)}</p>
+        <div className="bg-white p-3.5 sm:p-6 rounded-2xl sm:rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md hover:border-outline-variant/20 overflow-hidden">
+          <div>
+            <div className="flex items-center justify-between gap-1 mb-2">
+              <p className="text-[9px] sm:text-[10px] font-black text-on-surface-variant uppercase tracking-wider sm:tracking-[0.18em] truncate">Egresos del Período</p>
+              <div className="w-8 h-8 sm:w-11 sm:h-11 rounded-lg sm:rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
+                <span className="material-symbols-outlined text-[18px] sm:text-[22px]">trending_down</span>
+              </div>
             </div>
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600 shrink-0">
-              <span className="material-symbols-outlined text-[24px]">trending_down</span>
-            </div>
+            <p className={`${getCardAmountFontSize(formatCurrency(periodComparison.expenses.current))} font-black text-on-background tracking-tight tabular-nums leading-tight`}>
+              ${formatCurrency(periodComparison.expenses.current)}
+            </p>
           </div>
           
-          <div className="mt-6 pt-4 border-t border-outline-variant/5 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período Anterior</p>
-              <p className="text-sm font-bold text-on-surface-variant/80">${formatCurrency(periodComparison.expenses.previous)}</p>
+          <div className="mt-4 pt-3 sm:mt-6 sm:pt-4 border-t border-outline-variant/5 flex flex-col xs:flex-row xs:items-center justify-between gap-1.5 sm:gap-2">
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Período Anterior</p>
+              <p className="text-xs sm:text-sm font-bold text-on-surface-variant/80 truncate">${formatCurrency(periodComparison.expenses.previous)}</p>
             </div>
             
             {periodComparison.expenses.diff !== null ? (
-              <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black ${
+              <div className={`self-start xs:self-auto inline-flex items-center gap-0.5 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-black shrink-0 ${
                 periodComparison.expenses.diff <= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
               }`}>
-                <span className="material-symbols-outlined text-[16px]">
+                <span className="material-symbols-outlined text-[13px] sm:text-[15px]">
                   {periodComparison.expenses.diff <= 0 ? 'arrow_downward' : 'arrow_upward'}
                 </span>
                 <span>
-                  {periodComparison.expenses.diff >= 0 ? '+' : ''}{periodComparison.expenses.diff.toFixed(1)}%
+                  {periodComparison.expenses.diff >= 0 ? '+' : ''}{Math.abs(periodComparison.expenses.diff) >= 100 ? Math.round(periodComparison.expenses.diff) : periodComparison.expenses.diff.toFixed(1)}%
                 </span>
               </div>
             ) : (
-              <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2.5 py-1.5 rounded-lg">
+              <span className="self-start xs:self-auto text-[9px] sm:text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2 py-1 rounded-md sm:rounded-lg shrink-0">
                 Sin Comparativa
               </span>
             )}
@@ -739,55 +750,55 @@ export const Analytics: React.FC = () => {
         {(() => {
           const isPositive = periodComparison.result.current >= 0;
           return (
-            <div className={`p-6 rounded-[2rem] border shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md ${
+            <div className={`col-span-2 md:col-span-1 p-3.5 sm:p-6 rounded-2xl sm:rounded-[2rem] border shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md overflow-hidden ${
               isPositive 
                 ? 'bg-gradient-to-br from-emerald-50/50 via-green-50/20 to-white border-emerald-500/15' 
                 : 'bg-gradient-to-br from-rose-50/50 via-red-50/20 to-white border-rose-500/15'
             }`}>
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-[10px] font-black text-on-surface-variant uppercase tracking-[0.18em]">Balance / Resultado</p>
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+              <div>
+                <div className="flex items-center justify-between gap-1 mb-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <p className="text-[9px] sm:text-[10px] font-black text-on-surface-variant uppercase tracking-wider sm:tracking-[0.18em] truncate">Balance / Resultado</p>
+                    <span className={`text-[8px] sm:text-[9px] font-black px-1.5 sm:px-2 py-0.5 rounded-full uppercase shrink-0 ${
                       isPositive ? 'bg-emerald-600/10 text-emerald-700' : 'bg-rose-600/10 text-rose-700'
                     }`}>
                       {isPositive ? 'Superávit' : 'Déficit'}
                     </span>
                   </div>
-                  <p className={`text-3xl font-black ${isPositive ? 'text-emerald-700' : 'text-rose-700'}`}>
-                    {isPositive ? '' : '-'}${formatCurrency(Math.abs(periodComparison.result.current))}
-                  </p>
+                  <div className={`w-8 h-8 sm:w-11 sm:h-11 rounded-lg sm:rounded-2xl flex items-center justify-center shrink-0 ${
+                    isPositive ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/20'
+                  }`}>
+                    <span className="material-symbols-outlined text-[18px] sm:text-[22px]">
+                      {isPositive ? 'account_balance_wallet' : 'money_off'}
+                    </span>
+                  </div>
                 </div>
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                  isPositive ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/20'
-                }`}>
-                  <span className="material-symbols-outlined text-[24px]">
-                    {isPositive ? 'account_balance_wallet' : 'money_off'}
-                  </span>
-                </div>
+                <p className={`${getCardAmountFontSize(formatCurrency(Math.abs(periodComparison.result.current)))} font-black tracking-tight tabular-nums leading-tight ${isPositive ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {isPositive ? '' : '-'}${formatCurrency(Math.abs(periodComparison.result.current))}
+                </p>
               </div>
               
-              <div className="mt-6 pt-4 border-t border-outline-variant/10 flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Margen Neto</p>
-                  <p className={`text-sm font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
+              <div className="mt-4 pt-3 sm:mt-6 sm:pt-4 border-t border-outline-variant/10 flex flex-col xs:flex-row xs:items-center justify-between gap-1.5 sm:gap-2">
+                <div className="min-w-0">
+                  <p className="text-[9px] sm:text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Margen Neto</p>
+                  <p className={`text-xs sm:text-sm font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
                     {periodComparison.result.margin.toFixed(1)}%
                   </p>
                 </div>
                 
                 {periodComparison.result.diff !== null ? (
-                  <div className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-black ${
+                  <div className={`self-start xs:self-auto inline-flex items-center gap-0.5 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-black shrink-0 ${
                     periodComparison.result.diff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
                   }`}>
-                    <span className="material-symbols-outlined text-[16px]">
+                    <span className="material-symbols-outlined text-[13px] sm:text-[15px]">
                       {periodComparison.result.diff >= 0 ? 'arrow_upward' : 'arrow_downward'}
                     </span>
                     <span>
-                      {periodComparison.result.diff >= 0 ? '+' : ''}{periodComparison.result.diff.toFixed(1)}%
+                      {periodComparison.result.diff >= 0 ? '+' : ''}{Math.abs(periodComparison.result.diff) >= 100 ? Math.round(periodComparison.result.diff) : periodComparison.result.diff.toFixed(1)}%
                     </span>
                   </div>
                 ) : (
-                  <span className="text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2.5 py-1.5 rounded-lg">
+                  <span className="self-start xs:self-auto text-[9px] sm:text-[10px] font-bold text-on-surface-variant/50 bg-surface-container-low px-2 py-1 rounded-md sm:rounded-lg shrink-0">
                     Sin Comparativa
                   </span>
                 )}
@@ -991,42 +1002,46 @@ export const Analytics: React.FC = () => {
 
       {/* Top Selling Products */}
       <div className="bg-white rounded-[2rem] shadow-sm border border-outline-variant/5 overflow-hidden">
-        <div className="p-8 border-b border-outline-variant/10 flex justify-between items-center">
-          <h2 className="text-xl font-bold">Productos Más Vendidos</h2>
+        <div className="p-4 sm:p-8 border-b border-outline-variant/10 flex justify-between items-center">
+          <h2 className="text-lg sm:text-xl font-bold">Productos Más Vendidos</h2>
           <span className="text-xs font-bold text-on-surface-variant bg-surface-container-low px-3 py-1.5 rounded-lg">{period}</span>
         </div>
         {topProducts.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left min-w-[700px]">
               <thead>
-                <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
-                  <th className="px-8 py-4 w-10">#</th>
-                  <th className="px-8 py-4">Producto</th>
-                  <th className="px-8 py-4">Categoría</th>
-                  <th className="px-8 py-4 text-center">Unidades</th>
-                  <th className="px-8 py-4 text-right">Ingresos</th>
-                  <th className="px-8 py-4 text-center">Estado</th>
+                <tr className="bg-surface-container-lowest text-[11px] font-bold text-on-surface-variant uppercase tracking-wider border-b border-outline-variant/10">
+                  <th className="px-4 sm:px-8 py-3.5 sm:py-4 w-12 whitespace-nowrap">#</th>
+                  <th className="px-4 sm:px-8 py-3.5 sm:py-4 whitespace-nowrap">Producto</th>
+                  <th className="px-4 sm:px-8 py-3.5 sm:py-4 whitespace-nowrap">Categoría</th>
+                  <th className="px-4 sm:px-8 py-3.5 sm:py-4 text-center whitespace-nowrap">Unidades</th>
+                  <th className="px-4 sm:px-8 py-3.5 sm:py-4 text-right whitespace-nowrap">Ingresos</th>
+                  <th className="px-4 sm:px-8 py-3.5 sm:py-4 text-center whitespace-nowrap">Estado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10 text-sm">
                 {topProducts.slice(0, 10).map((entry, idx) => (
                   <tr key={entry.product.id} className="hover:bg-surface-container-lowest transition-colors">
-                    <td className="px-8 py-4 font-bold text-on-surface-variant">{idx + 1}</td>
-                    <td className="px-8 py-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-surface-container-low rounded-xl p-1 flex items-center justify-center">
-                          <img src={entry.product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
+                    <td className="px-4 sm:px-8 py-3.5 sm:py-4 font-bold text-on-surface-variant whitespace-nowrap">{idx + 1}</td>
+                    <td className="px-4 sm:px-8 py-3.5 sm:py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3 sm:gap-4">
+                        <div className="w-9 h-9 sm:w-10 sm:h-10 bg-surface-container-low rounded-xl p-1 flex items-center justify-center overflow-hidden shrink-0">
+                          {entry.product.image && entry.product.image.trim() !== '' ? (
+                            <img src={entry.product.image} alt="" className="w-full h-full object-contain mix-blend-multiply" />
+                          ) : (
+                            <span className="material-symbols-outlined text-[18px] text-on-surface-variant/40">image</span>
+                          )}
                         </div>
-                        <p className="font-bold text-on-background">{entry.product.name}</p>
+                        <p className="font-bold text-on-background truncate max-w-[220px]">{entry.product.name}</p>
                       </div>
                     </td>
-                    <td className="px-8 py-4">
+                    <td className="px-4 sm:px-8 py-3.5 sm:py-4 whitespace-nowrap">
                       <span className="text-on-surface-variant font-medium capitalize">{entry.product.categoryId}</span>
                     </td>
-                    <td className="px-8 py-4 text-center font-bold">{formatCurrency(entry.unitsSold, false)}</td>
-                    <td className="px-8 py-4 text-right font-bold text-primary">${formatCurrency(entry.revenue)}</td>
-                    <td className="px-8 py-4 text-center">
-                      <span className={`px-3 py-1 rounded-full text-[11px] font-bold ${entry.unitsSold >= 5 ? 'bg-green-50 text-green-600' : entry.unitsSold >= 2 ? 'bg-orange-50 text-orange-600' : 'bg-surface-container-low text-on-surface-variant'}`}>
+                    <td className="px-4 sm:px-8 py-3.5 sm:py-4 text-center font-bold whitespace-nowrap">{formatCurrency(entry.unitsSold, false)}</td>
+                    <td className="px-4 sm:px-8 py-3.5 sm:py-4 text-right font-bold text-primary whitespace-nowrap">${formatCurrency(entry.revenue)}</td>
+                    <td className="px-4 sm:px-8 py-3.5 sm:py-4 text-center whitespace-nowrap">
+                      <span className={`px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-bold ${entry.unitsSold >= 5 ? 'bg-green-50 text-green-600' : entry.unitsSold >= 2 ? 'bg-orange-50 text-orange-600' : 'bg-surface-container-low text-on-surface-variant'}`}>
                         {entry.unitsSold >= 5 ? 'Alta Demanda' : entry.unitsSold >= 2 ? 'Regular' : 'Baja'}
                       </span>
                     </td>
@@ -1131,7 +1146,7 @@ export const Analytics: React.FC = () => {
               return (
                 <div key={offer.id} className="bg-surface-container-lowest rounded-3xl p-5 border border-outline-variant/10 flex gap-4 group hover:border-primary/20 hover:shadow-lg transition-all">
                   <div className="w-16 h-16 bg-white rounded-2xl p-1.5 shrink-0 flex items-center justify-center border border-outline-variant/5">
-                    {imageSrc ? (
+                    {imageSrc && imageSrc.trim() !== '' ? (
                       <img src={imageSrc} alt="" className="w-full h-full object-contain mix-blend-multiply" />
                     ) : (
                       <div className={`w-full h-full rounded-xl flex items-center justify-center ${badgeColor}`}>
@@ -1249,11 +1264,11 @@ export const Analytics: React.FC = () => {
                 .slice(0, 10)
                 .map(c => (
                   <div key={c.id}
-                    className="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:border-primary/40 hover:shadow-lg transition-all group cursor-pointer"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-surface-container-lowest rounded-2xl border border-outline-variant/10 hover:border-primary/40 hover:shadow-lg transition-all group cursor-pointer gap-3"
                     onClick={() => setShowCloseResult(c)}
                   >
                     {/* Left */}
-                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110 flex-shrink-0 bg-blue-100 text-blue-600">
                         <span className="material-symbols-outlined text-[20px]">
                           today
@@ -1266,10 +1281,10 @@ export const Analytics: React.FC = () => {
                     </div>
 
                     {/* Right */}
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <div className="text-right">
+                    <div className="flex items-center justify-between sm:justify-end gap-3 flex-wrap sm:flex-nowrap">
+                      <div className="text-left sm:text-right">
                         <p className="font-bold text-primary">${formatCurrency(c.totalSales)}</p>
-                        <div className="flex gap-2 mt-1 flex-wrap justify-end">
+                        <div className="flex gap-1.5 sm:gap-2 mt-1 flex-wrap sm:justify-end">
                           {c.cashPayments > 0 && <span className="text-[9px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Ef: ${formatCurrency(c.cashPayments)}</span>}
                           {c.cardPayments > 0 && <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Tar: ${formatCurrency(c.cardPayments)}</span>}
                           {c.transferPayments > 0 && <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">Tr: ${formatCurrency(c.transferPayments)}</span>}

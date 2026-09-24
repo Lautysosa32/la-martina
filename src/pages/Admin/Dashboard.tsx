@@ -4,8 +4,9 @@ import { useAdmin } from '../../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import { AdminPeriodSelector, getPeriodRange } from '../../components/AdminPeriodSelector';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { useProductStore } from '../../stores/useProductStore';
+import { useProductStore, ProductWithReplenishment } from '../../stores/useProductStore';
 import { productsService } from '../../services/products.service';
+import { fetchSetting } from '../../services/admin.service';
 
 export const Dashboard: React.FC = () => {
   const {
@@ -149,78 +150,242 @@ export const Dashboard: React.FC = () => {
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   const handleGenerateStockReport = async () => {
-    let productsToReport: { name: string; categoryId: string; stock: number }[] = [];
-
     setIsGeneratingReport(true);
     try {
-      // If all items on current page are selected (or default state), fetch complete list from DB
-      if (selectedForReport.size === lowStockProducts.length) {
-        const allFetched = await productsService.getAllLowStockProducts();
-        productsToReport = allFetched.filter(p => (p as any).is_paused !== true && (p as any).isPaused !== true);
-      } else {
-        // Only report the selected items from the page
-        productsToReport = lowStockProducts
-          .filter(p => selectedForReport.has(p.id) && !p.isPaused)
-          .map(p => ({
-            name: p.name,
-            categoryId: p.categoryId,
-            stock: p.stock
-          }));
-      }
+      const storeState = useProductStore.getState();
+      const isDynamic = storeState.isReplenishmentEnabled;
 
-      if (productsToReport.length === 0) {
-        setDashboardError("Seleccioná al menos un producto para la lista.");
-        setTimeout(() => setDashboardError(null), 3000);
-        setIsGeneratingReport(false);
-        return;
-      }
+      if (!isDynamic) {
+        let productsToReport: { name: string; categoryId: string; stock: number }[] = [];
+        // If all items on current page are selected (or default state), fetch complete list from DB
+        if (selectedForReport.size === lowStockProducts.length) {
+          const allFetched = await productsService.getAllLowStockProducts();
+          productsToReport = allFetched.filter(p => (p as any).is_paused !== true && (p as any).isPaused !== true);
+        } else {
+          // Only report the selected items from the page
+          productsToReport = lowStockProducts
+            .filter(p => selectedForReport.has(p.id) && !p.isPaused)
+            .map(p => ({
+              name: p.name,
+              categoryId: p.categoryId,
+              stock: p.stock
+            }));
+        }
 
-      const sortedProducts = [...productsToReport].sort((a, b) => {
-        const catA = adminCategories.find(c => c.id === a.categoryId)?.title || '';
-        const catB = adminCategories.find(c => c.id === b.categoryId)?.title || '';
-        return catA.localeCompare(catB);
-      });
+        if (productsToReport.length === 0) {
+          setDashboardError("Seleccioná al menos un producto para la lista.");
+          setTimeout(() => setDashboardError(null), 3000);
+          setIsGeneratingReport(false);
+          return;
+        }
 
-      const printWindow = window.open('', '_blank');
-      if (!printWindow) {
-        setIsGeneratingReport(false);
-        return;
-      }
+        const sortedProducts = [...productsToReport].sort((a, b) => {
+          const catA = adminCategories.find(c => c.id === a.categoryId)?.title || '';
+          const catB = adminCategories.find(c => c.id === b.categoryId)?.title || '';
+          return catA.localeCompare(catB);
+        });
 
-      const rows = sortedProducts.map(p => `
-        <tr style="border-bottom: 1px solid #eee;">
-          <td style="padding: 12px; font-weight: bold;">${p.name}</td>
-          <td style="padding: 12px;">${adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId}</td>
-          <td style="padding: 12px; font-weight: bold; color: #ff5252;">${p.stock}</td>
-        </tr>
-      `).join('');
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          setIsGeneratingReport(false);
+          return;
+        }
 
-      printWindow.document.write(`
-        <html><head><title>Reporte de Stock</title>
-        <style>body { font-family: system-ui; padding: 40px; color: #1a1a1a; } table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; } th { background: #f8f9fa; padding: 12px; font-weight: bold; border-bottom: 2px solid #ddd; } @media print { .no-print { display: none; } body { padding: 0; } }</style>
-        </head><body>
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
-              <div>
-                <h1 style="margin: 0 0 8px 0; color: #e62e05;">Reporte de Stock Crítico (${sortedProducts.length} productos)</h1>
-                <p style="margin: 0; color: #666; font-weight: bold;">Martina Supermercado- Generado el ${new Date().toLocaleDateString('es-AR')}</p>
+        const rows = sortedProducts.map(p => `
+          <tr style="border-bottom: 1px solid #eee;">
+            <td style="padding: 12px; font-weight: bold;">${p.name}</td>
+            <td style="padding: 12px;">${adminCategories.find(c => c.id === p.categoryId)?.title || p.categoryId}</td>
+            <td style="padding: 12px; font-weight: bold; color: #ff5252;">${p.stock}</td>
+          </tr>
+        `).join('');
+
+        printWindow.document.write(`
+          <html><head><title>Reporte de Stock</title>
+          <style>body { font-family: system-ui; padding: 40px; color: #1a1a1a; } table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; } th { background: #f8f9fa; padding: 12px; font-weight: bold; border-bottom: 2px solid #ddd; } @media print { .no-print { display: none; } body { padding: 0; } }</style>
+          </head><body>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
+                <div>
+                  <h1 style="margin: 0 0 8px 0; color: #e62e05;">Reporte de Stock Crítico (${sortedProducts.length} productos)</h1>
+                  <p style="margin: 0; color: #666; font-weight: bold;">Martina Supermercado- Generado el ${new Date().toLocaleDateString('es-AR')}</p>
+                </div>
+                <button onclick="window.print()" class="no-print" style="background: #e62e05; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer;">Imprimir / Guardar PDF</button>
               </div>
-              <button onclick="window.print()" class="no-print" style="background: #e62e05; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer;">Imprimir / Guardar PDF</button>
-            </div>
 
-            <table>
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Categoría</th>
-                  <th>Stock Actual</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
+              <table>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Categoría</th>
+                    <th>Stock Actual</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      } else {
+        // isDynamic === true
+        const { defaultReplenishmentConfig, validateReplenishmentConfig } = await import('../../utils/replenishment');
+        let config = defaultReplenishmentConfig;
+        try {
+          const rawConfig = await fetchSetting<any>('inventory_replenishment_config', defaultReplenishmentConfig);
+          const configError = validateReplenishmentConfig(rawConfig);
+          config = configError ? defaultReplenishmentConfig : rawConfig;
+        } catch {
+          config = defaultReplenishmentConfig;
+        }
+
+        await storeState.fetchAllReplenishmentAlerts();
+
+        // Respeta selectedForReport con la misma lógica que la rama del flag apagado
+        let productsToReport: ProductWithReplenishment[] = [];
+        let noHistoryToReport: ProductWithReplenishment[] = [];
+
+        if (selectedForReport.size === lowStockProducts.length) {
+          productsToReport = storeState.allReplenishmentAlerts.filter(p => !p.isPaused);
+        } else {
+          productsToReport = storeState.allReplenishmentAlerts.filter(p => selectedForReport.has(p.id) && !p.isPaused);
+        }
+        noHistoryToReport = storeState.allReplenishmentNoHistory.filter(p => !p.isPaused);
+
+        if (productsToReport.length === 0 && noHistoryToReport.length === 0) {
+          setDashboardError("No hay productos con alertas de stock para reportar.");
+          setTimeout(() => setDashboardError(null), 3000);
+          setIsGeneratingReport(false);
+          return;
+        }
+
+        // Agrupar por categoría
+        const categoriesMap = new Map<string, ProductWithReplenishment[]>();
+        for (const p of productsToReport) {
+          const catTitle = adminCategories.find(c => c.id === p.categoryId)?.title || 'Otras Categorías';
+          if (!categoriesMap.has(catTitle)) {
+            categoriesMap.set(catTitle, []);
+          }
+          categoriesMap.get(catTitle)!.push(p);
+        }
+
+        // Ordenar categorías y productos dentro de cada categoría: días de cobertura ASC, luego nombre
+        const sortedCategoryNames = Array.from(categoriesMap.keys()).sort((a, b) => a.localeCompare(b));
+        let tableRowsHtml = '';
+
+        for (const catName of sortedCategoryNames) {
+          const prods = categoriesMap.get(catName)!;
+          prods.sort((a, b) => {
+            const covA = a.replenishmentResult?.diasCobertura ?? Infinity;
+            const covB = b.replenishmentResult?.diasCobertura ?? Infinity;
+            if (covA !== covB) return covA - covB;
+            return (a.name || '').localeCompare(b.name || '');
+          });
+
+          tableRowsHtml += `
+            <tr style="background: #f1f5f9; font-weight: bold;">
+              <td colspan="9" style="padding: 10px 12px; font-size: 13px; color: #1e293b; border-top: 2px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+                CATEGORÍA: ${catName.toUpperCase()}
+              </td>
+            </tr>
+          `;
+
+          for (const p of prods) {
+            const diasCobStr = p.replenishmentResult?.diasCobertura != null ? p.replenishmentResult.diasCobertura.toFixed(1) : '—';
+            tableRowsHtml += `
+              <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 12px; font-weight: bold;">${p.name}</td>
+                <td style="padding: 12px; font-size: 12px; color: #666;">${p.sku || p.id.slice(0, 8)}</td>
+                <td style="padding: 12px; font-weight: bold; color: #ff5252;">${p.stock}</td>
+                <td style="padding: 12px;">${p.replenishmentResult?.promedioSemanal != null ? p.replenishmentResult.promedioSemanal.toFixed(1) : '—'}</td>
+                <td style="padding: 12px;">${diasCobStr}</td>
+                <td style="padding: 12px;">${p.replenishmentResult?.puntoReposicion != null ? p.replenishmentResult.puntoReposicion : '—'}</td>
+                <td style="padding: 12px; font-weight: bold; color: #10b981;">${p.replenishmentResult?.stockObjetivo != null ? p.replenishmentResult.stockObjetivo : '—'}</td>
+                <td style="padding: 12px; font-weight: bold; color: #3b82f6;">${p.replenishmentResult?.cantidadRecomendada != null ? p.replenishmentResult.cantidadRecomendada : '—'}</td>
+                <td style="padding: 12px; font-size: 12px; color: #666;">${p.replenishmentResult?.etiquetaMargen ?? '—'}</td>
+              </tr>
+            `;
+          }
+        }
+
+        // Productos sin ventas registradas en el período
+        const sortedNoHistory = [...noHistoryToReport].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const noHistoryRows = sortedNoHistory.map(p => `
+          <tr style="border-bottom: 1px solid #eee; background: #fffcf5;">
+            <td style="padding: 12px; font-weight: bold;">${p.name}</td>
+            <td style="padding: 12px; font-size: 12px; color: #666;">${p.sku || p.id.slice(0, 8)}</td>
+            <td style="padding: 12px; font-weight: bold; color: #ff5252;">${p.stock}</td>
+            <td style="padding: 12px;">—</td>
+            <td style="padding: 12px;">—</td>
+            <td style="padding: 12px;">—</td>
+            <td style="padding: 12px;">—</td>
+            <td style="padding: 12px;">—</td>
+            <td style="padding: 12px; font-size: 12px; color: #666;">SIN_HISTORIAL</td>
+          </tr>
+        `).join('');
+
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          setIsGeneratingReport(false);
+          return;
+        }
+
+        printWindow.document.write(`
+          <html><head><title>Reporte de Stock</title>
+          <style>body { font-family: system-ui; padding: 40px; color: #1a1a1a; } table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; font-size: 13px; } th { background: #f8f9fa; padding: 12px; font-weight: bold; border-bottom: 2px solid #ddd; font-size: 12px; } @media print { .no-print { display: none; } body { padding: 0; } }</style>
+          </head><body>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px;">
+                <div>
+                  <h1 style="margin: 0 0 8px 0; color: #e62e05;">Reporte de Stock Crítico (${productsToReport.length} productos)</h1>
+                  <p style="margin: 0; color: #666; font-weight: bold;">Martina Supermercado - Generado el ${new Date().toLocaleString('es-AR')} | Parámetros: Historial ${config.historyWeeks} sem, Cobertura ${config.coverageDays} días, Anticipación ${config.anticipationDays} días</p>
+                </div>
+                <button onclick="window.print()" class="no-print" style="background: #e62e05; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; cursor: pointer;">Imprimir / Guardar PDF</button>
+              </div>
+
+              ${productsToReport.length > 0 ? `
+              <table>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>SKU</th>
+                    <th>Stock actual</th>
+                    <th>Venta semanal prom.</th>
+                    <th>Días de cobertura</th>
+                    <th>Punto de reposición</th>
+                    <th>Stock objetivo</th>
+                    <th>Comprar</th>
+                    <th>Margen / historial</th>
+                  </tr>
+                </thead>
+                <tbody>${tableRowsHtml}</tbody>
+              </table>
+              ` : '<p>No hay alertas de reposición inminente.</p>'}
+
+              ${noHistoryToReport.length > 0 ? `
+              <div style="margin-top: 60px;">
+                <h2 style="color: #d97706; margin-bottom: 8px;">Productos sin ventas registradas en el período (Stock 0)</h2>
+                <p style="color: #666; font-size: 14px; margin-top: 0;">Estos productos se quedaron sin stock y no registran ventas en el período evaluado (${config.historyWeeks} semanas), por lo que no es posible proyectar la demanda de reposición.</p>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th>SKU</th>
+                      <th>Stock actual</th>
+                      <th>Venta semanal prom.</th>
+                      <th>Días de cobertura</th>
+                      <th>Punto de reposición</th>
+                      <th>Stock objetivo</th>
+                      <th>Comprar</th>
+                      <th>Margen / historial</th>
+                    </tr>
+                  </thead>
+                  <tbody>${noHistoryRows}</tbody>
+                </table>
+              </div>
+              ` : ''}
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
     } catch (err) {
       console.error("Error generating stock report:", err);
       setDashboardError("Error al generar el reporte de stock.");

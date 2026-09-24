@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useAdmin } from '../context/AdminContext';
-import { calculateDistanceKm } from '../utils/shipping';
+import { calculateDistanceKm } from '../../supabase/functions/_shared/shipping';
 import { useScrollLock } from '../utils/useScrollLock';
 
 interface DeliveryZonesModalProps {

@@ -4,7 +4,7 @@ import { useAdmin } from '../context/AdminContext';
 import { useAuth } from '../stores/useAuthStore';
 import { Link } from 'react-router-dom';
 import { WeightInputModal } from '../components/WeightInputModal';
-import { calculateDistanceKm, calculateShippingCost } from '../utils/shipping';
+import { calculateDistanceKm, calculateShippingCost } from '../../supabase/functions/_shared/shipping';
 
 export const Cart: React.FC = () => {
   const { items, updateQuantity, removeItem, totalPrice, totalItems, originalPriceSum, discountApplied, potentialDiscount, getStock, stockWarnings } = useCart();

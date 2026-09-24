@@ -43,6 +43,8 @@ export const Employees: React.FC = () => {
     password: ''
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -67,6 +69,43 @@ export const Employees: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  const handleDeleteEmployee = async (emp: Employee) => {
+    setIsDeleting(true);
+    try {
+      await employeesService.deleteEmployee(emp.id);
+      setEmployees(prev => prev.filter(e => e.id !== emp.id));
+      setDeletingEmployee(null);
+    } catch (err: any) {
+      alert('Error al eliminar empleado: ' + err.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+
+  const handleDeliveryChange = async (newEmployeeId: string) => {
+    setDeliveryLoading(true);
+    try {
+      if (!newEmployeeId) {
+        await employeesService.pauseDailyDelivery();
+        setActiveDeliveryId(null);
+      } else {
+        await employeesService.assignDailyDelivery(newEmployeeId);
+        setActiveDeliveryId(newEmployeeId);
+        const { whatsappMessageService } = await import('../../services/whatsapp-message.service');
+        const emp = employees.find(e => e.id === newEmployeeId);
+        if (emp && emp.phone) {
+          await whatsappMessageService.dispatchPendingDeliveryAlerts(emp.phone);
+        }
+      }
+    } catch (err: any) {
+      alert('Error al actualizar delivery: ' + err.message);
+    } finally {
+      setDeliveryLoading(false);
+    }
+  };
 
   const handleToggleDelivery = async (employeeId: string, isCurrentlyActive: boolean) => {
     try {
@@ -221,16 +260,16 @@ export const Employees: React.FC = () => {
       )}
 
       {/* Summary Cards Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
         {summaryCards.map((card, i) => (
-          <div key={i} className={`bg-white p-5 rounded-[1.75rem] border ${card.border} shadow-sm flex flex-col gap-3 hover:shadow-md transition-shadow`}>
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${card.color}`}>
-              <span className="material-symbols-outlined text-[22px]">{card.icon}</span>
+          <div key={i} className={`bg-white p-4 sm:p-5 rounded-2xl sm:rounded-[1.75rem] border ${card.border} shadow-sm flex flex-col gap-2.5 sm:gap-3 hover:shadow-md transition-shadow ${i === 2 ? 'col-span-2 md:col-span-1' : ''}`}>
+            <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center ${card.color} shrink-0`}>
+              <span className="material-symbols-outlined text-[20px] sm:text-[22px]">{card.icon}</span>
             </div>
-            <div>
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider leading-tight mb-1">{card.label}</p>
-              <p className="text-xl font-black text-on-background">{card.value}</p>
-              <p className="text-xs text-on-surface-variant mt-0.5 font-medium">{card.subvalue}</p>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider leading-tight mb-1 truncate">{card.label}</p>
+              <p className="text-lg sm:text-xl font-black text-on-background truncate">{card.value}</p>
+              <p className="text-[11px] sm:text-xs text-on-surface-variant mt-0.5 font-medium truncate">{card.subvalue}</p>
             </div>
           </div>
         ))}
@@ -243,7 +282,7 @@ export const Employees: React.FC = () => {
       ) : (
         <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden">
           {/* Search and Filters Bar */}
-          <div className="p-6 border-b border-outline-variant/10">
+          <div className="p-4 sm:p-6 border-b border-outline-variant/10">
             <div className="flex flex-col md:flex-row gap-3">
               {/* Search input */}
               <div className="relative flex-1 min-w-0">
@@ -255,6 +294,31 @@ export const Employees: React.FC = () => {
                   onChange={e => setSearchQuery(e.target.value)}
                   className="w-full bg-surface-container-low border-none rounded-xl py-2.5 pl-10 pr-4 text-sm outline-none focus:ring-2 ring-primary/20 transition-all font-medium"
                 />
+              </div>
+
+              {/* Delivery Assignment Selector */}
+              <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-1.5 shrink-0">
+                <span className={`material-symbols-outlined text-amber-600 text-[18px] ${deliveryLoading ? 'animate-spin' : ''}`}>
+                  {deliveryLoading ? 'sync' : 'local_shipping'}
+                </span>
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-amber-700">Delivery de Turno</span>
+                  <select
+                    value={activeDeliveryId || ''}
+                    disabled={deliveryLoading}
+                    onChange={e => handleDeliveryChange(e.target.value)}
+                    className="bg-transparent border-none p-0 text-xs font-bold text-amber-900 focus:outline-none cursor-pointer pr-4"
+                  >
+                    <option value="">Sin delivery asignado</option>
+                    {employees
+                      .filter(e => e.active)
+                      .map(e => (
+                        <option key={e.id} value={e.id}>
+                          {e.name} ({e.role === 'admin' ? 'Admin' : e.role === 'owner' ? 'Dueño' : 'Empleado'})
+                        </option>
+                      ))}
+                  </select>
+                </div>
               </div>
 
               {/* Filters Select Dropdown */}
@@ -273,63 +337,53 @@ export const Employees: React.FC = () => {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left border-collapse min-w-[760px]">
               <thead>
                 <tr className="border-b border-outline-variant/10 bg-surface-container-lowest text-left text-[11px] font-black text-on-surface-variant uppercase tracking-wider select-none">
-                  <th onClick={() => handleSort('name')} className="p-6 cursor-pointer hover:text-primary transition-colors">
+                  <th onClick={() => handleSort('name')} className="p-4 sm:p-6 cursor-pointer hover:text-primary transition-colors whitespace-nowrap">
                     Empleado {renderSortIndicator('name')}
                   </th>
-                  <th onClick={() => handleSort('role')} className="p-6 cursor-pointer hover:text-primary transition-colors">
+                  <th onClick={() => handleSort('role')} className="p-4 sm:p-6 cursor-pointer hover:text-primary transition-colors whitespace-nowrap">
                     Rol {renderSortIndicator('role')}
                   </th>
-                  <th onClick={() => handleSort('active')} className="p-6 cursor-pointer hover:text-primary transition-colors">
+                  <th onClick={() => handleSort('active')} className="p-4 sm:p-6 cursor-pointer hover:text-primary transition-colors whitespace-nowrap">
                     Estado {renderSortIndicator('active')}
                   </th>
-                  <th onClick={() => handleSort('created_at')} className="p-6 cursor-pointer hover:text-primary transition-colors">
+                  <th onClick={() => handleSort('created_at')} className="p-4 sm:p-6 cursor-pointer hover:text-primary transition-colors whitespace-nowrap">
                     Fecha Creación {renderSortIndicator('created_at')}
                   </th>
-                  <th className="p-6 text-right">Acciones</th>
+                  <th className="p-4 sm:p-6 text-right whitespace-nowrap">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10">
                 {sortedEmployees.map((emp) => (
                   <tr key={emp.id} className="hover:bg-surface-container-lowest transition-colors group">
-                    <td className="p-6">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-sm">
+                    <td className="p-4 sm:p-6 whitespace-nowrap">
+                      <div className="flex items-center gap-3 sm:gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0">
                           {emp.name.charAt(0).toUpperCase()}
                         </div>
-                        <div>
-                          <p className="text-sm font-bold text-on-background">{emp.name}</p>
-                          <p className="text-xs text-on-surface-variant">{emp.email}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-on-background truncate">{emp.name}</p>
+                          <p className="text-xs text-on-surface-variant truncate">{emp.email}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="p-6">
-                      <div className="flex flex-col gap-2 items-start">
+                    <td className="p-4 sm:p-6 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
                         <span className="px-3 py-1 bg-surface-container-low text-on-surface text-xs font-bold rounded-lg uppercase tracking-wider">
                           {emp.role === 'admin' ? 'Administrador' : emp.role === 'owner' ? 'Dueño' : emp.role === 'employee' ? 'Empleado' : emp.role === 'super_admin' ? 'Super Admin' : emp.role}
                         </span>
-                        {emp.active && (!activeDeliveryId || activeDeliveryId === emp.id) && (
-                          <button
-                            onClick={() => handleToggleDelivery(emp.id, activeDeliveryId === emp.id)}
-                            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors ${
-                              activeDeliveryId === emp.id 
-                                ? 'bg-primary text-white shadow-sm' 
-                                : 'bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-highest/80'
-                            }`}
-                            title={activeDeliveryId === emp.id ? 'Pausar Delivery' : 'Asignar como Delivery'}
-                          >
-                            <span className="material-symbols-outlined text-[14px]">
-                              {activeDeliveryId === emp.id ? 'local_shipping' : 'directions_bike'}
-                            </span>
-                            {activeDeliveryId === emp.id ? 'Delivery Activo' : 'Asignar Delivery'}
-                          </button>
+                        {activeDeliveryId === emp.id && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 animate-pulse">
+                            <span className="material-symbols-outlined text-[12px]">local_shipping</span>
+                            Delivery Activo
+                          </span>
                         )}
                       </div>
                     </td>
-                    <td className="p-6">
+                    <td className="p-4 sm:p-6 whitespace-nowrap">
                       {emp.active ? (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-50 text-green-700 text-xs font-bold border border-green-200">
                           <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
@@ -342,23 +396,34 @@ export const Employees: React.FC = () => {
                         </span>
                       )}
                     </td>
-                    <td className="p-6 text-sm text-on-surface-variant">
+                    <td className="p-4 sm:p-6 text-sm text-on-surface-variant whitespace-nowrap">
                       {new Date(emp.created_at).toLocaleDateString('es-AR')}
                     </td>
-                    <td className="p-6 text-right">
-                      <PermissionGuard permission="employees.update">
-                        <button 
-                          onClick={() => {
-                            setEditingEmployee(emp);
-                            setFormData({ ...emp });
-                            setShowModal(true);
-                          }}
-                          className="p-2 text-on-surface-variant hover:text-primary transition-colors hover:bg-surface-container-low rounded-xl"
-                          title="Editar Empleado"
-                        >
-                          <span className="material-symbols-outlined text-[20px]">edit</span>
-                        </button>
-                      </PermissionGuard>
+                    <td className="p-4 sm:p-6 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1">
+                        <PermissionGuard permission="employees.update">
+                          <button 
+                            onClick={() => {
+                              setEditingEmployee(emp);
+                              setFormData({ ...emp });
+                              setShowModal(true);
+                            }}
+                            className="p-2 text-on-surface-variant hover:text-primary transition-colors hover:bg-surface-container-low rounded-xl"
+                            title="Editar Empleado"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">edit</span>
+                          </button>
+                        </PermissionGuard>
+                        <PermissionGuard permission="employees.update">
+                          <button 
+                            onClick={() => setDeletingEmployee(emp)}
+                            className="p-2 text-on-surface-variant hover:text-error transition-colors hover:bg-red-50 rounded-xl"
+                            title="Eliminar Empleado"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">delete</span>
+                          </button>
+                        </PermissionGuard>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -510,6 +575,53 @@ export const Employees: React.FC = () => {
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación de Eliminación */}
+      {deletingEmployee && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !isDeleting && setDeletingEmployee(null)} />
+          <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl relative z-10 p-8 animate-in zoom-in-95 duration-300">
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-red-100 flex items-center justify-center">
+                <span className="material-symbols-outlined text-[32px] text-red-600">person_remove</span>
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-on-background">¿Eliminar empleado?</h3>
+                <p className="text-sm text-on-surface-variant mt-1">
+                  Vas a eliminar permanentemente a <span className="font-bold text-on-background">{deletingEmployee.name}</span>.
+                  <br />
+                  <span className="text-xs text-on-surface-variant/70 mt-1 block">{deletingEmployee.email}</span>
+                </p>
+                <p className="text-xs text-red-600 font-bold mt-3 bg-red-50 rounded-xl px-3 py-2 border border-red-100">
+                  Esta acción no se puede deshacer. El usuario perderá acceso al panel de admin.
+                </p>
+              </div>
+              <div className="flex gap-3 w-full pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeletingEmployee(null)}
+                  disabled={isDeleting}
+                  className="flex-1 py-3 text-on-surface-variant font-bold hover:bg-surface-container-low rounded-xl transition-all text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEmployee(deletingEmployee)}
+                  disabled={isDeleting}
+                  className="flex-[2] py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg shadow-red-200 transition-all disabled:opacity-50 text-sm flex items-center justify-center gap-2"
+                >
+                  {isDeleting ? (
+                    <><span className="material-symbols-outlined text-[16px] animate-spin">sync</span> Eliminando...</>
+                  ) : (
+                    <><span className="material-symbols-outlined text-[16px]">delete_forever</span> Sí, eliminar</>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

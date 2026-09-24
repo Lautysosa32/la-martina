@@ -13,6 +13,9 @@ export interface Product {
   badge: string | null;
   minStock: number;
   barcode: string | null;
+  codigoMtx?: string | null;
+  gtin?: string | null;
+  ean?: string | null;
   stock: number;
   subcategoryId?: string | null;
   saleType?: 'unit' | 'weight';
@@ -41,6 +44,9 @@ export interface SupabaseProduct {
   badge: string | null;
   min_stock: number;
   barcode: string | null;
+  codigo_mtx?: string | null;
+  gtin?: string | null;
+  ean?: string | null;
   stock: number;
   sale_type?: 'unit' | 'weight';
   is_paused?: boolean;

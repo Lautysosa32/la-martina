@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Reporte de Stock Crítico - Ejemplo Sintético</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 40px; color: #1a1a1a; margin: 0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; font-size: 13px; }
+    th { background: #f8f9fa; padding: 12px; font-weight: bold; border-bottom: 2px solid #ddd; font-size: 12px; }
+    td { padding: 12px; border-bottom: 1px solid #eee; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; }
+    .title { color: #e62e05; margin: 0 0 6px 0; font-size: 24px; }
+    .subtitle { color: #666; font-size: 13px; margin: 0; font-weight: bold; }
+    @media print { .no-print { display: none; } body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1 class="title">Reporte de Stock Crítico (4 productos)</h1>
+      <p class="subtitle">Martina Supermercado - Generado el 23/09/2026, 21:00:00 | Parámetros: Historial 16 sem, Cobertura 15 días, Anticipación 3 días</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Producto</th>
+        <th>SKU</th>
+        <th>Stock actual</th>
+        <th>Venta semanal prom.</th>
+        <th>Días de cobertura</th>
+        <th>Punto de reposición</th>
+        <th>Stock objetivo</th>
+        <th>Comprar</th>
+        <th>Margen / historial</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+    <tr style="background: #f1f5f9; font-weight: bold;">
+      <td colspan="9" style="padding: 10px 12px; font-size: 13px; color: #1e293b; border-top: 2px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+        CATEGORÍA: ALMACÉN
+      </td>
+    </tr>
+  
+      <tr style="border-bottom: 1px solid #eee;">
+        <td style="padding: 12px; font-weight: bold;">Arroz Doble Carolina 1kg</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">arr-001</td>
+        <td style="padding: 12px; font-weight: bold; color: #ff5252;">15</td>
+        <td style="padding: 12px;">5.6</td>
+        <td style="padding: 12px;">18.7</td>
+        <td style="padding: 12px;">3</td>
+        <td style="padding: 12px; font-weight: bold; color: #10b981;">14</td>
+        <td style="padding: 12px; font-weight: bold; color: #3b82f6;">0</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">Historial completo · margen 15%</td>
+      </tr>
+    
+      <tr style="border-bottom: 1px solid #eee;">
+        <td style="padding: 12px; font-weight: bold;">Aceite de Girasol 900ml</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">ace-002</td>
+        <td style="padding: 12px; font-weight: bold; color: #ff5252;">10</td>
+        <td style="padding: 12px;">2.0</td>
+        <td style="padding: 12px;">35.0</td>
+        <td style="padding: 12px;">2</td>
+        <td style="padding: 12px; font-weight: bold; color: #10b981;">6</td>
+        <td style="padding: 12px; font-weight: bold; color: #3b82f6;">0</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">Historial parcial · margen 25%</td>
+      </tr>
+    
+    <tr style="background: #f1f5f9; font-weight: bold;">
+      <td colspan="9" style="padding: 10px 12px; font-size: 13px; color: #1e293b; border-top: 2px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+        CATEGORÍA: SNACKS Y GALLETITAS
+      </td>
+    </tr>
+  
+      <tr style="border-bottom: 1px solid #eee;">
+        <td style="padding: 12px; font-weight: bold;">Galletas de Avena y Miel</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">gal-003</td>
+        <td style="padding: 12px; font-weight: bold; color: #ff5252;">4</td>
+        <td style="padding: 12px;">2.5</td>
+        <td style="padding: 12px;">11.2</td>
+        <td style="padding: 12px;">2</td>
+        <td style="padding: 12px; font-weight: bold; color: #10b981;">8</td>
+        <td style="padding: 12px; font-weight: bold; color: #3b82f6;">4</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">Historial insuficiente · margen 35%</td>
+      </tr>
+    
+      <tr style="border-bottom: 1px solid #eee;">
+        <td style="padding: 12px; font-weight: bold;">Snack Papas Fritas 150g</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">sna-004</td>
+        <td style="padding: 12px; font-weight: bold; color: #ff5252;">1</td>
+        <td style="padding: 12px;">—</td>
+        <td style="padding: 12px;">—</td>
+        <td style="padding: 12px;">—</td>
+        <td style="padding: 12px; font-weight: bold; color: #10b981;">—</td>
+        <td style="padding: 12px; font-weight: bold; color: #3b82f6;">—</td>
+        <td style="padding: 12px; font-size: 12px; color: #666;">—</td>
+      </tr>
+    
+    </tbody>
+  </table>
+
+  <div style="margin-top: 50px;">
+    <h2 style="color: #d97706; margin-bottom: 6px; font-size: 18px;">Productos sin ventas registradas en el período (Stock 0)</h2>
+    <p style="color: #666; font-size: 13px; margin: 0 0 16px 0;">Estos productos se quedaron sin stock y no registran ventas en el período evaluado (16 semanas), por lo que no es posible proyectar la demanda de reposición.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>SKU</th>
+          <th>Stock actual</th>
+          <th>Venta semanal prom.</th>
+          <th>Días de cobertura</th>
+          <th>Punto de reposición</th>
+          <th>Stock objetivo</th>
+          <th>Comprar</th>
+          <th>Margen / historial</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+          <tr style="background: #fffcf5;">
+            <td style="font-weight: bold;">Yerba Mate Especial 500g</td>
+            <td style="color: #666; font-size: 12px;">yer-005</td>
+            <td style="font-weight: bold; color: #ff5252;">0</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td style="font-size: 12px; color: #666;">SIN_HISTORIAL</td>
+          </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

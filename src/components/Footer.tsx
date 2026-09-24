@@ -123,7 +123,7 @@ export const Footer: React.FC = () => {
                 rel="noopener noreferrer"
                 className="text-on-surface hover:text-primary transition-colors"
               >
-                <strong className="font-bold">Lautarososa.com</strong>
+                <strong className="font-bold">LautaroSosa.com</strong>
               </a>
             </p>
           </div>

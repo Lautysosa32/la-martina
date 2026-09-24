@@ -56,6 +56,8 @@ export interface OfflineSale {
   total: number;
   ticket_number?: string;
   is_offline: boolean;
+  invoice_id?: string;
+  is_billed?: boolean;
   error_message?: string;
   synced_at?: string;
 }
