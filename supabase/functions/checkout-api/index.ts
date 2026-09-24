@@ -225,7 +225,7 @@ serve(async (req: any) => {
       total: finalTotal,
       discount: totalDiscount,
       discountLabel: orderOffer.offerLabel,
-      paid_amount: finalTotal, // assuming full payment pending
+      paid_amount: 0,
       customer: customer ? (customer as any).name : 'Invitado',
       dni,
       payment_method,
