@@ -1,11 +1,17 @@
+// @ts-ignore: Deno import
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+// @ts-ignore: Deno import
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0"
+// @ts-ignore: Deno import
 import { corsHeaders } from "../_shared/cors.ts"
+// @ts-ignore: Deno import
 import { applyOffersToCartItem, applyOrderOffers } from "../_shared/pricing.ts"
+// @ts-ignore: Deno import
 import { calculateDistanceKm, calculateShippingCost } from "../_shared/shipping.ts"
+// @ts-ignore: Deno import
 import type { PricingItemInput, PricingCustomer, PricingOffer, PricingOfferRedemption, PricingProduct } from "../_shared/pricing.types.ts"
 
-serve(async (req) => {
+serve(async (req: any) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -19,7 +25,9 @@ serve(async (req) => {
       return new Response('Not found', { status: 404, headers: corsHeaders })
     }
 
+    // @ts-ignore: Deno global
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    // @ts-ignore: Deno global
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
     if (!supabaseUrl || !supabaseKey) {
@@ -36,18 +44,17 @@ serve(async (req) => {
     }
 
     // 1. Fetch related data
-    const itemIds = items.map(i => i.id || i.productId)
+    const itemIds = items.map((i: any) => i.id || i.productId)
     
     // Si es checkout definitivo, validamos el token y obtenemos el teléfono real
     let realPhone = customer_phone;
-    let tokenData = null;
     
     if (isCheckout) {
       if (!checkout_token) throw new Error('Checkout token is required');
       const { data: td, error: te } = await supabase
         .from('checkout_tokens')
         .select('phone, is_used, expires_at')
-        .eq('id', checkout_token)
+        .eq('token', checkout_token)
         .single();
         
       if (te || !td) throw new Error('Token inválido');
@@ -55,11 +62,10 @@ serve(async (req) => {
       if (new Date(td.expires_at) < new Date()) throw new Error('Token expirado');
       
       realPhone = td.phone;
-      tokenData = td;
     }
 
     const [productsRes, offersRes, redemptionsRes, settingsRes] = await Promise.all([
-      supabase.from('products').select('id, price, category_id, subcategory_id, badge, stock, active').in('id', itemIds),
+      supabase.from('products').select('id, name, price, category_id, subcategory_id, badge, stock, is_paused').in('id', itemIds),
       supabase.from('offers').select('*').eq('active', true),
       supabase.from('offer_redemptions').select('*').gte('redemption_date', new Date().toISOString().split('T')[0]),
       supabase.from('settings').select('key, value').in('key', ['general_config', 'delivery_radius_km', 'shipping_cost_per_km', 'base_shipping_cost', 'store_lat', 'store_lng', 'free_shipping_min_amount'])
@@ -90,7 +96,7 @@ serve(async (req) => {
     const today = new Date()
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
-    const pricingProducts: PricingProduct[] = products.map(p => ({
+    const pricingProducts: PricingProduct[] = products.map((p: any) => ({
       id: p.id,
       categoryId: p.category_id,
       subcategoryId: p.subcategory_id,
@@ -103,9 +109,9 @@ serve(async (req) => {
     const finalItems = []
 
     for (const item of items) {
-      const prod = products.find(p => p.id === (item.id || item.productId))
+      const prod = products.find((p: any) => p.id === (item.id || item.productId))
       if (!prod) throw new Error(`Product ${item.id} not found`)
-      if (!prod.active) throw new Error(`Product ${item.id} is not active`)
+      if (prod.is_paused) throw new Error(`Product ${item.id} is paused`)
       
       const qty = parseInt(item.quantity)
       if (isNaN(qty) || qty <= 0) throw new Error(`Invalid quantity for ${item.id}`)
@@ -142,10 +148,9 @@ serve(async (req) => {
 
       finalItems.push({
         id: prod.id,
+        name: prod.name,
         quantity: qty,
-        price: itemOffer.finalPrice,
-        originalPrice: prod.price,
-        offerId: itemOffer.offerId
+        price: itemOffer.finalPrice
       })
     }
 
@@ -211,6 +216,11 @@ serve(async (req) => {
       })
     }
 
+    let fullAddress = delivery_data?.address || '';
+    if (delivery_data?.houseNumber) fullAddress += ` ${delivery_data.houseNumber}`;
+    if (delivery_data?.reference) fullAddress += ` (Ref: ${delivery_data.reference})`;
+    if (notes) fullAddress += ` - Notas: ${notes}`;
+
     const orderPayload = {
       total: finalTotal,
       discount: totalDiscount,
@@ -219,14 +229,10 @@ serve(async (req) => {
       customer: customer ? (customer as any).name : 'Invitado',
       dni,
       payment_method,
-      address: delivery_data?.address,
+      address: fullAddress.trim(),
       delivery_lat,
       delivery_lng,
-      delivery_address_label: delivery_data?.addressLabel,
-      delivery_house_number: delivery_data?.houseNumber,
-      delivery_reference: delivery_data?.reference,
-      delivery_notes: notes,
-      delivery_method: isPickup ? 'pickup' : 'delivery',
+      method: isPickup ? 'pickup' : 'delivery',
       delivery_time: delivery_data?.deliveryTime
     }
 

@@ -38,6 +38,7 @@ SET search_path = public, extensions
 AS $$
 DECLARE
   v_clean_phone text;
+  v_wa_phone text;
   v_last_request timestamp with time zone;
   v_code text;
   v_hash text;
@@ -48,7 +49,22 @@ BEGIN
     RAISE EXCEPTION 'Teléfono inválido';
   END IF;
 
-  -- 2. Rate limiting: verificar última solicitud
+  -- 2. Normalizar formato para WhatsApp Argentina (549...)
+  IF v_clean_phone LIKE '549%' THEN
+    v_wa_phone := v_clean_phone;
+  ELSIF v_clean_phone LIKE '54%' AND length(v_clean_phone) = 12 THEN
+    v_wa_phone := '549' || substring(v_clean_phone from 3);
+  ELSIF length(v_clean_phone) = 10 AND NOT (v_clean_phone LIKE '54%') THEN
+    v_wa_phone := '549' || v_clean_phone;
+  ELSIF length(v_clean_phone) = 11 AND v_clean_phone LIKE '9%' THEN
+    v_wa_phone := '54' || v_clean_phone;
+  ELSIF NOT (v_clean_phone LIKE '54%') AND length(v_clean_phone) < 12 THEN
+    v_wa_phone := '549' || v_clean_phone;
+  ELSE
+    v_wa_phone := v_clean_phone;
+  END IF;
+
+  -- 3. Rate limiting: verificar última solicitud
   SELECT created_at INTO v_last_request
   FROM public.otp_requests
   WHERE phone = v_clean_phone
@@ -59,30 +75,30 @@ BEGIN
     RAISE EXCEPTION 'Debes esperar 60 segundos antes de solicitar otro código';
   END IF;
 
-  -- 3. Invalidar códigos anteriores del mismo número
+  -- 4. Invalidar códigos anteriores del mismo número
   UPDATE public.otp_requests
   SET is_invalidated = true
   WHERE phone = v_clean_phone AND is_invalidated = false;
 
-  -- 4. Generar código de 4 dígitos
+  -- 5. Generar código de 4 dígitos
   v_code := lpad(floor(random() * 9000 + 1000)::text, 4, '0');
   
-  -- 5. Hashear el código
+  -- 6. Hashear el código
   v_hash := crypt(v_code, gen_salt('bf', 8));
 
-  -- 6. Insertar solicitud de OTP con 5 minutos de expiración
+  -- 7. Insertar solicitud de OTP con 5 minutos de expiración
   INSERT INTO public.otp_requests (phone, code_hash, expires_at)
   VALUES (v_clean_phone, v_hash, now() + interval '5 minutes');
 
-  -- 7. Encolar el mensaje de WhatsApp para que el worker lo envíe
+  -- 8. Encolar el mensaje de WhatsApp para que el worker lo envíe
   INSERT INTO public.whatsapp_messages (phone, customer_name, type, title, message, customer_phone, status)
   VALUES (
-    v_clean_phone,
+    v_wa_phone,
     COALESCE(p_customer_name, 'Cliente'),
     'otp_verification',
     'OTP: ' || v_code,
     '🔐 *Martina Supermercado* - Código de Verificación:' || E'\n\n' || 'Tu código es: *' || v_code || '*' || E'\n\n' || 'Ingresalo en la pantalla para confirmar tu pedido. No compartas este código con nadie.',
-    v_clean_phone,
+    v_wa_phone,
     'pending'
   );
 END;
