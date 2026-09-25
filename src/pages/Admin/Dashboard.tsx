@@ -512,12 +512,23 @@ export const Dashboard: React.FC = () => {
               </button>
               <h2 className="text-xl font-bold">Alertas de Stock</h2>
             </div>
-            <button
-              onClick={() => navigate('/admin/inventory')}
-              className="text-primary text-sm font-bold hover:underline"
-            >
-              Inventario
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => fetchLowStockDashboardProducts({ page, limit })}
+                title="Actualizar análisis de reposición"
+                className="p-1.5 rounded-xl hover:bg-surface-container-high transition-colors text-on-surface-variant hover:text-on-surface"
+              >
+                <span className={`material-symbols-outlined text-[18px] ${lowStockDashboardLoading ? 'animate-spin text-primary' : ''}`}>
+                  refresh
+                </span>
+              </button>
+              <button
+                onClick={() => navigate('/admin/inventory')}
+                className="text-primary text-sm font-bold hover:underline"
+              >
+                Inventario
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-hidden flex flex-col">

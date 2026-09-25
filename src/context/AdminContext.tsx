@@ -173,6 +173,7 @@ export interface GeneralConfig {
   shippingBaseCost: number;
   shippingCostPerKm: number;
   freeShippingMinAmount: number;
+  stockAlertOwnerId?: string | null;
 }
 
 export interface DeliveryTimeSlot {
@@ -1364,7 +1365,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             blockedPhones: [],
             shippingBaseCost: 1000,
             shippingCostPerKm: 400,
-            freeShippingMinAmount: 0
+            freeShippingMinAmount: 0,
+            stockAlertOwnerId: null
           }),
           fetchSetting<HeroBanner[]>('hero_banners', defaultHeroBanners),
           fetchSetting<DeliveryTimeSlot[]>('delivery_time_slots', defaultDeliveryTimeSlots),
@@ -1662,7 +1664,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     blockedPhones: [],
     shippingBaseCost: 1000,
     shippingCostPerKm: 400,
-    freeShippingMinAmount: 0
+    freeShippingMinAmount: 0,
+    stockAlertOwnerId: null
   };
   const [generalConfig, setGeneralConfig] = useState<GeneralConfig>(defaultGeneralConfig);
   const updateGeneralConfig = async (updates: Partial<GeneralConfig>) => {

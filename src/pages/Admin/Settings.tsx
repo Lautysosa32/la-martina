@@ -8,6 +8,8 @@ import { ReplenishmentConfig, defaultReplenishmentConfig, validateReplenishmentC
 import { useProductStore } from '../../stores/useProductStore';
 import { PriceTagConfig, defaultPriceTagConfig, generateBarcodeSvg, formatTagPrice, printPriceTags, getFontSizeStyles } from '../../utils/priceTagUtils';
 import { Product } from '../../types/product.types';
+import { employeesService } from '../../services/employees.service';
+import { Employee } from '../../types/permissions.types';
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
   card: 'Tarjeta',
@@ -113,6 +115,13 @@ export const Settings: React.FC = () => {
 
   const [inventorySubSection, setInventorySubSection] = useState<'labels' | 'replenishment'>('labels');
   const [priceTagForm, setPriceTagForm] = useState<PriceTagConfig>(defaultPriceTagConfig);
+  const [owners, setOwners] = useState<Employee[]>([]);
+
+  useEffect(() => {
+    employeesService.getAllEmployees()
+      .then(emps => setOwners(emps.filter(e => e.active && e.role === 'owner')))
+      .catch(() => {});
+  }, []);
 
   const handleReplenishmentChange = (key: keyof Omit<ReplenishmentFormState, 'enabled'>, rawValue: string) => {
     // Permitir campo vacío temporal o solo dígitos positivos
@@ -3994,6 +4003,28 @@ export const Settings: React.FC = () => {
                     />
                     <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                   </label>
+                </div>
+
+                {/* Dueño asignado para alertas de stock / faltantes */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-surface-container-lowest border border-outline-variant/15">
+                  <div>
+                    <h4 className="text-sm font-black text-on-surface">Dueño para alertas de faltantes (WhatsApp)</h4>
+                    <p className="text-[11px] text-on-surface-variant mt-1">
+                      Seleccioná a qué dueño se le enviará el mensaje cuando un producto cruce el punto de reposición o quede sin stock.
+                    </p>
+                  </div>
+                  <select
+                    value={generalConfig?.stockAlertOwnerId || ''}
+                    onChange={(e) => updateGeneralConfig({ stockAlertOwnerId: e.target.value || null })}
+                    className="bg-white border border-outline-variant/30 rounded-xl px-4 py-2.5 text-xs font-bold text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
+                  >
+                    <option value="">Todos los dueños</option>
+                    {owners.map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.name} {o.phone ? `(${o.phone})` : '(Sin tel)'}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Params */}

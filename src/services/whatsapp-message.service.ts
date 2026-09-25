@@ -297,13 +297,19 @@ export const whatsappMessageService = {
   },
 
   /**
-   * Encola una alerta de stock bajo/cero para todos los dueños del sistema.
+   * Encola una alerta de stock bajo/cero para el dueño configurado (o todos los dueños).
    */
   async createLowStockAlertMessage(
     productName: string,
     quantity: number,
     outOfStockTotal: number,
-    lowStockTotal: number
+    lowStockTotal: number,
+    replenishmentData?: {
+      puntoReposicion: number | null;
+      cantidadRecomendada: number | null;
+      diasCobertura: number | null;
+      etiquetaMargen?: string | null;
+    } | null
   ) {
     try {
       // 0. Check global config to see if notifications are suspended
@@ -315,7 +321,7 @@ export const whatsappMessageService = {
       // 1. Obtener empleados con rol 'owner', activos y con teléfono
       const { data: owners, error } = await supabase
         .from('employees')
-        .select('name, phone')
+        .select('id, user_id, name, phone')
         .eq('role', 'owner')
         .eq('active', true)
         .not('phone', 'is', null)
@@ -331,10 +337,28 @@ export const whatsappMessageService = {
         return false;
       }
 
-      const message = `🚨 *Nuevo faltante*\n\n*${productName}* (${quantity} unidades)\n\n*Productos con bajo stock:* ${lowStockTotal}\n*Productos sin stock:* ${outOfStockTotal}`;
+      // Filtrar por dueño configurado si se especificó uno
+      let targetOwners = owners;
+      const configuredOwnerId = configData?.value?.stockAlertOwnerId;
+      if (configuredOwnerId) {
+        const matched = owners.filter(o => o.id === configuredOwnerId || o.user_id === configuredOwnerId);
+        if (matched.length > 0) {
+          targetOwners = matched;
+        }
+      }
 
-      // 2. Encolar un mensaje para cada dueño
-      const promises = owners.map(owner =>
+      // Construcción del mensaje: enriquecido con Reposición Inteligente si hay datos, o formato clásico
+      let message = '';
+      if (replenishmentData && replenishmentData.puntoReposicion != null) {
+        const coberturaStr = replenishmentData.diasCobertura != null ? `• Cobertura estimada: ${replenishmentData.diasCobertura.toFixed(1)} días\n` : '';
+        const comprarStr = replenishmentData.cantidadRecomendada != null && replenishmentData.cantidadRecomendada > 0 ? `• Sugerido a comprar: ${replenishmentData.cantidadRecomendada} u.\n` : '';
+        message = `🚨 *Nuevo faltante (Reposición Inteligente)*\n\n*${productName}*\n• Stock actual: ${quantity} u.\n• Punto de reposición: ${replenishmentData.puntoReposicion} u.\n${comprarStr}${coberturaStr}\n*Productos con bajo stock:* ${lowStockTotal}\n*Productos sin stock:* ${outOfStockTotal}`;
+      } else {
+        message = `🚨 *Nuevo faltante*\n\n*${productName}* (${quantity} unidades)\n\n*Productos con bajo stock:* ${lowStockTotal}\n*Productos sin stock:* ${outOfStockTotal}`;
+      }
+
+      // 2. Encolar un mensaje para cada dueño destinatario
+      const promises = targetOwners.map(owner =>
         this.createWhatsAppMessage({
           phone: owner.phone,
           customer_name: owner.name,

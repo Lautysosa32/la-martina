@@ -5,12 +5,14 @@ import { employeesService } from '../../services/employees.service';
 import { Employee } from '../../types/permissions.types';
 import { PermissionGuard } from '../../components/auth/PermissionGuard';
 import { useScrollLock } from '../../utils/useScrollLock';
+import { useAdmin } from '../../context/AdminContext';
 
 type FilterType = 'todos' | 'activos' | 'inactivos' | 'administradores' | 'empleados' | 'dueños';
 type SortField = 'name' | 'role' | 'active' | 'created_at';
 type SortDirection = 'asc' | 'desc';
 
 export const Employees: React.FC = () => {
+  const { generalConfig, updateGeneralConfig } = useAdmin();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -315,6 +317,30 @@ export const Employees: React.FC = () => {
                       .map(e => (
                         <option key={e.id} value={e.id}>
                           {e.name} ({e.role === 'admin' ? 'Admin' : e.role === 'owner' ? 'Dueño' : 'Empleado'})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Selector de Dueño para Alertas de Faltantes */}
+              <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-1.5 shrink-0">
+                <span className="material-symbols-outlined text-red-600 text-[18px]">
+                  notifications_active
+                </span>
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-red-700">Alertas de Faltantes</span>
+                  <select
+                    value={generalConfig?.stockAlertOwnerId || ''}
+                    onChange={e => updateGeneralConfig({ stockAlertOwnerId: e.target.value || null })}
+                    className="bg-transparent border-none p-0 text-xs font-bold text-red-900 focus:outline-none cursor-pointer pr-4"
+                  >
+                    <option value="">Todos los dueños</option>
+                    {employees
+                      .filter(e => e.active && e.role === 'owner')
+                      .map(e => (
+                        <option key={e.id} value={e.id}>
+                          {e.name} {e.phone ? `(${e.phone})` : '(Sin tel)'}
                         </option>
                       ))}
                   </select>

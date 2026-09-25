@@ -559,7 +559,15 @@ export const useProductStore = create<ProductState>((set, get) => ({
     const product = previousProducts.find(p => p.id === id) || previousInventory.find(p => p.id === id);
     const prevStock = product ? product.stock : null;
     const productName = product ? product.name : 'Producto Desconocido';
-    const minStock = product?.minStock ?? 15;
+    const defaultMinStock = product?.minStock ?? 15;
+
+    // Si reposición inteligente está habilitada y tenemos puntoReposicion, usarlo como umbral
+    const isRepEnabled = get().isReplenishmentEnabled;
+    const existingWithRep = (get().lowStockDashboardProducts as ProductWithReplenishment[]).find(p => p.id === id)
+      ?? (get().allReplenishmentAlerts as ProductWithReplenishment[]).find(p => p.id === id)
+      ?? (product as ProductWithReplenishment);
+    const repResult = isRepEnabled ? existingWithRep?.replenishmentResult : null;
+    const minStock = (isRepEnabled && repResult?.puntoReposicion != null) ? repResult.puntoReposicion : defaultMinStock;
     
     let crossedLowStock = false;
     let crossedOutOfStock = false;
@@ -627,7 +635,13 @@ export const useProductStore = create<ProductState>((set, get) => ({
           productName,
           stock,
           nextOutOfStockTotal,
-          nextLowStockTotal
+          nextLowStockTotal,
+          repResult ? {
+            puntoReposicion: repResult.puntoReposicion,
+            cantidadRecomendada: repResult.cantidadRecomendada,
+            diasCobertura: repResult.diasCobertura,
+            etiquetaMargen: repResult.etiquetaMargen
+          } : null
         ).catch(console.error);
       });
     }
