@@ -16,6 +16,7 @@ import { supabase } from '../../lib/supabase';
 import { ImageSelectorModal } from '../../components/ImageSelectorModal';
 import { useNavigate } from 'react-router-dom';
 import { PriceTagsModal } from '../../components/PriceTagsModal';
+import { ReplenishmentResult } from '../../utils/replenishment';
 
 type SortKey = 'name' | 'categoryId' | 'stock' | 'price';
 interface SortConfig {
@@ -117,6 +118,21 @@ export const Inventory: React.FC = () => {
   const [bulkPercent, setBulkPercent] = useState('');
   const [editItem, setEditItem] = useState<{ id: string, value: string } | null>(null);
   const [newItemName, setNewItemName] = useState('');
+  const [modalReplenishment, setModalReplenishment] = useState<ReplenishmentResult | null>(null);
+  const [loadingReplenishment, setLoadingReplenishment] = useState(false);
+
+  useEffect(() => {
+    if (showProductModal.show && showProductModal.mode === 'edit' && showProductModal.product) {
+      setLoadingReplenishment(true);
+      useProductStore.getState().getProductReplenishment(showProductModal.product)
+        .then(res => setModalReplenishment(res))
+        .catch(() => setModalReplenishment(null))
+        .finally(() => setLoadingReplenishment(false));
+    } else {
+      setModalReplenishment(null);
+      setLoadingReplenishment(false);
+    }
+  }, [showProductModal.show, showProductModal.mode, showProductModal.product?.id]);
 
   // Import States
   const [showImportReview, setShowImportReview] = useState(false);
@@ -1479,58 +1495,75 @@ export const Inventory: React.FC = () => {
                 </div>
               </div>
 
-              {/* Reposición Inteligente (solo lectura, solo en modo edición) */}
-              {showProductModal.mode === 'edit' && showProductModal.product && (() => {
-                const rep = (useProductStore.getState().lowStockDashboardProducts as import('../../stores/useProductStore').ProductWithReplenishment[])
-                  .find(p => p.id === showProductModal.product!.id)?.replenishmentResult
-                  ?? (useProductStore.getState().allReplenishmentAlerts as import('../../stores/useProductStore').ProductWithReplenishment[])
-                  .find(p => p.id === showProductModal.product!.id)?.replenishmentResult;
-
-                if (!rep || rep.status === 'SIN_HISTORIAL') return null;
-
-                const diasCob = rep.diasCobertura;
-                const cobColor = diasCob == null ? 'text-on-surface-variant'
-                  : diasCob <= 3 ? 'text-error font-black'
-                  : diasCob <= 7 ? 'text-orange-500 font-bold'
-                  : 'text-emerald-600 font-bold';
-
-                return (
-                  <div className="bg-surface-container-lowest border border-outline-variant/15 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="material-symbols-outlined text-[16px] text-primary">auto_graph</span>
-                      <span className="text-[10px] font-black text-on-surface uppercase tracking-wider">Reposición Inteligente</span>
-                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${rep.status === 'REPOSICION' ? 'bg-error/10 text-error' : 'bg-emerald-500/10 text-emerald-600'}`}>
-                        {rep.status === 'REPOSICION' ? '⚠ Requiere reposición' : '✓ Stock normal'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-[10px]">
-                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
-                        <p className="text-on-surface-variant font-semibold">Días de cobertura</p>
-                        <p className={`text-base mt-0.5 tabular-nums ${cobColor}`}>
-                          {diasCob != null ? `${diasCob.toFixed(1)} días` : '—'}
-                        </p>
-                      </div>
-                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
-                        <p className="text-on-surface-variant font-semibold">Punto de reposición</p>
-                        <p className="text-base font-bold mt-0.5 tabular-nums text-on-surface">{rep.puntoReposicion ?? '—'} u.</p>
-                      </div>
-                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
-                        <p className="text-on-surface-variant font-semibold">Stock objetivo</p>
-                        <p className="text-base font-bold mt-0.5 tabular-nums text-emerald-600">{rep.stockObjetivo ?? '—'} u.</p>
-                      </div>
-                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
-                        <p className="text-on-surface-variant font-semibold">Comprar</p>
-                        <p className="text-base font-black mt-0.5 tabular-nums text-blue-600">{rep.cantidadRecomendada != null ? `${rep.cantidadRecomendada} u.` : '—'}</p>
-                      </div>
-                    </div>
-                    {rep.etiquetaMargen && (
-                      <p className="text-[9px] text-on-surface-variant/70 font-semibold leading-tight pt-1 border-t border-outline-variant/10">
-                        {rep.etiquetaMargen}
-                      </p>
-                    )}
+              {/* Reposición Inteligente (on-demand en modo edición) */}
+              {showProductModal.mode === 'edit' && showProductModal.product && (
+                loadingReplenishment ? (
+                  <div className="bg-surface-container-lowest border border-outline-variant/15 rounded-2xl p-4 flex items-center gap-3">
+                    <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin shrink-0"></div>
+                    <p className="text-xs text-on-surface-variant font-medium">Analizando demanda y métricas de reposición...</p>
                   </div>
-                );
-              })()}
+                ) : modalReplenishment ? (
+                  modalReplenishment.status === 'SIN_HISTORIAL' ? (
+                    <div className="bg-surface-container-lowest border border-outline-variant/15 rounded-2xl p-3.5 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[16px] text-amber-500">info</span>
+                        <span className="text-[10px] font-black text-on-surface uppercase tracking-wider">Reposición Inteligente</span>
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700">Sin historial suficiente</span>
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant/80 font-medium leading-relaxed">
+                        Este producto requiere al menos 2 semanas con ventas registradas para proyectar el consumo y sugerir reposiciones automáticas.
+                      </p>
+                    </div>
+                  ) : (() => {
+                    const diasCob = modalReplenishment.diasCobertura;
+                    const cobColor = diasCob == null ? 'text-on-surface-variant'
+                      : diasCob <= 3 ? 'text-error font-black'
+                      : diasCob <= 7 ? 'text-orange-500 font-bold'
+                      : 'text-emerald-600 font-bold';
+
+                    return (
+                      <div className="bg-surface-container-lowest border border-outline-variant/15 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-[16px] text-primary">auto_graph</span>
+                            <span className="text-[10px] font-black text-on-surface uppercase tracking-wider">Reposición Inteligente</span>
+                          </div>
+                          <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${modalReplenishment.status === 'REPOSICION' ? 'bg-error/10 text-error' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                            {modalReplenishment.status === 'REPOSICION' ? '⚠ Requiere reposición' : '✓ Stock suficiente'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[10px]">
+                          <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                            <p className="text-on-surface-variant font-semibold">Días de cobertura</p>
+                            <p className={`text-base mt-0.5 tabular-nums ${cobColor}`}>
+                              {diasCob != null ? `${diasCob.toFixed(1)} días` : '—'}
+                            </p>
+                          </div>
+                          <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                            <p className="text-on-surface-variant font-semibold">Punto de reposición</p>
+                            <p className="text-base font-bold mt-0.5 tabular-nums text-on-surface">{modalReplenishment.puntoReposicion ?? '—'} u.</p>
+                          </div>
+                          <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                            <p className="text-on-surface-variant font-semibold">Stock objetivo</p>
+                            <p className="text-base font-bold mt-0.5 tabular-nums text-emerald-600">{modalReplenishment.stockObjetivo ?? '—'} u.</p>
+                          </div>
+                          <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                            <p className="text-on-surface-variant font-semibold">Comprar sugerido</p>
+                            <p className={`text-base font-black mt-0.5 tabular-nums ${modalReplenishment.cantidadRecomendada && modalReplenishment.cantidadRecomendada > 0 ? 'text-blue-600' : 'text-on-surface-variant'}`}>
+                              {modalReplenishment.cantidadRecomendada != null && modalReplenishment.cantidadRecomendada > 0 ? `${modalReplenishment.cantidadRecomendada} u.` : '0 u.'}
+                            </p>
+                          </div>
+                        </div>
+                        {modalReplenishment.etiquetaMargen && (
+                          <p className="text-[9px] text-on-surface-variant/70 font-semibold leading-tight pt-1 border-t border-outline-variant/10">
+                            {modalReplenishment.etiquetaMargen}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()
+                ) : null
+              )}
 
               {/* Switch Pausar Producto */}
               <div className="bg-surface-container-low/60 border border-outline-variant/15 rounded-2xl p-4 flex items-center justify-between mt-2">

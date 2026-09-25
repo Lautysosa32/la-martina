@@ -40,7 +40,8 @@ interface ProductState {
   allReplenishmentNoHistory: ProductWithReplenishment[];
 
   fetchLowStockDashboardProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string }) => Promise<void>;
-  fetchAllReplenishmentAlerts: () => Promise<void>;
+  fetchAllReplenishmentAlerts: (forceRefresh?: boolean) => Promise<void>;
+  getProductReplenishment: (product: Product) => Promise<ReplenishmentResult | null>;
 
   addProduct: (product: CreateProductInput) => Promise<Product | null>;
   updateProduct: (id: string, updates: UpdateProductInput) => Promise<boolean>;
@@ -62,6 +63,7 @@ const getErrorMessage = (err: any, defaultMessage: string): string => {
 };
 
 let isFetchingProducts = false;
+let lastReplenishmentFetchTimestamp = 0;
 
 const toLocalProductFromStoreProduct = (p: Product): LocalProduct => ({
   id: p.id,
@@ -248,17 +250,23 @@ export const useProductStore = create<ProductState>((set, get) => ({
     }
   },
 
-  fetchAllReplenishmentAlerts: async () => {
+  fetchAllReplenishmentAlerts: async (forceRefresh = false) => {
     try {
+      const now = Date.now();
+      // Si ya calculamos alertas en los últimos 10 minutos y no se solicita refresco forzado, reutilizar
+      if (!forceRefresh && get().allReplenishmentAlerts.length > 0 && (now - lastReplenishmentFetchTimestamp) < 10 * 60 * 1000) {
+        return;
+      }
+
       const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
       const configError = validateReplenishmentConfig(rawConfig);
       const config = configError ? (console.warn(`[REPLENISHMENT CONFIG] Configuración inválida: ${configError}. Usando defaults.`), defaultReplenishmentConfig) : rawConfig;
       if (!config.enabled) return;
 
-      const now = new Date();
+      const nowDate = new Date();
       // Clave: Fecha (YYYY-MM-DD) + config_updated_at (simulado aquí con H y otros parámetros críticos)
       // Como no tenemos config.updated_at en el payload crudo, armamos un hash
-      const cacheKey = `replenishment_stats_${now.toLocaleDateString('es-AR')}_H${config.historyWeeks}`;
+      const cacheKey = `replenishment_stats_${nowDate.toLocaleDateString('es-AR')}_H${config.historyWeeks}`;
       
       let stats = [];
       let usingCache = false;
@@ -345,10 +353,65 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
       // Ordenar alertas con la función pura real del store (diasCobertura ASC, nombre)
       const sortedAlerts = sortReplenishmentAlerts(alerts);
+      lastReplenishmentFetchTimestamp = Date.now();
 
       set({ allReplenishmentAlerts: sortedAlerts, allReplenishmentNoHistory: noHistory });
     } catch (err) {
       console.error('Error fetching all replenishment alerts:', err);
+    }
+  },
+
+  getProductReplenishment: async (product: Product): Promise<ReplenishmentResult | null> => {
+    try {
+      // 1. Si ya está calculado en alguna lista de alertas
+      const fromDashboard = (get().lowStockDashboardProducts as ProductWithReplenishment[]).find(p => p.id === product.id)?.replenishmentResult;
+      if (fromDashboard) return fromDashboard;
+      const fromAlerts = (get().allReplenishmentAlerts as ProductWithReplenishment[]).find(p => p.id === product.id)?.replenishmentResult;
+      if (fromAlerts) return fromAlerts;
+
+      // 2. Obtener config
+      let config = get().replenishmentConfig;
+      if (!config) {
+        const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
+        const configError = validateReplenishmentConfig(rawConfig);
+        config = configError ? defaultReplenishmentConfig : rawConfig;
+        set({ replenishmentConfig: config, isReplenishmentEnabled: config.enabled });
+      }
+      if (!config.enabled) return null;
+
+      // 3. Stats (catalogCache tiene TTL de 24h, muy rápido)
+      let stats = [];
+      const cacheKey = `replenishment_stats_${new Date().toLocaleDateString('es-AR')}_H${config.historyWeeks}`;
+      try {
+        stats = await productsService.getReplenishmentStats(config.historyWeeks);
+      } catch (e) {
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) stats = JSON.parse(cached);
+        } catch (_) {}
+      }
+
+      if (!stats || !Array.isArray(stats)) return null;
+
+      const groupedStats = parseReplenishmentRpcResponse(stats);
+      const prodStats = groupedStats.get(product.id) || { weeks: [], firstSale: null };
+      const dense = buildDenseSalesHistory(
+        product.createdAt || new Date().toISOString(),
+        prodStats.firstSale,
+        prodStats.weeks,
+        config.historyWeeks,
+        Date.now()
+      );
+
+      return calculateProductReplenishment({
+        ventasPorSemana: dense.ventasPorSemana,
+        semanasDisponibles: dense.semanasDisponibles,
+        stockActual: product.stock ?? 0,
+        config
+      });
+    } catch (err) {
+      console.error('Error in getProductReplenishment on demand:', err);
+      return null;
     }
   },
 
