@@ -16,13 +16,13 @@ import crypto from "crypto";
 // server/services/arca/arcaConfig.ts
 import dotenv from "dotenv";
 import path from "path";
-import os2 from "os";
+import os from "os";
 import fs from "fs";
 dotenv.config();
 var envVal = (process.env.ARCA_ENV || process.env.ARCA_ENVIRONMENT || "testing").toLowerCase();
 var isProduction = envVal === "production";
 var isVercel = Boolean(process.env.VERCEL);
-var baseCertsDir = isVercel ? path.join(os2.tmpdir(), "certs") : path.resolve(process.cwd(), "certs");
+var baseCertsDir = isVercel ? path.join(os.tmpdir(), "certs") : path.resolve(process.cwd(), "certs");
 var certFilename = isProduction ? "prod.crt" : "homo.crt";
 var keyFilename = isProduction ? "prod.key" : "homo.key";
 var defaultCertPath = process.env.ARCA_CERT_PATH || (fs.existsSync(path.resolve(process.cwd(), `certs/${certFilename}`)) ? path.resolve(process.cwd(), `certs/${certFilename}`) : path.join(baseCertsDir, certFilename));
@@ -61,6 +61,7 @@ function getSafeFiscalConfig() {
 // server/services/arca/arcaAuth.ts
 import fs2 from "fs";
 import path2 from "path";
+import os2 from "os";
 import axios from "axios";
 import forge from "node-forge";
 
@@ -393,7 +394,7 @@ var FiscalRepository = class {
 var ticketCache = /* @__PURE__ */ new Map();
 var inFlightAuthPromises = /* @__PURE__ */ new Map();
 function getTicketFilePath(service) {
-  const dir = process.env.VERCEL ? path2.join(os.tmpdir(), "certs") : path2.resolve(process.cwd(), "certs");
+  const dir = process.env.VERCEL ? path2.join(os2.tmpdir(), "certs") : path2.resolve(process.cwd(), "certs");
   if (!fs2.existsSync(dir)) {
     try {
       fs2.mkdirSync(dir, { recursive: true });

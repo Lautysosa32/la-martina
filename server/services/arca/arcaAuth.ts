@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import axios from 'axios';
 import forge from 'node-forge';
 import { arcaConfig } from './arcaConfig';
