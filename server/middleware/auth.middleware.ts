@@ -52,7 +52,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   try {
-    const supabase = fiscalRepo.getClient();
+    const supabase = fiscalRepo.getClient(token);
     
     // 1. Validar el token con Supabase Auth
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);

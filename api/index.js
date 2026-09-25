@@ -40,7 +40,7 @@ try {
 }
 var arcaConfig = {
   environment: isProduction ? "production" : "testing",
-  cuit: (process.env.ARCA_CUIT || "").replace(/\D/g, ""),
+  cuit: (process.env.ARCA_CUIT || "20462370033").replace(/\D/g, ""),
   certPath: defaultCertPath,
   keyPath: defaultKeyPath,
   defaultPointOfSale: Number(process.env.ARCA_PV || process.env.ARCA_DEFAULT_POINT_OF_SALE || 1),
@@ -98,8 +98,21 @@ var FiscalRepository = class {
       this.client = createClient(supabaseUrl, adminKey, options);
     }
   }
-  getClient() {
-    return this.client;
+  getClient(userToken) {
+    if (this.isServiceRoleConfigured || !userToken) {
+      return this.client;
+    }
+    return createClient(supabaseUrl, process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_vGCWtTOQ5cPScfxggmOMwg_DyIX6lhO", {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${userToken}`
+        }
+      }
+    });
   }
   /**
    * Obtiene una operación por su clave única de idempotencia.
@@ -451,6 +464,34 @@ async function savePersistedTicket(ticket) {
 function isAlreadyAuthenticatedError(err) {
   const msg = (err?.message || "") + " " + (typeof err === "string" ? err : "");
   return msg.includes("El CEE ya posee un TA valido") || msg.includes("alreadyAuthenticated");
+}
+async function ensureCertificatesOnDisk(userToken) {
+  try {
+    if (fs2.existsSync(arcaConfig.certPath) && fs2.existsSync(arcaConfig.keyPath)) {
+      return true;
+    }
+    const certsDir = path2.dirname(arcaConfig.certPath);
+    if (!fs2.existsSync(certsDir)) {
+      fs2.mkdirSync(certsDir, { recursive: true });
+    }
+    if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
+      fs2.writeFileSync(arcaConfig.certPath, process.env.ARCA_CERT_CONTENT, "utf8");
+      fs2.writeFileSync(arcaConfig.keyPath, process.env.ARCA_KEY_CONTENT, "utf8");
+      return true;
+    }
+    const repo = new FiscalRepository();
+    const client = repo.getClient(userToken);
+    const envKey = `arca_certificates_${arcaConfig.environment}`;
+    const { data, error } = await client.from("settings").select("value").eq("key", envKey).eq("branch_id", "main").maybeSingle();
+    if (!error && data?.value && data.value.crt && data.value.key) {
+      fs2.writeFileSync(arcaConfig.certPath, data.value.crt, "utf8");
+      fs2.writeFileSync(arcaConfig.keyPath, data.value.key, "utf8");
+      return true;
+    }
+  } catch (err) {
+    console.warn("[ARCA Auth] Error asegurando certificados en disco:", err.message);
+  }
+  return false;
 }
 function getCertificateInfo() {
   try {
@@ -1781,7 +1822,7 @@ async function requireAuth(req, res, next) {
     return;
   }
   try {
-    const supabase = fiscalRepo.getClient();
+    const supabase = fiscalRepo.getClient(token);
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
       res.status(401).json({
@@ -2002,6 +2043,8 @@ function getRepository() {
 }
 router.get("/status", requireRole(["employee", "cashier", "admin", "owner"]), async (req, res) => {
   try {
+    const userToken = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.substring(7) : void 0;
+    await ensureCertificatesOnDisk(userToken);
     const service = ArcaInvoiceServiceFactory.getService("B");
     const serverStatus = await service.getServerStatus();
     const certInfo = getCertificateInfo();
@@ -2074,6 +2117,17 @@ router.post("/certificates", requireRole(["admin", "owner"]), async (req, res) =
     fs4.writeFileSync(path4.join(certsDir, `${prefix}.crt`), crtContent, "utf-8");
     fs4.writeFileSync(path4.join(certsDir, `${prefix}.key`), keyContent, "utf-8");
     const fiscalRepo2 = getRepository();
+    const userToken = req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.substring(7) : void 0;
+    const envKey = `arca_certificates_${isProduction2 ? "production" : "testing"}`;
+    await fiscalRepo2.getClient(userToken).from("settings").upsert({
+      key: envKey,
+      branch_id: "main",
+      value: {
+        crt: crtContent,
+        key: keyContent,
+        uploaded_at: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }, { onConflict: "key, branch_id" });
     await fiscalRepo2.logAudit({
       action: "UPDATE_CERTIFICATES",
       result: "SUCCESS",

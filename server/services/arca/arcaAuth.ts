@@ -138,6 +138,50 @@ function isAlreadyAuthenticatedError(err: any): boolean {
 }
 
 /**
+ * Asegura que los certificados .crt y .key existan en disco (local o /tmp de Vercel).
+ * Si no existen, los descarga automáticamente desde Supabase settings o variables de entorno.
+ */
+export async function ensureCertificatesOnDisk(userToken?: string): Promise<boolean> {
+  try {
+    if (fs.existsSync(arcaConfig.certPath) && fs.existsSync(arcaConfig.keyPath)) {
+      return true;
+    }
+
+    const certsDir = path.dirname(arcaConfig.certPath);
+    if (!fs.existsSync(certsDir)) {
+      fs.mkdirSync(certsDir, { recursive: true });
+    }
+
+    // 1. Intentar desde variables de entorno
+    if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
+      fs.writeFileSync(arcaConfig.certPath, process.env.ARCA_CERT_CONTENT, 'utf8');
+      fs.writeFileSync(arcaConfig.keyPath, process.env.ARCA_KEY_CONTENT, 'utf8');
+      return true;
+    }
+
+    // 2. Intentar cargar desde Supabase settings
+    const repo = new FiscalRepository();
+    const client = repo.getClient(userToken);
+    const envKey = `arca_certificates_${arcaConfig.environment}`;
+    const { data, error } = await client
+      .from('settings')
+      .select('value')
+      .eq('key', envKey)
+      .eq('branch_id', 'main')
+      .maybeSingle();
+
+    if (!error && data?.value && data.value.crt && data.value.key) {
+      fs.writeFileSync(arcaConfig.certPath, data.value.crt, 'utf8');
+      fs.writeFileSync(arcaConfig.keyPath, data.value.key, 'utf8');
+      return true;
+    }
+  } catch (err: any) {
+    console.warn('[ARCA Auth] Error asegurando certificados en disco:', err.message);
+  }
+  return false;
+}
+
+/**
  * Lee y analiza la vigencia y datos del certificado digital X.509 configurado.
  */
 export function getCertificateInfo(): CertificateInfo {

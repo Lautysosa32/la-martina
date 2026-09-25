@@ -155,8 +155,22 @@ export class FiscalRepository {
     }
   }
 
-  public getClient(): SupabaseClient {
-    return this.client;
+  public getClient(userToken?: string): SupabaseClient {
+    if (this.isServiceRoleConfigured || !userToken) {
+      return this.client;
+    }
+
+    return createClient(supabaseUrl, process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_vGCWtTOQ5cPScfxggmOMwg_DyIX6lhO', {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${userToken}`
+        }
+      }
+    });
   }
 
   /**

@@ -66,8 +66,10 @@ export const Billing: React.FC = () => {
       } else {
         setStatusNotification('Atención: Uno o más servicios de ARCA no responden.');
       }
-    } catch {
-      setStatusNotification('No se pudo establecer comunicación con el backend fiscal.');
+    } catch (err: any) {
+      console.error('[Billing checkConnection error]:', err);
+      const msg = err.response?.data?.error || err.message || 'No se pudo establecer comunicación con el backend fiscal.';
+      setStatusNotification(msg);
     } finally {
       setIsCheckingStatus(false);
       setTimeout(() => setStatusNotification(null), 5000);

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { arcaConfig, getSafeFiscalConfig } from '../services/arca/arcaConfig';
-import { getCertificateInfo } from '../services/arca/arcaAuth';
+import { getCertificateInfo, ensureCertificatesOnDisk } from '../services/arca/arcaAuth';
 import { ArcaInvoiceServiceFactory } from '../services/arca/services/ArcaInvoiceServiceFactory';
 import {
   VOUCHER_CODES,
@@ -59,6 +59,9 @@ function getRepository(): FiscalRepository {
 // ─── 1. ESTADO DE CONEXIÓN Y CERTIFICADOS ─────────────────────────
 router.get('/status', requireRole(['employee', 'cashier', 'admin', 'owner']), async (req: Request, res: Response) => {
   try {
+    const userToken = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.substring(7) : undefined;
+    await ensureCertificatesOnDisk(userToken);
+
     const service = ArcaInvoiceServiceFactory.getService('B');
     const serverStatus = await service.getServerStatus();
     const certInfo = getCertificateInfo();
@@ -144,8 +147,21 @@ router.post('/certificates', requireRole(['admin', 'owner']), async (req: Reques
     fs.writeFileSync(path.join(certsDir, `${prefix}.crt`), crtContent, 'utf-8');
     fs.writeFileSync(path.join(certsDir, `${prefix}.key`), keyContent, 'utf-8');
 
-    // Registrar auditoría
+    // Guardar en Supabase settings para persistencia automática entre instancias serverless
     const fiscalRepo = getRepository();
+    const userToken = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.substring(7) : undefined;
+    const envKey = `arca_certificates_${isProduction ? 'production' : 'testing'}`;
+    await fiscalRepo.getClient(userToken).from('settings').upsert({
+      key: envKey,
+      branch_id: 'main',
+      value: {
+        crt: crtContent,
+        key: keyContent,
+        uploaded_at: new Date().toISOString()
+      }
+    }, { onConflict: 'key, branch_id' });
+
+    // Registrar auditoría
     await fiscalRepo.logAudit({
       action: 'UPDATE_CERTIFICATES',
       result: 'SUCCESS',

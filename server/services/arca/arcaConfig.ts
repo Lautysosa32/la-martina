@@ -57,7 +57,7 @@ try {
 
 export const arcaConfig: ArcaConfiguration = {
   environment: isProduction ? 'production' : 'testing',
-  cuit: (process.env.ARCA_CUIT || '').replace(/\D/g, ''),
+  cuit: (process.env.ARCA_CUIT || '20462370033').replace(/\D/g, ''),
   certPath: defaultCertPath,
   keyPath: defaultKeyPath,
   defaultPointOfSale: Number(process.env.ARCA_PV || process.env.ARCA_DEFAULT_POINT_OF_SALE || 1),
