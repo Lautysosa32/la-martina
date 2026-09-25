@@ -4,7 +4,7 @@ import { FiscalStatus, InvoiceOrigin } from '../services/arca/arcaTypes';
 
 dotenv.config();
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://oczxbflkvutumcflnwlx.supabase.co';
 
 /**
  * Obtiene la clave secreta administrativa de Supabase exclusiva para el backend.
@@ -148,7 +148,7 @@ export class FiscalRepository {
 
     if (!adminKey) {
       // Si la clave administrativa no está configurada, advertir en consola y utilizar cliente restringido
-      this.client = createClient(supabaseUrl, process.env.VITE_SUPABASE_ANON_KEY || 'no-key-configured', options);
+      this.client = createClient(supabaseUrl, process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_vGCWtTOQ5cPScfxggmOMwg_DyIX6lhO', options);
     } else {
       // Cliente administrativo exclusivo de backend: bypass de RLS garantizado
       this.client = createClient(supabaseUrl, adminKey, options);

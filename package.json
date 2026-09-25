@@ -7,7 +7,7 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "server": "tsx server/index.ts",
     "dev:server": "tsx watch server/index.ts",
-    "build": "vite build",
+    "build": "vite build && esbuild server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=api/index.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
