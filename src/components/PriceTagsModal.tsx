@@ -206,17 +206,18 @@ export const PriceTagsModal: React.FC<PriceTagsModalProps> = ({
               </div>
 
               {/* Contenedor simulador de papel */}
-              <div className="flex-1 overflow-y-auto bg-neutral-200/70 p-4 rounded-xl flex justify-center max-h-[500px]">
-                <div
-                  className={`bg-white shadow-md p-4 transition-all duration-300 ${
-                    config.paperFormat === '58mm'
-                      ? 'w-[220px]'
-                      : config.paperFormat === '80mm'
-                        ? 'w-[310px]'
-                        : 'w-full max-w-[500px]'
-                  }`}
-                  style={{ minHeight: '300px' }}
-                >
+              <div className="flex-1 overflow-y-auto bg-neutral-200/70 p-4 rounded-xl max-h-[500px]">
+                <div className="flex justify-center min-h-full items-start pb-6">
+                  <div
+                    className={`bg-white shadow-md p-4 h-fit rounded-xs transition-all duration-300 ${
+                      config.paperFormat === '58mm'
+                        ? 'w-[220px]'
+                        : config.paperFormat === '80mm'
+                          ? 'w-[310px]'
+                          : 'w-full max-w-[500px]'
+                    }`}
+                    style={{ minHeight: '300px' }}
+                  >
                   <div
                     className={
                       config.paperFormat === 'a4_grid'
@@ -331,6 +332,7 @@ export const PriceTagsModal: React.FC<PriceTagsModalProps> = ({
                 </div>
               </div>
             </div>
+          </div>
           </div>
 
         </div>
