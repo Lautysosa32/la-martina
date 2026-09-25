@@ -131,7 +131,10 @@ router.post('/certificates', requireRole(['admin', 'owner']), async (req: Reques
     const fs = require('fs');
     const path = require('path');
 
-    const certsDir = path.join(process.cwd(), 'certs');
+    const os = require('os');
+    const certsDir = process.env.VERCEL
+      ? path.join(os.tmpdir(), 'certs')
+      : path.join(process.cwd(), 'certs');
     if (!fs.existsSync(certsDir)) {
       fs.mkdirSync(certsDir, { recursive: true });
     }

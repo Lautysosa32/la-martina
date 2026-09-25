@@ -35,7 +35,9 @@ const inFlightAuthPromises: Map<string, Promise<WsaaTicket>> = new Map();
  * Ruta del archivo de caché persistente en disco (dentro de certs/, ignorado por git).
  */
 function getTicketFilePath(service: string): string {
-  const dir = path.resolve(process.cwd(), 'certs');
+  const dir = process.env.VERCEL
+    ? path.join(os.tmpdir(), 'certs')
+    : path.resolve(process.cwd(), 'certs');
   if (!fs.existsSync(dir)) {
     try {
       fs.mkdirSync(dir, { recursive: true });

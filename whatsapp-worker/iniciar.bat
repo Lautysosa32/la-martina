@@ -2,10 +2,22 @@
 title Robot WhatsApp - Martina Supermercado
 color 0A
 
+:: Si se ejecuta con el argumento --silent (desde silencioso.vbs)
+if "%1"=="--silent" (
+    cd /d "%~dp0"
+    if not exist node_modules (
+        call npm install --silent
+    )
+    call node worker.js
+    exit /b 0
+)
+
 echo ===================================================
 echo   🤖 ROBOT DE WHATSAPP - Martina Supermercado PREMIUM 🏪
 echo ===================================================
 echo.
+
+cd /d "%~dp0"
 
 :: Verificar si existe la carpeta de dependencias
 if not exist node_modules (

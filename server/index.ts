@@ -25,16 +25,30 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Montar Rutas de Facturación Electrónica ARCA y Puente de Impresión Local
+// Se montan con y sin prefijo '/api' para soportar tanto Vite proxy como Vercel serverless rewrites
 app.use('/api/arca', arcaRoutes);
+app.use('/arca', arcaRoutes);
+
 app.use('/api/printer', requireAuth, requireRole(['admin', 'owner', 'cashier']), printerRoutes);
+app.use('/printer', requireAuth, requireRole(['admin', 'owner', 'cashier']), printerRoutes);
 
 // Healthcheck
-app.get('/api/health', (_req, res) => {
+app.get(['/api/health', '/health'], (_req, res) => {
   res.json({ status: 'ok', service: 'Martina Supermercado ARCA Backend', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Martina Supermercado Backend Fiscal ARCA corriendo en http://localhost:${PORT}`);
-});
+// Iniciar servidor standalone solo si se ejecuta directamente y no en Vercel
+const isDirectRun = Boolean(
+  process.argv[1] && (
+    process.argv[1].endsWith('server/index.ts') || 
+    process.argv[1].endsWith('server\\index.ts')
+  )
+);
+
+if (isDirectRun && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Martina Supermercado Backend Fiscal ARCA corriendo en http://localhost:${PORT}`);
+  });
+}
 
 export default app;

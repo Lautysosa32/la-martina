@@ -845,34 +845,12 @@ export const Inventory: React.FC = () => {
     document.body.removeChild(link);
   };
 
-  const testSearchImage = async () => {
-    console.log("🚀 Enviando prueba a search-product-image...");
-
-    const { data, error } = await supabase.functions.invoke('search-product-image', {
-      body: { query: "Galletitas Oreo 117g" }
-    });
-
-    if (error) {
-      console.error("❌ Error de Supabase:", error);
-      return;
-    }
-
-    console.log("✅ Respuesta exitosa de Edge Function:", data);
-  };
-
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-500 pb-10 w-full overflow-hidden">
 
       {/* Header Bar Portal */}
       {portalTarget && (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || employeeProfile?.role === 'admin') && createPortal(
         <div className="flex items-center gap-3 ml-4">
-          <button
-            onClick={testSearchImage}
-            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2.5 rounded-full transition-colors shadow-sm shrink-0 text-xs"
-          >
-            <span className="material-symbols-outlined text-[18px]">science</span>
-            🧪 TEST Buscar Foto
-          </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold px-6 py-2.5 rounded-full transition-colors shadow-sm"
