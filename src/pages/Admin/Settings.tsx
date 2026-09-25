@@ -6,6 +6,8 @@ import { useScrollLock } from '../../utils/useScrollLock';
 import { fetchSetting, saveSetting } from '../../services/admin.service';
 import { ReplenishmentConfig, defaultReplenishmentConfig, validateReplenishmentConfig } from '../../utils/replenishment';
 import { useProductStore } from '../../stores/useProductStore';
+import { PriceTagConfig, defaultPriceTagConfig, generateBarcodeSvg, formatTagPrice, printPriceTags } from '../../utils/priceTagUtils';
+import { Product } from '../../types/product.types';
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
   card: 'Tarjeta',
@@ -106,6 +108,9 @@ export const Settings: React.FC = () => {
     thresholdComplete: String(defaultReplenishmentConfig.thresholdComplete),
     thresholdPartial: String(defaultReplenishmentConfig.thresholdPartial),
   });
+
+  const [inventorySubSection, setInventorySubSection] = useState<'labels' | 'replenishment'>('labels');
+  const [priceTagForm, setPriceTagForm] = useState<PriceTagConfig>(defaultPriceTagConfig);
 
   const handleReplenishmentChange = (key: keyof Omit<ReplenishmentFormState, 'enabled'>, rawValue: string) => {
     // Permitir campo vacío temporal o solo dígitos positivos
@@ -238,6 +243,12 @@ export const Settings: React.FC = () => {
         });
       })
       .catch(err => console.error('Error fetching replenishment config', err));
+
+    fetchSetting<PriceTagConfig>('price_tags_config', defaultPriceTagConfig)
+      .then(cfg => {
+        if (cfg) setPriceTagForm(cfg);
+      })
+      .catch(err => console.error('Error fetching price_tags_config', err));
   }, []);
 
   useEffect(() => {
@@ -303,35 +314,31 @@ export const Settings: React.FC = () => {
           updateDeliveryTimeSlots(slotsForm)
         ]);
       } else if (activeSection === 'inventory') {
+        await saveSetting('price_tags_config', priceTagForm);
+
         const parsedConfig: ReplenishmentConfig = {
           enabled: Boolean(replenishmentForm.enabled),
-          historyWeeks: replenishmentForm.historyWeeks === '' ? NaN : Number(replenishmentForm.historyWeeks),
-          coverageDays: replenishmentForm.coverageDays === '' ? NaN : Number(replenishmentForm.coverageDays),
-          anticipationDays: replenishmentForm.anticipationDays === '' ? NaN : Number(replenishmentForm.anticipationDays),
-          marginLow: replenishmentForm.marginLow === '' ? NaN : Number(replenishmentForm.marginLow),
-          marginMedium: replenishmentForm.marginMedium === '' ? NaN : Number(replenishmentForm.marginMedium),
-          marginHigh: replenishmentForm.marginHigh === '' ? NaN : Number(replenishmentForm.marginHigh),
-          thresholdComplete: replenishmentForm.thresholdComplete === '' ? NaN : Number(replenishmentForm.thresholdComplete),
-          thresholdPartial: replenishmentForm.thresholdPartial === '' ? NaN : Number(replenishmentForm.thresholdPartial),
+          historyWeeks: replenishmentForm.historyWeeks === '' ? defaultReplenishmentConfig.historyWeeks : Number(replenishmentForm.historyWeeks),
+          coverageDays: replenishmentForm.coverageDays === '' ? defaultReplenishmentConfig.coverageDays : Number(replenishmentForm.coverageDays),
+          anticipationDays: replenishmentForm.anticipationDays === '' ? defaultReplenishmentConfig.anticipationDays : Number(replenishmentForm.anticipationDays),
+          marginLow: replenishmentForm.marginLow === '' ? defaultReplenishmentConfig.marginLow : Number(replenishmentForm.marginLow),
+          marginMedium: replenishmentForm.marginMedium === '' ? defaultReplenishmentConfig.marginMedium : Number(replenishmentForm.marginMedium),
+          marginHigh: replenishmentForm.marginHigh === '' ? defaultReplenishmentConfig.marginHigh : Number(replenishmentForm.marginHigh),
+          thresholdComplete: replenishmentForm.thresholdComplete === '' ? defaultReplenishmentConfig.thresholdComplete : Number(replenishmentForm.thresholdComplete),
+          thresholdPartial: replenishmentForm.thresholdPartial === '' ? defaultReplenishmentConfig.thresholdPartial : Number(replenishmentForm.thresholdPartial),
         };
 
         if (
-          isNaN(parsedConfig.historyWeeks) ||
-          isNaN(parsedConfig.coverageDays) ||
-          isNaN(parsedConfig.anticipationDays) ||
-          isNaN(parsedConfig.marginLow) ||
-          isNaN(parsedConfig.marginMedium) ||
-          isNaN(parsedConfig.marginHigh) ||
-          isNaN(parsedConfig.thresholdComplete) ||
-          isNaN(parsedConfig.thresholdPartial)
+          !isNaN(parsedConfig.historyWeeks) &&
+          !isNaN(parsedConfig.coverageDays) &&
+          !isNaN(parsedConfig.anticipationDays)
         ) {
-          throw new Error('Todos los campos deben contener un valor numérico válido.');
+          const errorMsg = validateReplenishmentConfig(parsedConfig);
+          if (!errorMsg) {
+            await saveSetting('inventory_replenishment_config', parsedConfig);
+            useProductStore.getState().setReplenishmentConfig(parsedConfig);
+          }
         }
-
-        const errorMsg = validateReplenishmentConfig(parsedConfig);
-        if (errorMsg) throw new Error(errorMsg);
-        await saveSetting('inventory_replenishment_config', parsedConfig);
-        useProductStore.getState().setReplenishmentConfig(parsedConfig);
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -723,7 +730,7 @@ export const Settings: React.FC = () => {
             }`}
         >
           <span className="material-symbols-outlined text-[20px]">inventory_2</span>
-          Reposición de Inventario
+          Inventario
         </button>
       </div>
 
@@ -1870,7 +1877,7 @@ export const Settings: React.FC = () => {
           <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm p-6 sm:p-8">
             <h2 className="text-xl font-black text-neutral-900 mb-2">Configuración de Caja (POS)</h2>
             <p className="text-sm text-neutral-500 mb-6">Administrá el comportamiento de la caja, cobros y productos durante las ventas locales.</p>
-            
+
             <div className="space-y-5">
               {/* Cierre Automático */}
               <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
@@ -3432,13 +3439,508 @@ export const Settings: React.FC = () => {
         </div>
       )}
 
-          {/* ================= REPOSICIÓN DE INVENTARIO ================= */}
-          {activeSection === 'inventory' && (
-            <div className="space-y-6 animate-in fade-in duration-300">
+      {/* ================= INVENTARIO ================= */}
+      {activeSection === 'inventory' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          
+          {/* Sub-navegación dentro de Inventario */}
+          <div className="flex flex-wrap items-center gap-2 p-1.5 bg-neutral-100 rounded-2xl w-fit">
+            <button
+              type="button"
+              onClick={() => setInventorySubSection('labels')}
+              className={`px-5 py-2.5 rounded-xl font-black text-xs transition-all flex items-center gap-2 cursor-pointer ${
+                inventorySubSection === 'labels'
+                  ? 'bg-white text-neutral-900 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">label</span>
+              Etiquetas de Precios y Góndola
+            </button>
+            <button
+              type="button"
+              onClick={() => setInventorySubSection('replenishment')}
+              className={`px-5 py-2.5 rounded-xl font-black text-xs transition-all flex items-center gap-2 cursor-pointer ${
+                inventorySubSection === 'replenishment'
+                  ? 'bg-white text-neutral-900 shadow-sm'
+                  : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">analytics</span>
+              Reposición Inteligente
+            </button>
+          </div>
+
+          {/* VISTA 1: CONFIGURACIÓN DE ETIQUETAS DE PRECIOS */}
+          {inventorySubSection === 'labels' && (
+            <div className="space-y-6">
+              {/* Header Card */}
               <div className="bg-white rounded-[2rem] p-6 sm:p-8 border border-outline-variant/10 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                   <div className="flex items-center gap-3 mb-1">
-                    <span className="material-symbols-outlined text-primary text-[28px]">inventory_2</span>
+                    <span className="material-symbols-outlined text-primary text-[28px]">label</span>
+                    <h2 className="text-xl font-black text-on-surface">Configuración de Etiquetas de Precios y Góndola</h2>
+                  </div>
+                  <p className="text-sm text-on-surface-variant font-medium">
+                    Personalizá el formato de papel térmico, medidas, código de barras y elementos visibles de los tickets de precio.
+                  </p>
+                </div>
+              </div>
+
+              {/* Main Content Grid: Settings + Real-Time Preview */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* Left Panel: Form Settings */}
+                <div className="lg:col-span-7 space-y-6">
+                  
+                  {/* Card 1: Formato de Papel / Impresora */}
+                  <div className="bg-white rounded-[2rem] p-6 sm:p-8 border border-outline-variant/10 shadow-sm space-y-6">
+                    <div className="border-b border-outline-variant/10 pb-3">
+                      <h3 className="text-sm font-black text-on-surface uppercase tracking-wider flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px] text-primary">print</span>
+                        Formato de Impresora y Papel
+                      </h3>
+                      <p className="text-xs text-on-surface-variant mt-0.5">
+                        Selecciona el tipo de papel que utiliza tu impresora
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setPriceTagForm(prev => ({ ...prev, paperFormat: '80mm', widthMm: 72, heightMm: 38 }))}
+                        className={`p-4 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-2 ${
+                          priceTagForm.paperFormat === '80mm'
+                            ? 'border-primary bg-primary/5 text-primary shadow-sm ring-2 ring-primary/20'
+                            : 'border-outline-variant/20 hover:bg-neutral-50 text-neutral-700'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-2xl">receipt</span>
+                        <div>
+                          <p className="font-black text-xs">Rollo 80mm</p>
+                          <p className="text-[10px] text-neutral-400 font-semibold">Térmica POS</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPriceTagForm(prev => ({ ...prev, paperFormat: '58mm', widthMm: 48, heightMm: 36 }))}
+                        className={`p-4 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-2 ${
+                          priceTagForm.paperFormat === '58mm'
+                            ? 'border-primary bg-primary/5 text-primary shadow-sm ring-2 ring-primary/20'
+                            : 'border-outline-variant/20 hover:bg-neutral-50 text-neutral-700'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-2xl">receipt_long</span>
+                        <div>
+                          <p className="font-black text-xs">Rollo 58mm</p>
+                          <p className="text-[10px] text-neutral-400 font-semibold">Térmica Mini</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPriceTagForm(prev => ({ ...prev, paperFormat: 'a4_grid', widthMm: 65, heightMm: 38 }))}
+                        className={`p-4 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-2 ${
+                          priceTagForm.paperFormat === 'a4_grid'
+                            ? 'border-primary bg-primary/5 text-primary shadow-sm ring-2 ring-primary/20'
+                            : 'border-outline-variant/20 hover:bg-neutral-50 text-neutral-700'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-2xl">grid_view</span>
+                        <div>
+                          <p className="font-black text-xs">Hoja A4</p>
+                          <p className="text-[10px] text-neutral-400 font-semibold">Láser / Chorro</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPriceTagForm(prev => ({ ...prev, paperFormat: 'custom' }))}
+                        className={`p-4 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-2 ${
+                          priceTagForm.paperFormat === 'custom'
+                            ? 'border-primary bg-primary/5 text-primary shadow-sm ring-2 ring-primary/20'
+                            : 'border-outline-variant/20 hover:bg-neutral-50 text-neutral-700'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-2xl">tune</span>
+                        <div>
+                          <p className="font-black text-xs">Personalizado</p>
+                          <p className="text-[10px] text-neutral-400 font-semibold">Medidas libres</p>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* Medidas en mm */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
+                          Ancho de etiqueta (mm)
+                        </label>
+                        <input
+                          type="number"
+                          min="30"
+                          max="210"
+                          value={priceTagForm.widthMm}
+                          onChange={e => setPriceTagForm(prev => ({ ...prev, widthMm: Number(e.target.value) || 72 }))}
+                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                        />
+                        <p className="text-[10px] text-on-surface-variant">Recomendado: 72mm para 80mm</p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
+                          Alto mínimo (mm)
+                        </label>
+                        <input
+                          type="number"
+                          min="20"
+                          max="150"
+                          value={priceTagForm.heightMm}
+                          onChange={e => setPriceTagForm(prev => ({ ...prev, heightMm: Number(e.target.value) || 38 }))}
+                          className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                        />
+                        <p className="text-[10px] text-on-surface-variant">Recomendado: 38mm</p>
+                      </div>
+
+                      {priceTagForm.paperFormat === 'a4_grid' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
+                            Columnas en Hoja A4
+                          </label>
+                          <select
+                            value={priceTagForm.columnsA4 || 3}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, columnsA4: Number(e.target.value) }))}
+                            className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all cursor-pointer"
+                          >
+                            <option value={2}>2 columnas (etiquetas grandes)</option>
+                            <option value={3}>3 columnas (estándar góndola)</option>
+                            <option value={4}>4 columnas (compactas)</option>
+                          </select>
+                          <p className="text-[10px] text-on-surface-variant">Distribución en página</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Card 2: Elementos visibles en la etiqueta */}
+                  <div className="bg-white rounded-[2rem] p-6 sm:p-8 border border-outline-variant/10 shadow-sm space-y-4">
+                    <div className="border-b border-outline-variant/10 pb-3">
+                      <h3 className="text-sm font-black text-on-surface uppercase tracking-wider flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px] text-primary">visibility</span>
+                        Elementos Visibles en la Etiqueta
+                      </h3>
+                      <p className="text-xs text-on-surface-variant mt-0.5">
+                        Elegí qué datos se imprimen en cada ticket
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Marca en negrita arriba del todo</p>
+                          <p className="text-[11px] text-neutral-500">Muestra la marca (ej: ARCOR, MILKA) en mayúsculas negrita</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showBrand}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showBrand: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Nombre del producto debajo de la marca</p>
+                          <p className="text-[11px] text-neutral-500">Descripción completa del artículo</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showName}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showName: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Presentación / Formato en esquina superior derecha</p>
+                          <p className="text-[11px] text-neutral-500">Muestra el contenido o medida del producto (ej: 700ML, X50G, TRIPLE)</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showFormat}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showFormat: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Código de Barras 1D escaneable</p>
+                          <p className="text-[11px] text-neutral-500">Imprime el código de barras vector para escanearlo con la pistola directamente</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showBarcode}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showBarcode: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Número legible bajo el Código de Barras</p>
+                          <p className="text-[11px] text-neutral-500">Permite leer o tipear el código si el escáner falla</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showBarcodeText}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showBarcodeText: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Líneas de corte con tijera entre etiquetas</p>
+                          <p className="text-[11px] text-neutral-500">Guía punteada con icono de tijera ✂ para cortar con facilidad</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showCuttingLine}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showCuttingLine: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/15">
+                        <div>
+                          <p className="text-xs font-black text-neutral-800">Fecha de actualización de precios</p>
+                          <p className="text-[11px] text-neutral-500">Muestra la fecha en letra pequeña en el pie de la etiqueta</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={priceTagForm.showDate}
+                            onChange={e => setPriceTagForm(prev => ({ ...prev, showDate: e.target.checked }))}
+                          />
+                          <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Escala de Fuente */}
+                    <div className="pt-2 border-t border-outline-variant/10 space-y-2">
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
+                        Tamaño y Escala de Tipografía
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['compact', 'medium', 'large'] as const).map(size => (
+                          <button
+                            key={size}
+                            type="button"
+                            onClick={() => setPriceTagForm(prev => ({ ...prev, fontSize: size }))}
+                            className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all capitalize cursor-pointer ${
+                              priceTagForm.fontSize === size
+                                ? 'bg-primary text-white border-primary shadow-xs'
+                                : 'bg-surface-container-lowest border-outline-variant/20 text-neutral-700 hover:bg-neutral-100'
+                            }`}
+                          >
+                            {size === 'compact' ? 'Compacto' : size === 'medium' ? 'Estándar' : 'Grande'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Salto de Página */}
+                    <div className="flex items-center justify-between p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/60">
+                      <div>
+                        <p className="text-xs font-black text-amber-950">Salto de página tras cada etiqueta</p>
+                        <p className="text-[11px] text-amber-800">Activar sólo si usás papel adhesivo con stickers troquelados independientes</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={priceTagForm.pageBreakPerTag}
+                          onChange={e => setPriceTagForm(prev => ({ ...prev, pageBreakPerTag: e.target.checked }))}
+                        />
+                        <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                      </label>
+                    </div>
+
+                  </div>
+
+                </div>
+
+                {/* Right Panel: Live Real-Time Preview & Test Print */}
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="bg-white rounded-[2rem] p-6 border border-outline-variant/10 shadow-sm sticky top-6 space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-outline-variant/10">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[20px] text-primary">visibility</span>
+                        <h4 className="text-xs font-black uppercase tracking-wider text-neutral-800">
+                          Vista Previa en Vivo
+                        </h4>
+                      </div>
+                      <span className="text-[10px] font-bold text-neutral-400 uppercase">
+                        {priceTagForm.paperFormat === 'a4_grid' ? 'A4' : `${priceTagForm.paperFormat}`}
+                      </span>
+                    </div>
+
+                    {/* Simulated Paper Roll */}
+                    <div className="bg-neutral-200/70 p-4 rounded-2xl flex flex-col items-center justify-center min-h-[340px] overflow-hidden">
+                      <div
+                        className={`bg-white shadow-lg p-3 transition-all duration-300 ${
+                          priceTagForm.paperFormat === '58mm'
+                            ? 'w-[200px]'
+                            : priceTagForm.paperFormat === '80mm'
+                              ? 'w-[270px]'
+                              : 'w-full max-w-[320px]'
+                        }`}
+                      >
+                        {/* Sample Tag Box */}
+                        <div className="border-[1.5px] border-black rounded-xs p-2 bg-white text-center flex flex-col justify-between select-none">
+                          <div className="relative mb-1">
+                            {priceTagForm.showFormat && (
+                              <span className="absolute right-0 top-0 text-[8.5px] font-black text-neutral-700 uppercase tracking-tighter">
+                                X50G
+                              </span>
+                            )}
+                            {priceTagForm.showBrand && (
+                              <div className="text-[12px] font-black text-black uppercase tracking-wide leading-tight px-3">
+                                ARCOR
+                              </div>
+                            )}
+                            {priceTagForm.showName && (
+                              <div className="text-[10px] font-bold text-neutral-800 uppercase leading-tight mt-0.5">
+                                CARAMELO BUTTER TOFFE
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="my-1">
+                            <span className="text-2xl font-black text-black tracking-tight font-sans">
+                              $5.000
+                            </span>
+                          </div>
+
+                          <div className="flex flex-col items-center justify-center mt-1">
+                            {priceTagForm.showBarcode && (
+                              <div
+                                className="w-full flex justify-center [&_svg]:max-w-full [&_svg]:h-auto"
+                                dangerouslySetInnerHTML={{
+                                  __html: generateBarcodeSvg('779123456789', {
+                                    height: priceTagForm.fontSize === 'compact' ? 24 : 30,
+                                    width: priceTagForm.paperFormat === '58mm' ? 1.2 : 1.5,
+                                    displayValue: priceTagForm.showBarcodeText,
+                                    fontSize: 10,
+                                  })
+                                }}
+                              />
+                            )}
+                            {priceTagForm.showDate && (
+                              <span className="text-[8px] text-neutral-400 font-semibold mt-1">
+                                Act. {new Date().toLocaleDateString('es-AR')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {priceTagForm.showCuttingLine && (
+                          <div className="flex items-center justify-center my-2 text-neutral-400 select-none">
+                            <div className="flex-1 border-t border-dashed border-neutral-400"></div>
+                            <span className="px-2 text-xs leading-none">✂</span>
+                            <div className="flex-1 border-t border-dashed border-neutral-400"></div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Test Print Button */}
+                    <div className="pt-2 flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sampleProduct: Product = {
+                            id: 'sample-tag',
+                            branchId: 'main',
+                            name: 'CARAMELO BUTTER TOFFE',
+                            brand: 'ARCOR',
+                            categoryId: 'kiosco',
+                            price: 5000,
+                            originalPrice: null,
+                            image: '',
+                            format: 'X50G',
+                            isNew: false,
+                            discount: null,
+                            badge: null,
+                            minStock: 10,
+                            barcode: '779123456789',
+                            stock: 25,
+                            saleType: 'unit',
+                            isPaused: false,
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                          };
+                          printPriceTags([sampleProduct], priceTagForm);
+                        }}
+                        className="w-full py-3 rounded-xl border border-neutral-300 hover:bg-neutral-100 font-bold text-xs text-neutral-800 flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">print</span>
+                        Imprimir Etiqueta de Prueba
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className="w-full py-3.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-primary/20 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isSaving ? (
+                          <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
+                        ) : (
+                          <span className="material-symbols-outlined text-[18px]">save</span>
+                        )}
+                        <span>{isSaving ? 'Guardando...' : 'Guardar Configuración'}</span>
+                      </button>
+                    </div>
+
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* VISTA 2: REPOSICIÓN INTELIGENTE */}
+          {inventorySubSection === 'replenishment' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-[2rem] p-6 sm:p-8 border border-outline-variant/10 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <div className="flex items-center gap-3 mb-1">
+                    <span className="material-symbols-outlined text-primary text-[28px]">analytics</span>
                     <h2 className="text-xl font-black text-on-surface">Reposición Inteligente</h2>
                   </div>
                   <p className="text-sm text-on-surface-variant font-medium">
@@ -3483,7 +3985,7 @@ export const Settings: React.FC = () => {
                     />
                     <p className="text-[10px] text-on-surface-variant leading-tight">Cuántas semanas hacia atrás se usan para promediar (4 a 52).</p>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
                       Días de cobertura
@@ -3523,7 +4025,7 @@ export const Settings: React.FC = () => {
                       El margen de seguridad se aplica sobre el promedio, compensando picos de demanda según cuán confiable sea el historial del producto.
                     </p>
                   </div>
-                  
+
                   {/* Umbrales de Historial */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
@@ -3572,7 +4074,7 @@ export const Settings: React.FC = () => {
                         className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
                       />
                     </div>
-                    
+
                     <div className="space-y-2">
                       <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
                         Margen MEDIO (%)
@@ -3629,6 +4131,9 @@ export const Settings: React.FC = () => {
               </div>
             </div>
           )}
+
+        </div>
+      )}
 
 
       {/* ================= MODAL CREAR / EDITAR FRANJA HORARIA ================= */}

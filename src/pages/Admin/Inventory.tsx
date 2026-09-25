@@ -14,6 +14,8 @@ import { ScanResultPanel } from '../../components/ScanResultPanel';
 import { useScrollLock } from '../../utils/useScrollLock';
 import { supabase } from '../../lib/supabase';
 import { ImageSelectorModal } from '../../components/ImageSelectorModal';
+import { useNavigate } from 'react-router-dom';
+import { PriceTagsModal } from '../../components/PriceTagsModal';
 
 type SortKey = 'name' | 'categoryId' | 'stock' | 'price';
 interface SortConfig {
@@ -37,6 +39,7 @@ export const Inventory: React.FC = () => {
   } = useProductStore();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
+  const navigate = useNavigate();
 
   const [page, setPage] = useState(1);
   const limit = 50;
@@ -106,6 +109,7 @@ export const Inventory: React.FC = () => {
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'product' | 'category' | 'subcategory' | 'tag' } | null>(null);
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
   const [showImageSelector, setShowImageSelector] = useState(false);
+  const [showPriceTagsModal, setShowPriceTagsModal] = useState(false);
 
   // Form States
   const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight', isPaused: false });
@@ -128,7 +132,7 @@ export const Inventory: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Bloquear scroll de fondo cuando cualquier modal esté abierto
-  const hasOpenModal = showProductModal.show || showBulkModal || showManageModal.show || !!deleteConfirm || showImportReview || isProcessingFile;
+  const hasOpenModal = showProductModal.show || showBulkModal || showManageModal.show || !!deleteConfirm || showImportReview || isProcessingFile || showPriceTagsModal;
   useScrollLock(hasOpenModal);
 
   // Asegurar que el portal tenga su destino listo
@@ -1005,12 +1009,20 @@ export const Inventory: React.FC = () => {
 
       {/* Bulk Action Bar */}
       {selectedIds.length > 0 && (
-        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-center justify-between animate-in slide-in-from-top-2">
+        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2">
           <p className="text-sm font-bold text-primary flex items-center gap-2">
             <span className="material-symbols-outlined">check_circle</span>
             {selectedIds.length} seleccionados
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowPriceTagsModal(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs hover:opacity-95 shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+              title="Imprimir etiquetas de precios y góndola con código de barras"
+            >
+              <span className="material-symbols-outlined text-[16px]">print</span>
+              Imprimir Etiquetas
+            </button>
             <PermissionGuard permission="products.update">
               <button
                 onClick={async () => {
@@ -1024,7 +1036,7 @@ export const Inventory: React.FC = () => {
               </button>
             </PermissionGuard>
             <PermissionGuard permission="products.change_price">
-              <button onClick={() => setShowBulkModal(true)} className="bg-primary text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-primary/90 shadow-md">Ajuste %</button>
+              <button onClick={() => setShowBulkModal(true)} className="bg-primary text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-primary/90 shadow-md cursor-pointer">Ajuste %</button>
             </PermissionGuard>
             <button onClick={() => setSelectedIds([])} className="bg-white text-on-surface-variant font-bold text-xs px-4 py-2 rounded-xl border border-outline-variant/20 cursor-pointer">Limpiar</button>
           </div>
@@ -2022,6 +2034,17 @@ export const Inventory: React.FC = () => {
           setScanResult(null);
           setCameraScannerOpen(true);
         }}
+      />
+
+      <PriceTagsModal
+        isOpen={showPriceTagsModal}
+        onClose={() => setShowPriceTagsModal(false)}
+        products={
+          selectedIds
+            .map(id => inventoryProducts.find(p => p.id === id) || adminProducts.find(p => p.id === id))
+            .filter((p): p is Product => Boolean(p))
+        }
+        onOpenSettings={() => navigate('/admin/settings')}
       />
 
       <input
