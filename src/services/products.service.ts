@@ -1,7 +1,53 @@
 import api from '../lib/axios';
 import { Product, CreateProductInput, UpdateProductInput, SupabaseProduct } from '../types/product.types';
 import { catalogCache, TTL } from './catalogCache';
-import { ProductWeeklySalesStat } from '../utils/replenishment';
+import { ProductWeeklySalesStat, ReplenishmentResult, ReplenishmentStatus } from '../utils/replenishment';
+
+export interface ReplenishmentQueueItem {
+  queue_id: string;
+  product_id: string;
+  job_attempts: number;
+}
+
+export interface ReplenishmentEvaluationInput {
+  productId: string;
+  status: 'NORMAL' | 'REPOSICION' | 'SIN_HISTORIAL' | 'OK' | 'SIN_STOCK';
+  puntoReposicion: number;
+  diasCobertura: number;
+  promedioDiario: number;
+  desviacionDiaria: number;
+  leadTimeDays: number;
+  stockActual: number;
+  sugeridoReposicion: number;
+  nivelServicioPct: number;
+  etiquetaMargen?: string | null;
+  queueId?: string | null;
+}
+
+export interface ReplenishmentEvaluationResult {
+  saved_id: string;
+  previous_status: string;
+  new_status: string;
+  should_notify_whatsapp: boolean;
+}
+
+export interface PersistentReplenishmentState {
+  product_id: string;
+  status: 'NORMAL' | 'REPOSICION' | 'SIN_HISTORIAL' | 'OK' | 'SIN_STOCK';
+  previous_status: string;
+  punto_reposicion: number;
+  dias_cobertura: number;
+  promedio_diario: number;
+  desviacion_diaria: number;
+  lead_time_days: number;
+  stock_actual: number;
+  sugerido_reposicion: number;
+  nivel_servicio_pct: number;
+  etiqueta_margen: string | null;
+  last_evaluated_at: string;
+  created_at: string;
+  updated_at: string;
+}
 
 // Columnas estrictas para vistas de catálogo y listas (Ahorro crítico de Egress)
 export const PRODUCT_CATALOG_SELECT = 'id,name,brand,category_id,subcategory_id,price,original_price,barcode,image,format,is_new,discount,badge,stock,min_stock,sale_type,is_paused';
@@ -533,6 +579,159 @@ export const productsService = {
     const response = await api.get<any[]>(`/products?barcode=eq.${encodeURIComponent(clean)}&select=${PRODUCT_CATALOG_SELECT}`);
     if (response.data.length === 0) return null;
     return toFrontendProduct(response.data[0]);
+  },
+
+  /**
+   * Reclama un lote de productos pendientes en la cola de reposición respetando
+   * estrictamente el rate-limit global de 1000 evaluaciones / 15 min y lease timeout.
+   */
+  async claimReplenishmentQueueBatch(maxBatch: number = 100): Promise<ReplenishmentQueueItem[]> {
+    try {
+      const response = await api.post<ReplenishmentQueueItem[]>('/rpc/claim_replenishment_queue_batch', {
+        p_max_batch: maxBatch
+      });
+      return Array.isArray(response.data) ? response.data : [];
+    } catch (err) {
+      console.error('Error claiming replenishment queue batch:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Guarda de manera atómica el resultado de la evaluación de reposición para un producto.
+   * Actualiza product_replenishment_state y completa el trabajo en replenishment_queue.
+   * Retorna should_notify_whatsapp = true SOLO si hubo transición hacia alerta.
+   */
+  async saveReplenishmentEvaluation(params: ReplenishmentEvaluationInput): Promise<ReplenishmentEvaluationResult | null> {
+    try {
+      const response = await api.post<ReplenishmentEvaluationResult[]>('/rpc/save_replenishment_evaluation', {
+        p_product_id: params.productId,
+        p_status: params.status,
+        p_punto_reposicion: params.puntoReposicion,
+        p_dias_cobertura: params.diasCobertura,
+        p_promedio_diario: params.promedioDiario,
+        p_desviacion_diaria: params.desviacionDiaria,
+        p_lead_time_days: params.leadTimeDays,
+        p_stock_actual: params.stockActual,
+        p_sugerido_reposicion: params.sugeridoReposicion,
+        p_nivel_servicio_pct: params.nivelServicioPct,
+        p_etiqueta_margen: params.etiquetaMargen ?? null,
+        p_queue_id: params.queueId ?? null
+      });
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return response.data[0];
+      }
+      return null;
+    } catch (err) {
+      console.error('Error saving replenishment evaluation:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Consulta ultra-rápida (< 15ms) de alertas de reposición precalculadas y persistidas
+   * en product_replenishment_state. No recorre los 10.000 productos ni hace loops en el cliente.
+   */
+  async getPersistentReplenishmentAlerts(): Promise<{
+    alerts: (Product & { replenishmentResult: ReplenishmentResult })[];
+    noHistory: (Product & { replenishmentResult: ReplenishmentResult })[];
+    outOfStockTotal: number;
+    lowStockTotal: number;
+  }> {
+    try {
+      const [alertsRes, outOfStockRes] = await Promise.all([
+        api.get<any[]>(
+          `/product_replenishment_state?select=*,product:products(${PRODUCT_CATALOG_SELECT})&status=in.(REPOSICION,SIN_STOCK)&order=dias_cobertura.asc`
+        ),
+        api.get<any[]>(`/products?stock=eq.0&is_paused=eq.false&limit=1`, { headers: { 'Prefer': 'count=exact' } })
+      ]);
+
+      const getCount = (res: any) => {
+        const countStr = res.headers['content-range'] || res.headers['Content-Range'];
+        if (countStr) {
+          const match = countStr.match(/\/\s*(\d+)/);
+          if (match) return parseInt(match[1]);
+        }
+        return 0;
+      };
+
+      const rawRows = Array.isArray(alertsRes.data) ? alertsRes.data : [];
+      const validRows = rawRows.filter(row => row.product && !row.product.is_paused);
+
+      const alerts: (Product & { replenishmentResult: ReplenishmentResult })[] = [];
+      const noHistory: (Product & { replenishmentResult: ReplenishmentResult })[] = [];
+
+      for (const row of validRows) {
+        const prod = toFrontendProduct(row.product);
+        const currentStock = prod.stock ?? 0;
+        const repResult: ReplenishmentResult = {
+          status: (row.status === 'SIN_STOCK' ? 'SIN_HISTORIAL' : row.status) as ReplenishmentStatus,
+          alerta: true,
+          stockObjetivo: Math.round(Number(row.punto_reposicion) + Number(row.sugerido_reposicion)),
+          cantidadRecomendada: Math.max(0, Math.round(Number(row.sugerido_reposicion))),
+          puntoReposicion: Number(row.punto_reposicion),
+          promedioSemanal: Number(row.promedio_diario) * 7,
+          diasCobertura: Number(row.dias_cobertura),
+          nivelHistorial: null,
+          historialInsuficiente: row.status === 'SIN_STOCK',
+          etiquetaMargen: row.etiqueta_margen || null,
+          ventanaEfectiva: null
+        };
+
+        const itemWithRep = {
+          ...prod,
+          replenishmentResult: repResult
+        };
+
+        if (row.status === 'REPOSICION' || (currentStock > 0 && row.status !== 'OK')) {
+          alerts.push(itemWithRep);
+        } else if (currentStock <= 0) {
+          noHistory.push(itemWithRep);
+        }
+      }
+
+      return {
+        alerts,
+        noHistory,
+        outOfStockTotal: getCount(outOfStockRes),
+        lowStockTotal: alerts.length
+      };
+    } catch (err) {
+      console.error('Error fetching persistent replenishment alerts:', err);
+      return { alerts: [], noHistory: [], outOfStockTotal: 0, lowStockTotal: 0 };
+    }
+  },
+
+  /**
+   * Obtiene el estado de reposición persistido de un producto individual (< 5ms).
+   */
+  async getPersistentProductReplenishmentState(productId: string): Promise<PersistentReplenishmentState | null> {
+    try {
+      const response = await api.get<any[]>(`/product_replenishment_state?product_id=eq.${encodeURIComponent(productId)}&limit=1`);
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return response.data[0] as PersistentReplenishmentState;
+      }
+      return null;
+    } catch (err) {
+      console.error('Error fetching persistent replenishment state:', err);
+      return null;
+    }
+  },
+
+  /**
+   * Búsqueda puntual de un producto por ID.
+   */
+  async getProductById(id: string): Promise<Product | null> {
+    try {
+      const response = await api.get<any[]>(`/products?id=eq.${encodeURIComponent(id)}&select=${PRODUCT_CATALOG_SELECT}`);
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return toFrontendProduct(response.data[0]);
+      }
+      return null;
+    } catch (err) {
+      console.error(`Error fetching product by id ${id}:`, err);
+      return null;
+    }
   },
 
   /**

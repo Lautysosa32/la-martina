@@ -18,6 +18,8 @@ export interface FetchLowStockDashboardDeps {
   fetchAllReplenishmentAlerts: () => Promise<void>;
   getAllReplenishmentAlerts: () => any[];
   getProducts: () => any[];
+  getOutOfStockTotal?: () => number;
+  getLowStockTotal?: () => number;
   set: (state: any) => void;
 }
 
@@ -79,8 +81,8 @@ export async function fetchLowStockDashboardProductsHandler(
   }
 
   const { paginated, total } = paginateAlerts(filtered, params.page, params.limit);
-  const outOfStockTotal = deps.getProducts().filter(p => !p.isPaused && (p.stock ?? 0) <= 0).length;
-  const lowStockTotal = alerts.filter(p => (p.stock ?? 0) > 0).length;
+  const outOfStockTotal = deps.getOutOfStockTotal ? deps.getOutOfStockTotal() : deps.getProducts().filter(p => !p.isPaused && (p.stock ?? 0) <= 0).length;
+  const lowStockTotal = deps.getLowStockTotal ? deps.getLowStockTotal() : alerts.filter(p => (p.stock ?? 0) > 0).length;
 
   deps.set({
     lowStockDashboardProducts: paginated,

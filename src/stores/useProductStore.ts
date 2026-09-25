@@ -5,7 +5,7 @@ import { productRepository } from '../offline/repositories/productRepository';
 import { syncEngine } from '../offline/syncEngine';
 import { LocalProduct } from '../offline/types';
 import { fetchSetting } from '../services/admin.service';
-import { calculateProductReplenishment, buildDenseSalesHistory, defaultReplenishmentConfig, validateReplenishmentConfig, ReplenishmentConfig, ReplenishmentResult, parseReplenishmentRpcResponse, sortReplenishmentAlerts, paginateAlerts } from '../utils/replenishment';
+import { calculateProductReplenishment, buildDenseSalesHistory, defaultReplenishmentConfig, validateReplenishmentConfig, ReplenishmentConfig, ReplenishmentResult, ReplenishmentStatus, parseReplenishmentRpcResponse, sortReplenishmentAlerts, paginateAlerts } from '../utils/replenishment';
 import { fetchLowStockDashboardProductsHandler } from '../utils/lowStockUrl';
 
 export type ProductWithReplenishment = Product & {
@@ -41,6 +41,7 @@ interface ProductState {
 
   fetchLowStockDashboardProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string }) => Promise<void>;
   fetchAllReplenishmentAlerts: (forceRefresh?: boolean) => Promise<void>;
+  processReplenishmentQueue: (maxBatch?: number) => Promise<number>;
   getProductReplenishment: (product: Product) => Promise<ReplenishmentResult | null>;
 
   addProduct: (product: CreateProductInput) => Promise<Product | null>;
@@ -242,6 +243,8 @@ export const useProductStore = create<ProductState>((set, get) => ({
         fetchAllReplenishmentAlerts: () => get().fetchAllReplenishmentAlerts(),
         getAllReplenishmentAlerts: () => get().allReplenishmentAlerts,
         getProducts: () => get().products,
+        getOutOfStockTotal: () => get().outOfStockTotal,
+        getLowStockTotal: () => get().lowStockTotal,
         set: (state) => set(state)
       });
     } catch (err: any) {
@@ -250,112 +253,171 @@ export const useProductStore = create<ProductState>((set, get) => ({
     }
   },
 
+  processReplenishmentQueue: async (maxBatch = 100): Promise<number> => {
+    try {
+      let config = get().replenishmentConfig;
+      if (!config) {
+        const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
+        const configError = validateReplenishmentConfig(rawConfig);
+        config = configError ? defaultReplenishmentConfig : rawConfig;
+        set({ replenishmentConfig: config, isReplenishmentEnabled: config.enabled });
+      }
+      if (!config.enabled) return 0;
+
+      // Reclamar batch atómicamente con FOR UPDATE SKIP LOCKED y rate limiter (máx 1000 por 15 min)
+      const claimed = await productsService.claimReplenishmentQueueBatch(maxBatch);
+      if (!claimed || claimed.length === 0) {
+        return 0;
+      }
+
+      // Obtener estadísticas de ventas (en memoria/cache de 24h)
+      let stats: any[] = [];
+      try {
+        stats = await productsService.getReplenishmentStats(config.historyWeeks);
+      } catch (e) {
+        console.warn('Could not fetch replenishment stats for queue:', e);
+      }
+      const groupedStats = parseReplenishmentRpcResponse(stats);
+
+      const nowMs = Date.now();
+      let processedCount = 0;
+
+      for (const job of claimed) {
+        try {
+          let prod = get().products.find(p => p.id === job.product_id)
+            ?? get().inventoryProducts.find(p => p.id === job.product_id);
+
+          if (!prod) {
+            prod = await productsService.getProductById(job.product_id);
+          }
+
+          if (!prod) {
+            // El producto fue eliminado; completar el job para que no se quede trabado
+            await productsService.saveReplenishmentEvaluation({
+              productId: job.product_id,
+              status: 'OK',
+              puntoReposicion: 0,
+              diasCobertura: 999,
+              promedioDiario: 0,
+              desviacionDiaria: 0,
+              leadTimeDays: config.coverageDays,
+              stockActual: 0,
+              sugeridoReposicion: 0,
+              nivelServicioPct: 95,
+              queueId: job.queue_id
+            });
+            continue;
+          }
+
+          const prodStats = groupedStats.get(prod.id) || { weeks: [], firstSale: null };
+          const dense = buildDenseSalesHistory(
+            prod.createdAt || new Date().toISOString(),
+            prodStats.firstSale,
+            prodStats.weeks,
+            config.historyWeeks,
+            nowMs
+          );
+
+          const currentStock = prod.stock ?? 0;
+          const res = calculateProductReplenishment({
+            ventasPorSemana: dense.ventasPorSemana,
+            semanasDisponibles: dense.semanasDisponibles,
+            stockActual: currentStock,
+            config
+          });
+
+          let dbStatus: 'NORMAL' | 'REPOSICION' | 'SIN_HISTORIAL' | 'OK' | 'SIN_STOCK' = 'OK';
+          if (currentStock <= 0) {
+            dbStatus = 'SIN_STOCK';
+          } else if (res.status === 'REPOSICION') {
+            dbStatus = 'REPOSICION';
+          } else if (res.status === 'SIN_HISTORIAL') {
+            dbStatus = 'SIN_HISTORIAL';
+          } else {
+            dbStatus = 'OK';
+          }
+
+          const saveRes = await productsService.saveReplenishmentEvaluation({
+            productId: prod.id,
+            status: dbStatus,
+            puntoReposicion: res.puntoReposicion ?? 0,
+            diasCobertura: res.diasCobertura ?? 999,
+            promedioDiario: (res.promedioSemanal ?? 0) / 7,
+            desviacionDiaria: 0,
+            leadTimeDays: config.coverageDays,
+            stockActual: currentStock,
+            sugeridoReposicion: res.cantidadRecomendada ?? 0,
+            nivelServicioPct: 95,
+            etiquetaMargen: res.etiquetaMargen ?? null,
+            queueId: job.queue_id
+          });
+
+          processedCount++;
+
+          if (saveRes?.should_notify_whatsapp) {
+            try {
+              const { whatsappMessageService } = await import('../services/whatsapp-message.service');
+              await whatsappMessageService.createLowStockAlertMessage(
+                prod.name,
+                currentStock,
+                get().outOfStockTotal,
+                get().lowStockTotal,
+                {
+                  puntoReposicion: res.puntoReposicion,
+                  cantidadRecomendada: res.cantidadRecomendada,
+                  diasCobertura: res.diasCobertura,
+                  etiquetaMargen: res.etiquetaMargen
+                }
+              );
+            } catch (notifErr) {
+              console.error('Error sending WhatsApp message from queue processor:', notifErr);
+            }
+          }
+        } catch (itemErr) {
+          console.error(`Error processing replenishment queue job for product ${job.product_id}:`, itemErr);
+        }
+      }
+
+      return processedCount;
+    } catch (err) {
+      console.error('Error in processReplenishmentQueue:', err);
+      return 0;
+    }
+  },
+
   fetchAllReplenishmentAlerts: async (forceRefresh = false) => {
     try {
       const now = Date.now();
-      // Si ya calculamos alertas en los últimos 10 minutos y no se solicita refresco forzado, reutilizar
-      if (!forceRefresh && get().allReplenishmentAlerts.length > 0 && (now - lastReplenishmentFetchTimestamp) < 10 * 60 * 1000) {
+      // Si ya calculamos alertas en los últimos 2 minutos y no se solicita refresco forzado, reutilizar
+      if (!forceRefresh && get().allReplenishmentAlerts.length > 0 && (now - lastReplenishmentFetchTimestamp) < 2 * 60 * 1000) {
         return;
       }
 
-      const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
-      const configError = validateReplenishmentConfig(rawConfig);
-      const config = configError ? (console.warn(`[REPLENISHMENT CONFIG] Configuración inválida: ${configError}. Usando defaults.`), defaultReplenishmentConfig) : rawConfig;
+      let config = get().replenishmentConfig;
+      if (!config) {
+        const rawConfig = await fetchSetting<ReplenishmentConfig>('inventory_replenishment_config', defaultReplenishmentConfig);
+        const configError = validateReplenishmentConfig(rawConfig);
+        config = configError ? (console.warn(`[REPLENISHMENT CONFIG] Configuración inválida: ${configError}. Usando defaults.`), defaultReplenishmentConfig) : rawConfig;
+        set({ replenishmentConfig: config, isReplenishmentEnabled: config.enabled });
+      }
       if (!config.enabled) return;
 
-      const nowDate = new Date();
-      // Clave: Fecha (YYYY-MM-DD) + config_updated_at (simulado aquí con H y otros parámetros críticos)
-      // Como no tenemos config.updated_at en el payload crudo, armamos un hash
-      const cacheKey = `replenishment_stats_${nowDate.toLocaleDateString('es-AR')}_H${config.historyWeeks}`;
-      
-      let stats = [];
-      let usingCache = false;
+      // 1. Drenar la cola de eventos (hasta 100 productos encolados)
+      await get().processReplenishmentQueue(100);
 
-      // 1. Intentar obtener liveStock (si falla, usar catálogo local)
-      let liveStock = [];
-      try {
-        liveStock = await productsService.getLiveStock();
-      } catch (lsErr) {
-        console.error('❌ Error fetching live stock, falling back to local catalog:', lsErr);
-        const currentProducts = get().products;
-        liveStock = currentProducts.map(p => ({ id: p.id, stock: p.stock ?? 0 }));
-      }
-      
-      const liveStockMap = new Map(liveStock.map(ls => [ls.id, ls.stock]));
-      
-      // 2. Intentar obtener stats (si falla, buscar en localStorage crudo)
-      try {
-        stats = await productsService.getReplenishmentStats(config.historyWeeks);
-        // Validar forma inmediatamente: si es formato viejo, lanza error para entrar en el fallback
-        parseReplenishmentRpcResponse(stats);
-        // Guardar stats crudos
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(stats));
-        } catch(e) {}
-      } catch (errStats) {
-        console.error('❌ Error fetching replenishment stats, attempting to use cache:', errStats);
-        try {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-            stats = JSON.parse(cached);
-            usingCache = true;
-            console.log('✅ Utilizando caché de estadísticas de ventas.');
-          } else {
-            throw new Error('No cache found');
-          }
-        } catch (cacheErr) {
-          console.error('❌ No hay caché disponible. Haciendo fallback a lógica estática.');
-          // Fallback final: usar static logic temporalmente.
-          const { data, outOfStockTotal, lowStockTotal } = await productsService.getLowStockProductsPaginated({ page: 1, limit: 1000 });
-          set({ 
-            allReplenishmentAlerts: data as ProductWithReplenishment[],
-            allReplenishmentNoHistory: [],
-            outOfStockTotal,
-            lowStockTotal
-          });
-          return;
-        }
-      }
-      
-      // Combinar stock fresco con catálogo local (solo activos)
-      const currentProducts = get().products;
-      const activeProducts = currentProducts.filter(p => !p.isPaused);
-      const nowMs = Date.now();
-      
-      // Agrupamos stats mediante el parser compatible con JSONB y plano
-      const groupedStats = parseReplenishmentRpcResponse(stats);
+      // 2. Consultar directamente las alertas precalculadas en product_replenishment_state (< 15ms)
+      const { alerts, noHistory, outOfStockTotal, lowStockTotal } = await productsService.getPersistentReplenishmentAlerts();
 
-      const alerts: ProductWithReplenishment[] = [];
-      const noHistory: ProductWithReplenishment[] = [];
-
-      for (const p of activeProducts) {
-        const prodStats = groupedStats.get(p.id) || { weeks: [], firstSale: null };
-        const dense = buildDenseSalesHistory(p.createdAt || new Date().toISOString(), prodStats.firstSale, prodStats.weeks, config.historyWeeks, nowMs);
-        
-        const currentStock = liveStockMap.has(p.id) ? liveStockMap.get(p.id)! : (p.stock ?? 0);
-        
-        const res = calculateProductReplenishment({
-          ventasPorSemana: dense.ventasPorSemana,
-          semanasDisponibles: dense.semanasDisponibles,
-          stockActual: currentStock,
-          config
-        });
-        
-        const itemWithRep = p as ProductWithReplenishment;
-        itemWithRep.replenishmentResult = res;
-
-        if (res.status === 'REPOSICION') {
-          alerts.push({ ...itemWithRep, stock: currentStock });
-        } else if (res.status === 'SIN_HISTORIAL' && currentStock <= 0) {
-          noHistory.push({ ...itemWithRep, stock: currentStock });
-        }
-      }
-
-      // Ordenar alertas con la función pura real del store (diasCobertura ASC, nombre)
+      // 3. Ordenar alertas con la función pura real del store (diasCobertura ASC, nombre)
       const sortedAlerts = sortReplenishmentAlerts(alerts);
       lastReplenishmentFetchTimestamp = Date.now();
 
-      set({ allReplenishmentAlerts: sortedAlerts, allReplenishmentNoHistory: noHistory });
+      set({ 
+        allReplenishmentAlerts: sortedAlerts, 
+        allReplenishmentNoHistory: noHistory,
+        outOfStockTotal,
+        lowStockTotal
+      });
     } catch (err) {
       console.error('Error fetching all replenishment alerts:', err);
     }
@@ -363,7 +425,7 @@ export const useProductStore = create<ProductState>((set, get) => ({
 
   getProductReplenishment: async (product: Product): Promise<ReplenishmentResult | null> => {
     try {
-      // 1. Si ya está calculado en alguna lista de alertas
+      // 1. Si ya está calculado en alguna lista de alertas en memoria
       const fromDashboard = (get().lowStockDashboardProducts as ProductWithReplenishment[]).find(p => p.id === product.id)?.replenishmentResult;
       if (fromDashboard) return fromDashboard;
       const fromAlerts = (get().allReplenishmentAlerts as ProductWithReplenishment[]).find(p => p.id === product.id)?.replenishmentResult;
@@ -379,17 +441,29 @@ export const useProductStore = create<ProductState>((set, get) => ({
       }
       if (!config.enabled) return null;
 
-      // 3. Stats (catalogCache tiene TTL de 24h, muy rápido)
+      // 3. Revisar si ya está persistido en product_replenishment_state (< 5ms)
+      const persisted = await productsService.getPersistentProductReplenishmentState(product.id);
+      if (persisted) {
+        return {
+          status: (persisted.status === 'SIN_STOCK' ? 'SIN_HISTORIAL' : persisted.status) as ReplenishmentStatus,
+          alerta: persisted.status === 'REPOSICION' || persisted.status === 'SIN_STOCK',
+          stockObjetivo: Math.round(Number(persisted.punto_reposicion) + Number(persisted.sugerido_reposicion)),
+          cantidadRecomendada: Math.max(0, Math.round(Number(persisted.sugerido_reposicion))),
+          puntoReposicion: Number(persisted.punto_reposicion),
+          promedioSemanal: Number(persisted.promedio_diario) * 7,
+          diasCobertura: Number(persisted.dias_cobertura),
+          nivelHistorial: null,
+          historialInsuficiente: persisted.status === 'SIN_STOCK',
+          etiquetaMargen: persisted.etiqueta_margen || null,
+          ventanaEfectiva: null
+        };
+      }
+
+      // 4. Si no existe aún en BD (on-demand compute & persist)
       let stats = [];
-      const cacheKey = `replenishment_stats_${new Date().toLocaleDateString('es-AR')}_H${config.historyWeeks}`;
       try {
         stats = await productsService.getReplenishmentStats(config.historyWeeks);
-      } catch (e) {
-        try {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) stats = JSON.parse(cached);
-        } catch (_) {}
-      }
+      } catch (_) {}
 
       if (!stats || !Array.isArray(stats)) return null;
 
@@ -403,12 +477,35 @@ export const useProductStore = create<ProductState>((set, get) => ({
         Date.now()
       );
 
-      return calculateProductReplenishment({
+      const result = calculateProductReplenishment({
         ventasPorSemana: dense.ventasPorSemana,
         semanasDisponibles: dense.semanasDisponibles,
         stockActual: product.stock ?? 0,
         config
       });
+
+      // Persistir el resultado para que futuras consultas no recalculen
+      let dbStatus: 'NORMAL' | 'REPOSICION' | 'SIN_HISTORIAL' | 'OK' | 'SIN_STOCK' = 'OK';
+      if ((product.stock ?? 0) <= 0) dbStatus = 'SIN_STOCK';
+      else if (result.status === 'REPOSICION') dbStatus = 'REPOSICION';
+      else if (result.status === 'SIN_HISTORIAL') dbStatus = 'SIN_HISTORIAL';
+      else dbStatus = 'OK';
+
+      await productsService.saveReplenishmentEvaluation({
+        productId: product.id,
+        status: dbStatus,
+        puntoReposicion: result.puntoReposicion ?? 0,
+        diasCobertura: result.diasCobertura ?? 999,
+        promedioDiario: (result.promedioSemanal ?? 0) / 7,
+        desviacionDiaria: 0,
+        leadTimeDays: config.coverageDays,
+        stockActual: product.stock ?? 0,
+        sugeridoReposicion: result.cantidadRecomendada ?? 0,
+        nivelServicioPct: 95,
+        etiquetaMargen: result.etiquetaMargen
+      });
+
+      return result;
     } catch (err) {
       console.error('Error in getProductReplenishment on demand:', err);
       return null;
@@ -630,24 +727,27 @@ export const useProductStore = create<ProductState>((set, get) => ({
     });
 
     if (crossedLowStock || crossedOutOfStock) {
-      import('../services/whatsapp-message.service').then(({ whatsappMessageService }) => {
-        whatsappMessageService.createLowStockAlertMessage(
-          productName,
-          stock,
-          nextOutOfStockTotal,
-          nextLowStockTotal,
-          repResult ? {
-            puntoReposicion: repResult.puntoReposicion,
-            cantidadRecomendada: repResult.cantidadRecomendada,
-            diasCobertura: repResult.diasCobertura,
-            etiquetaMargen: repResult.etiquetaMargen
-          } : null
-        ).catch(console.error);
-      });
+      // Si la reposición inteligente está activa, el worker evalúa la transición en la BD (should_notify_whatsapp)
+      // para evitar spam de alertas cada vez que baja una unidad. Si está inactiva, mantenemos alerta clásica inmediata.
+      if (!isRepEnabled) {
+        import('../services/whatsapp-message.service').then(({ whatsappMessageService }) => {
+          whatsappMessageService.createLowStockAlertMessage(
+            productName,
+            stock,
+            nextOutOfStockTotal,
+            nextLowStockTotal,
+            null
+          ).catch(console.error);
+        });
+      }
     }
 
     try {
       await productsService.updateStock(id, stock);
+      if (isRepEnabled) {
+        // Encolado por trigger de BD ante el cambio de stock; drenamos en segundo plano
+        get().processReplenishmentQueue(10).catch(console.error);
+      }
       return true;
     } catch (err: any) {
       console.error(`❌ Error updating stock for product ${id}:`, err);
