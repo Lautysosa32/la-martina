@@ -88,6 +88,7 @@ export const Settings: React.FC = () => {
   const [generalForm, setGeneralForm] = useState({ ...generalConfig });
   interface ReplenishmentFormState {
     enabled: boolean;
+    useDeviation: boolean;
     historyWeeks: string;
     coverageDays: string;
     anticipationDays: string;
@@ -99,6 +100,7 @@ export const Settings: React.FC = () => {
   }
   const [replenishmentForm, setReplenishmentForm] = useState<ReplenishmentFormState>({
     enabled: defaultReplenishmentConfig.enabled,
+    useDeviation: defaultReplenishmentConfig.useDeviation,
     historyWeeks: String(defaultReplenishmentConfig.historyWeeks),
     coverageDays: String(defaultReplenishmentConfig.coverageDays),
     anticipationDays: String(defaultReplenishmentConfig.anticipationDays),
@@ -232,6 +234,7 @@ export const Settings: React.FC = () => {
       .then(conf => {
         setReplenishmentForm({
           enabled: conf.enabled,
+          useDeviation: conf.useDeviation ?? false,
           historyWeeks: String(conf.historyWeeks),
           coverageDays: String(conf.coverageDays),
           anticipationDays: String(conf.anticipationDays),
@@ -318,6 +321,7 @@ export const Settings: React.FC = () => {
 
         const parsedConfig: ReplenishmentConfig = {
           enabled: Boolean(replenishmentForm.enabled),
+          useDeviation: Boolean(replenishmentForm.useDeviation),
           historyWeeks: replenishmentForm.historyWeeks === '' ? defaultReplenishmentConfig.historyWeeks : Number(replenishmentForm.historyWeeks),
           coverageDays: replenishmentForm.coverageDays === '' ? defaultReplenishmentConfig.coverageDays : Number(replenishmentForm.coverageDays),
           anticipationDays: replenishmentForm.anticipationDays === '' ? defaultReplenishmentConfig.anticipationDays : Number(replenishmentForm.anticipationDays),
@@ -4045,7 +4049,7 @@ export const Settings: React.FC = () => {
                   <div>
                     <h4 className="text-xs font-black text-on-surface uppercase tracking-wider border-b border-outline-variant/10 pb-2 mb-2">Márgenes de Seguridad</h4>
                     <p className="text-[11px] text-on-surface-variant">
-                      El margen de seguridad se aplica sobre el promedio, compensando picos de demanda según cuán confiable sea el historial del producto.
+                      El margen de seguridad se aplica sobre el promedio de ventas para compensar picos de demanda. Cada nivel de historial tiene un rango fijo; el deslizador fija el valor dentro de ese rango.
                     </p>
                   </div>
 
@@ -4082,52 +4086,95 @@ export const Settings: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Porcentajes de Margen */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
-                        Margen BAJO (%)
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={replenishmentForm.marginLow}
-                        onChange={(e) => handleReplenishmentChange('marginLow', e.target.value)}
-                        onBlur={() => handleReplenishmentBlur('marginLow', defaultReplenishmentConfig.marginLow)}
-                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                      />
-                    </div>
+                  {/* Porcentajes de Margen — sliders con rango fijo por nivel */}
+                  <div className="space-y-4">
+                    {/* Slider helper: reutilizable para los 3 niveles */}
+                    {(
+                      [
+                        { key: 'marginLow', label: 'Margen BAJO', sublabel: 'Historial completo', min: 10, max: 20, color: 'text-emerald-600', track: 'accent-emerald-500' },
+                        { key: 'marginMedium', label: 'Margen MEDIO', sublabel: 'Historial parcial', min: 20, max: 30, color: 'text-amber-600', track: 'accent-amber-500' },
+                        { key: 'marginHigh', label: 'Margen ALTO', sublabel: 'Historial insuficiente', min: 30, max: 40, color: 'text-rose-600', track: 'accent-rose-500' },
+                      ] as const
+                    ).map(({ key, label, sublabel, min, max, color, track }) => {
+                      const val = Math.max(min, Math.min(max, Number(replenishmentForm[key]) || min));
+                      const pct = ((val - min) / (max - min)) * 100;
+                      return (
+                        <div key={key} className="bg-surface-container-lowest border border-outline-variant/15 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className={`text-[11px] font-black uppercase tracking-wider ${color}`}>{label}</span>
+                              <span className="text-[10px] text-on-surface-variant ml-2">· {sublabel}</span>
+                            </div>
+                            <div className={`text-xl font-black tabular-nums ${color}`}>
+                              {val}%
+                              {replenishmentForm.useDeviation && (
+                                <span className="text-[10px] font-semibold text-on-surface-variant ml-1 normal-case">
+                                  (base fija · CV ajusta)
+                                </span>
+                              )}
+                            </div>
+                          </div>
 
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
-                        Margen MEDIO (%)
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={replenishmentForm.marginMedium}
-                        onChange={(e) => handleReplenishmentChange('marginMedium', e.target.value)}
-                        onBlur={() => handleReplenishmentBlur('marginMedium', defaultReplenishmentConfig.marginMedium)}
-                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                      />
-                    </div>
+                          {/* Barra de slider */}
+                          <div className="relative">
+                            <input
+                              id={`slider-${key}`}
+                              type="range"
+                              min={min}
+                              max={max}
+                              step={1}
+                              value={val}
+                              onChange={(e) => setReplenishmentForm(prev => ({ ...prev, [key]: e.target.value }))}
+                              className={`w-full h-2 rounded-full appearance-none cursor-pointer ${track}`}
+                              style={{
+                                background: `linear-gradient(to right, currentColor ${pct}%, #e5e7eb ${pct}%)`,
+                              }}
+                            />
+                            <div className="flex justify-between text-[9px] font-bold text-on-surface-variant/60 mt-1 px-0.5">
+                              <span>{min}%</span>
+                              <span className="text-on-surface-variant/40">{Math.round((min + max) / 2)}%</span>
+                              <span>{max}%</span>
+                            </div>
+                          </div>
 
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider block">
-                        Margen ALTO (%)
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={replenishmentForm.marginHigh}
-                        onChange={(e) => handleReplenishmentChange('marginHigh', e.target.value)}
-                        onBlur={() => handleReplenishmentBlur('marginHigh', defaultReplenishmentConfig.marginHigh)}
-                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-sm outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                      />
-                      <p className="text-[10px] text-on-surface-variant leading-tight">Para historial insuficiente.</p>
+                          {replenishmentForm.useDeviation && (
+                            <div className="text-[10px] text-on-surface-variant bg-surface-variant/40 rounded-lg px-3 py-1.5">
+                              Con desviación activa, el margen real variará entre <strong>{min}%</strong> y <strong>{max}%</strong> según la volatilidad de ventas. El valor del slider ({val}%) no se usa directamente.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Toggle: Ajuste por desviación */}
+                  <div className="flex items-start justify-between gap-4 rounded-2xl border border-outline-variant/15 bg-surface-container-lowest p-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="material-symbols-outlined text-[18px] text-primary">auto_graph</span>
+                        <span className="text-[12px] font-black text-on-surface uppercase tracking-wider">Ajuste por Desviación de Ventas</span>
+                        {replenishmentForm.useDeviation && (
+                          <span className="text-[9px] font-black uppercase tracking-wider bg-primary/10 text-primary px-2 py-0.5 rounded-full">Activo</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                        {replenishmentForm.useDeviation
+                          ? 'El margen se calcula automáticamente dentro del rango de cada nivel: ventas estables → mínimo del rango · ventas muy variables → máximo del rango. El slider queda como referencia visual.'
+                          : 'Margen fijo: se usa exactamente el valor configurado en el slider, sin importar cuánto varíen las ventas semana a semana.'}
+                      </p>
                     </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={replenishmentForm.useDeviation}
+                        onChange={(e) => setReplenishmentForm(prev => ({ ...prev, useDeviation: e.target.checked }))}
+                      />
+                      <div className="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-outline-variant after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
                   </div>
                 </div>
+
 
                 {saveError && (
                   <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 text-sm font-bold flex items-center gap-2 animate-in fade-in duration-200">

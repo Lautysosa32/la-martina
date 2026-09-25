@@ -1,17 +1,30 @@
 export interface ReplenishmentConfig {
   enabled: boolean;
+  /** Activate automatic margin adjustment based on weekly sales volatility (CV) */
+  useDeviation: boolean;
   historyWeeks: number; // 4 to 52
   coverageDays: number; // 1 to 60
   anticipationDays: number; // 1 to 14
-  marginLow: number; // 10 to 20 %
-  marginMedium: number; // 20 to 30 %
-  marginHigh: number; // 30 to 40 %
+  /** Fixed margin fallback (or anchor when useDeviation=true). Range: 10–20 % */
+  marginLow: number;
+  /** Fixed margin fallback (or anchor when useDeviation=true). Range: 20–30 % */
+  marginMedium: number;
+  /** Fixed margin fallback (or anchor when useDeviation=true). Range: 30–40 % */
+  marginHigh: number;
   thresholdComplete: number; // <= historyWeeks
   thresholdPartial: number; // < thresholdComplete, >= 1
 }
 
+/** Hard bounds for each margin level — never configurable, only the value inside can move */
+export const MARGIN_BOUNDS = {
+  LOW:    { min: 10, max: 20 } as const,
+  MEDIUM: { min: 20, max: 30 } as const,
+  HIGH:   { min: 30, max: 40 } as const,
+} as const;
+
 export const defaultReplenishmentConfig: ReplenishmentConfig = {
   enabled: false,
+  useDeviation: false,
   historyWeeks: 16,
   coverageDays: 15,
   anticipationDays: 3,
@@ -73,6 +86,45 @@ function tolerantCeil(value: number): number {
   return Math.ceil(value - TOLERANCE);
 }
 
+/**
+ * Calculates the Coefficient of Variation (CV = stddev / mean) from the dense
+ * weekly sales array, ignoring weeks with 0 sales to avoid noise from zeros.
+ * Returns a value in [0, 1]: 0 = perfectly stable, 1+ = highly volatile (clamped to 1).
+ */
+export function computeWeeklySalesCV(ventasPorSemana: number[]): number {
+  const nonZero = ventasPorSemana.filter(v => v > 0);
+  if (nonZero.length < 2) return 0; // not enough data to compute dispersion
+  const mean = nonZero.reduce((s, v) => s + v, 0) / nonZero.length;
+  if (mean === 0) return 0;
+  const variance = nonZero.reduce((s, v) => s + (v - mean) ** 2, 0) / nonZero.length;
+  const cv = Math.sqrt(variance) / mean;
+  return Math.min(cv, 1); // clamp to [0, 1]
+}
+
+/**
+ * Returns the effective margin % for the given level, taking into account
+ * whether dynamic deviation mode is active.
+ * - Fixed mode: returns the configured value directly.
+ * - Deviation mode: interpolates between the level bounds using CV.
+ *   cv=0 (stable) -> min bound; cv=1 (volatile) -> max bound.
+ */
+function resolveMarginPct(
+  nivel: 'BAJO' | 'MEDIO' | 'ALTO',
+  cv: number,
+  config: ReplenishmentConfig
+): number {
+  if (!config.useDeviation) {
+    return nivel === 'BAJO' ? config.marginLow
+         : nivel === 'MEDIO' ? config.marginMedium
+         : config.marginHigh;
+  }
+  const { min, max } = nivel === 'BAJO' ? MARGIN_BOUNDS.LOW
+                     : nivel === 'MEDIO' ? MARGIN_BOUNDS.MEDIUM
+                     : MARGIN_BOUNDS.HIGH;
+  // Linear interpolation: more volatile -> closer to max bound
+  return min + cv * (max - min);
+}
+
 export function calculateProductReplenishment(input: ReplenishmentInput): ReplenishmentResult {
   const { ventasPorSemana, semanasDisponibles: N, stockActual, config } = input;
   const S = Math.max(stockActual, 0);
@@ -99,25 +151,29 @@ export function calculateProductReplenishment(input: ReplenishmentInput): Replen
   const d = promedioSemanal / 7;
   const diasCobertura = d > 0 ? S / d : Infinity;
 
+  // Coefficient of variation — used only when useDeviation=true
+  const cv = config.useDeviation ? computeWeeklySalesCV(ventasPorSemana) : 0;
+
   let nivel: MarginLevel;
-  let margenStr = '';
-  let margenPct = 0;
   let historialInsuficiente = false;
 
   if (N >= config.thresholdComplete) {
     nivel = 'BAJO';
-    margenPct = config.marginLow;
-    margenStr = `Historial completo · margen ${margenPct}%`;
   } else if (N >= config.thresholdPartial) {
     nivel = 'MEDIO';
-    margenPct = config.marginMedium;
-    margenStr = `Historial parcial · margen ${margenPct}%`;
   } else {
     nivel = 'ALTO';
-    margenPct = config.marginHigh;
-    margenStr = `Historial insuficiente · margen ${margenPct}%`;
     historialInsuficiente = true;
   }
+
+  const margenPct = resolveMarginPct(nivel, cv, config);
+  const margenPctRounded = Math.round(margenPct * 10) / 10;
+
+  const nivelLabel = nivel === 'BAJO' ? 'Historial completo'
+                   : nivel === 'MEDIO' ? 'Historial parcial'
+                   : 'Historial insuficiente';
+  const desvLabel = config.useDeviation ? ` · CV ${Math.round(cv * 100)}%` : '';
+  const margenStr = `${nivelLabel} · margen ${margenPctRounded}%${desvLabel}`;
 
   const m = margenPct / 100;
   
