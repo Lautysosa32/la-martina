@@ -543,6 +543,28 @@ export const Dashboard: React.FC = () => {
                           <p className={`text-[10px] font-bold mt-1 ${product.stock === 0 ? 'text-error' : 'text-orange-500'}`}>
                             {product.stock === 0 ? 'SIN STOCK' : `${product.stock} unidades`}
                           </p>
+                          {(product as ProductWithReplenishment).replenishmentResult?.etiquetaMargen && (
+                            <p className="text-[9px] text-on-surface-variant/70 font-semibold mt-0.5 leading-tight">
+                              {(product as ProductWithReplenishment).replenishmentResult!.etiquetaMargen}
+                            </p>
+                          )}
+                          {(product as ProductWithReplenishment).replenishmentResult?.diasCobertura != null && (
+                            <p className="text-[9px] font-bold mt-0.5">
+                              <span className="text-on-surface-variant/60">Cobertura: </span>
+                              <span className={`${
+                                ((product as ProductWithReplenishment).replenishmentResult!.diasCobertura ?? Infinity) <= 3
+                                  ? 'text-error'
+                                  : ((product as ProductWithReplenishment).replenishmentResult!.diasCobertura ?? Infinity) <= 7
+                                    ? 'text-orange-500'
+                                    : 'text-emerald-600'
+                              }`}>
+                                {(product as ProductWithReplenishment).replenishmentResult!.diasCobertura!.toFixed(1)} días
+                              </span>
+                              {(product as ProductWithReplenishment).replenishmentResult?.cantidadRecomendada != null && (
+                                <span className="text-blue-600 ml-1">· Comprar {(product as ProductWithReplenishment).replenishmentResult!.cantidadRecomendada}</span>
+                              )}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">

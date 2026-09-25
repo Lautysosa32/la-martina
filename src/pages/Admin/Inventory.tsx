@@ -1479,6 +1479,59 @@ export const Inventory: React.FC = () => {
                 </div>
               </div>
 
+              {/* Reposición Inteligente (solo lectura, solo en modo edición) */}
+              {showProductModal.mode === 'edit' && showProductModal.product && (() => {
+                const rep = (useProductStore.getState().lowStockDashboardProducts as import('../../stores/useProductStore').ProductWithReplenishment[])
+                  .find(p => p.id === showProductModal.product!.id)?.replenishmentResult
+                  ?? (useProductStore.getState().allReplenishmentAlerts as import('../../stores/useProductStore').ProductWithReplenishment[])
+                  .find(p => p.id === showProductModal.product!.id)?.replenishmentResult;
+
+                if (!rep || rep.status === 'SIN_HISTORIAL') return null;
+
+                const diasCob = rep.diasCobertura;
+                const cobColor = diasCob == null ? 'text-on-surface-variant'
+                  : diasCob <= 3 ? 'text-error font-black'
+                  : diasCob <= 7 ? 'text-orange-500 font-bold'
+                  : 'text-emerald-600 font-bold';
+
+                return (
+                  <div className="bg-surface-container-lowest border border-outline-variant/15 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="material-symbols-outlined text-[16px] text-primary">auto_graph</span>
+                      <span className="text-[10px] font-black text-on-surface uppercase tracking-wider">Reposición Inteligente</span>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${rep.status === 'REPOSICION' ? 'bg-error/10 text-error' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                        {rep.status === 'REPOSICION' ? '⚠ Requiere reposición' : '✓ Stock normal'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                        <p className="text-on-surface-variant font-semibold">Días de cobertura</p>
+                        <p className={`text-base mt-0.5 tabular-nums ${cobColor}`}>
+                          {diasCob != null ? `${diasCob.toFixed(1)} días` : '—'}
+                        </p>
+                      </div>
+                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                        <p className="text-on-surface-variant font-semibold">Punto de reposición</p>
+                        <p className="text-base font-bold mt-0.5 tabular-nums text-on-surface">{rep.puntoReposicion ?? '—'} u.</p>
+                      </div>
+                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                        <p className="text-on-surface-variant font-semibold">Stock objetivo</p>
+                        <p className="text-base font-bold mt-0.5 tabular-nums text-emerald-600">{rep.stockObjetivo ?? '—'} u.</p>
+                      </div>
+                      <div className="bg-white rounded-xl p-2.5 border border-outline-variant/10">
+                        <p className="text-on-surface-variant font-semibold">Comprar</p>
+                        <p className="text-base font-black mt-0.5 tabular-nums text-blue-600">{rep.cantidadRecomendada != null ? `${rep.cantidadRecomendada} u.` : '—'}</p>
+                      </div>
+                    </div>
+                    {rep.etiquetaMargen && (
+                      <p className="text-[9px] text-on-surface-variant/70 font-semibold leading-tight pt-1 border-t border-outline-variant/10">
+                        {rep.etiquetaMargen}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Switch Pausar Producto */}
               <div className="bg-surface-container-low/60 border border-outline-variant/15 rounded-2xl p-4 flex items-center justify-between mt-2">
                 <div className="flex items-center gap-3">
