@@ -133,7 +133,7 @@ export const Settings: React.FC = () => {
     }
   };
 
-  const handleReplenishmentBlur = (key: keyof Omit<ReplenishmentFormState, 'enabled'>, defaultVal: number) => {
+  const handleReplenishmentBlur = (key: keyof Omit<ReplenishmentFormState, 'enabled' | 'useDeviation'>, defaultVal: number) => {
     setReplenishmentForm(prev => {
       const current = prev[key];
       if (current === '' || isNaN(Number(current))) {

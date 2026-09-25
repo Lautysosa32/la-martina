@@ -9,6 +9,7 @@ import {
 
 const config: ReplenishmentConfig = {
   enabled: true,
+  useDeviation: false,
   historyWeeks: 16,
   coverageDays: 15,
   anticipationDays: 3,
