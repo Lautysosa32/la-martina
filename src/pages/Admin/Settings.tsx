@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAdmin, HeroBanner, defaultHeroBanners, DeliveryTimeSlot, defaultDeliveryTimeSlots } from '../../context/AdminContext';
-import type { AutoCashCloseConfig, FiscalBusinessConfig } from '../../context/AdminContext';
+import type { AutoCashCloseConfig, FiscalBusinessConfig, POSConfig } from '../../context/AdminContext';
 import { billingService, FiscalStatusResult } from '../../services/billing.service';
 import { useScrollLock } from '../../utils/useScrollLock';
 import { fetchSetting, saveSetting } from '../../services/admin.service';
@@ -20,6 +20,7 @@ export const Settings: React.FC = () => {
     currentAccountConfig, updateCurrentAccountConfig,
     storeStatus, updateStoreStatus,
     autoCashCloseConfig, updateAutoCashCloseConfig,
+    posConfig, updatePosConfig,
     generalConfig, updateGeneralConfig,
     heroBanners, addHeroBanner, updateHeroBanner, deleteHeroBanner, reorderHeroBanners, toggleHeroBannerActive,
     deliveryTimeSlots, updateDeliveryTimeSlots
@@ -27,7 +28,7 @@ export const Settings: React.FC = () => {
   const [saved, setSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'banners' | 'clients' | 'fiscal' | 'inventory'>('general');
+  const [activeSection, setActiveSection] = useState<'ticket' | 'general' | 'banners' | 'clients' | 'fiscal' | 'inventory' | 'caja'>('general');
 
   // Hero Banners management state
   const [isBannerModalOpen, setIsBannerModalOpen] = useState(false);
@@ -81,6 +82,7 @@ export const Settings: React.FC = () => {
   const [accountForm, setAccountForm] = useState({ ...currentAccountConfig });
   const [storeForm, setStoreForm] = useState({ ...storeStatus });
   const [autoCloseForm, setAutoCloseForm] = useState<AutoCashCloseConfig>({ enabled: false, time: '22:00' });
+  const [posForm, setPosForm] = useState<POSConfig>({ autoActivateProducts: true });
   const [generalForm, setGeneralForm] = useState({ ...generalConfig });
   interface ReplenishmentFormState {
     enabled: boolean;
@@ -191,6 +193,7 @@ export const Settings: React.FC = () => {
     cuentas: true,
     seguridad: true,
     cierre: true,
+    auto_act: true,
     notificaciones: true,
     inventory: true
   });
@@ -262,6 +265,10 @@ export const Settings: React.FC = () => {
   }, [autoCashCloseConfig]);
 
   useEffect(() => {
+    setPosForm(posConfig);
+  }, [posConfig]);
+
+  useEffect(() => {
     setGeneralForm(generalConfig);
   }, [generalConfig]);
 
@@ -282,8 +289,12 @@ export const Settings: React.FC = () => {
       } else if (activeSection === 'general') {
         await Promise.all([
           updateCurrentAccountConfig(accountForm),
-          updateAutoCashCloseConfig(autoCloseForm),
           updateGeneralConfig(generalForm)
+        ]);
+      } else if (activeSection === 'caja') {
+        await Promise.all([
+          updateAutoCashCloseConfig(autoCloseForm),
+          updatePosConfig(posForm)
         ]);
       } else if (activeSection === 'clients') {
         await Promise.all([
@@ -665,6 +676,14 @@ export const Settings: React.FC = () => {
         >
           <span className="material-symbols-outlined text-[20px]">tune</span>
           General
+        </button>
+        <button
+          onClick={() => setActiveSection('caja')}
+          className={`px-6 py-3 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 ${activeSection === 'caja' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white text-on-surface-variant border border-outline-variant/10 hover:bg-surface-container-lowest'
+            }`}
+        >
+          <span className="material-symbols-outlined text-[20px]">point_of_sale</span>
+          Caja (POS)
         </button>
         <button
           onClick={() => setActiveSection('clients')}
@@ -1846,6 +1865,138 @@ export const Settings: React.FC = () => {
         </div>
       )}
 
+      {activeSection === 'caja' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm p-6 sm:p-8">
+            <h2 className="text-xl font-black text-neutral-900 mb-2">Configuración de Caja (POS)</h2>
+            <p className="text-sm text-neutral-500 mb-6">Administrá el comportamiento de la caja, cobros y productos durante las ventas locales.</p>
+            
+            <div className="space-y-5">
+              {/* Cierre Automático */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('cierre')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-primary/10 text-primary rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      ⏰
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Cierre Automático de Caja</h3>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${autoCloseForm.enabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface-variant'
+                          }`}>
+                          {autoCloseForm.enabled ? autoCloseForm.time : 'Inactivo'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Cierra la caja automáticamente todos los días a la hora configurada</p>
+                    </div>
+                  </div>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['cierre'] ? 'rotate-180 text-primary' : ''
+                    }`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {openPanels['cierre'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="font-bold text-sm">Activar cierre automático</p>
+                        <p className="text-xs text-on-surface-variant mt-0.5">Si está activo, la caja se cerrará sola a la hora indicada</p>
+                      </div>
+                      <button
+                        onClick={() => setAutoCloseForm(f => ({ ...f, enabled: !f.enabled }))}
+                        className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
+                          }`}
+                      >
+                        <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${autoCloseForm.enabled ? 'left-7' : 'left-0.5'
+                          }`} />
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Hora del Cierre</label>
+                      <input
+                        type="time"
+                        value={autoCloseForm.time}
+                        onChange={e => setAutoCloseForm(f => ({ ...f, time: e.target.value }))}
+                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-lg outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Auto Activación de Productos */}
+              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('auto_act')}
+                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-11 h-11 bg-primary/10 text-primary rounded-2xl flex items-center justify-center text-xl shrink-0">
+                      <span className="material-symbols-outlined">inventory</span>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Auto-activación de Productos</h3>
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${posForm.autoActivateProducts ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface-variant'
+                          }`}>
+                          {posForm.autoActivateProducts ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Vuelve a activar un producto automáticamente si lo pasás por la caja</p>
+                    </div>
+                  </div>
+                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['auto_act'] ? 'rotate-180 text-primary' : ''
+                    }`}>
+                    expand_more
+                  </span>
+                </button>
+
+                {openPanels['auto_act'] && (
+                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="font-bold text-sm">Activar productos ocultos al venderlos</p>
+                        <p className="text-xs text-on-surface-variant mt-0.5">Si cobrás en caja un producto que estaba oculto o pausado, el sistema lo volverá a activar automáticamente para mostrarlo nuevamente en la tienda.</p>
+                      </div>
+                      <button
+                        onClick={() => setPosForm(f => ({ ...f, autoActivateProducts: !f.autoActivateProducts }))}
+                        className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${posForm.autoActivateProducts ? 'bg-primary' : 'bg-outline-variant/30'
+                          }`}
+                      >
+                        <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${posForm.autoActivateProducts ? 'left-7' : 'left-0.5'
+                          }`} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-8 flex justify-end">
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="bg-primary text-white font-black px-10 py-3.5 rounded-2xl hover:bg-primary/90 transition-all flex items-center gap-2 active:scale-95 disabled:opacity-50"
+              >
+                {isSaving ? (
+                  <span className="material-symbols-outlined animate-spin">refresh</span>
+                ) : (
+                  <span className="material-symbols-outlined">save</span>
+                )}
+                {isSaving ? 'Guardando...' : 'Guardar Cambios de Caja'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeSection === 'general' && (
         <div className="space-y-6">
           {/* Barra superior de control de paneles */}
@@ -1967,64 +2118,6 @@ export const Settings: React.FC = () => {
                         </div>
                       </>
                     )}
-                  </div>
-                )}
-              </div>
-
-              {/* 5. Cierre Automático de Caja */}
-              <div className="bg-white rounded-[2rem] border border-outline-variant/10 shadow-sm overflow-hidden transition-all">
-                <button
-                  type="button"
-                  onClick={() => togglePanel('cierre')}
-                  className="w-full p-6 text-left flex items-center justify-between gap-4 bg-surface-container-lowest hover:bg-surface-container-low transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="w-11 h-11 bg-primary/10 text-primary rounded-2xl flex items-center justify-center text-xl shrink-0">
-                      ⏰
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-black text-base md:text-lg text-on-surface truncate">Cierre Automático de Caja</h3>
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 ${autoCloseForm.enabled ? 'bg-primary/10 text-primary' : 'bg-surface-container-high text-on-surface-variant'
-                          }`}>
-                          {autoCloseForm.enabled ? autoCloseForm.time : 'Inactivo'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-on-surface-variant truncate mt-0.5">Cierra la caja automáticamente todos los días a la hora configurada</p>
-                    </div>
-                  </div>
-                  <span className={`material-symbols-outlined text-on-surface-variant transition-transform duration-300 text-[26px] shrink-0 ${openPanels['cierre'] ? 'rotate-180 text-primary' : ''
-                    }`}>
-                    expand_more
-                  </span>
-                </button>
-
-                {openPanels['cierre'] && (
-                  <div className="p-6 space-y-6 border-t border-outline-variant/10 animate-in fade-in duration-200">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <p className="font-bold text-sm">Activar cierre automático</p>
-                        <p className="text-xs text-on-surface-variant mt-0.5">Si está activo, la caja se cerrará sola a la hora indicada</p>
-                      </div>
-                      <button
-                        onClick={() => setAutoCloseForm(f => ({ ...f, enabled: !f.enabled }))}
-                        className={`relative w-14 h-7 rounded-full transition-all duration-300 shrink-0 ${autoCloseForm.enabled ? 'bg-primary' : 'bg-outline-variant/30'
-                          }`}
-                      >
-                        <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-sm transition-all duration-300 ${autoCloseForm.enabled ? 'left-7' : 'left-0.5'
-                          }`} />
-                      </button>
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider mb-1.5 block">Hora del Cierre</label>
-                      <input
-                        type="time"
-                        value={autoCloseForm.time}
-                        onChange={e => setAutoCloseForm(f => ({ ...f, time: e.target.value }))}
-                        className="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-4 py-3 font-bold text-lg outline-none focus:border-primary focus:ring-2 ring-primary/10 transition-all"
-                      />
-                    </div>
                   </div>
                 )}
               </div>

@@ -12,6 +12,8 @@ import * as XLSX from 'xlsx';
 import { BarcodeScannerModal } from '../../components/BarcodeScannerModal';
 import { ScanResultPanel } from '../../components/ScanResultPanel';
 import { useScrollLock } from '../../utils/useScrollLock';
+import { supabase } from '../../lib/supabase';
+import { ImageSelectorModal } from '../../components/ImageSelectorModal';
 
 type SortKey = 'name' | 'categoryId' | 'stock' | 'price';
 interface SortConfig {
@@ -103,6 +105,7 @@ export const Inventory: React.FC = () => {
   const [newSubcategoryTitle, setNewSubcategoryTitle] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string, type: 'product' | 'category' | 'subcategory' | 'tag' } | null>(null);
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
+  const [showImageSelector, setShowImageSelector] = useState(false);
 
   // Form States
   const [productForm, setProductForm] = useState({ id: '', name: '', brand: '', categoryId: '', subcategoryId: '', price: '', image: '', format: '', badge: '', originalPrice: '', stock: '0', minStock: '15', barcode: '', saleType: 'unit' as 'unit' | 'weight', isPaused: false });
@@ -346,7 +349,7 @@ export const Inventory: React.FC = () => {
         price: product.price.toString(), image: product.image || '', format: product.format || '',
         badge: product.badge || '', originalPrice: product.originalPrice?.toString() || '',
         stock: (product.stock ?? 0).toString(),
-        minStock: (product.minStock ?? 15).toString(),
+        minStock: (product.minStock !== undefined && product.minStock !== null ? product.minStock : 15).toString(),
         barcode: product.barcode || '',
         saleType: product.saleType || 'unit',
         isPaused: product.isPaused ?? false
@@ -364,7 +367,7 @@ export const Inventory: React.FC = () => {
         badge: product?.badge || '',
         originalPrice: product?.originalPrice?.toString() || '',
         stock: (product?.stock ?? 0).toString(),
-        minStock: (product?.minStock ?? 15).toString(),
+        minStock: (product?.minStock !== undefined && product?.minStock !== null ? product.minStock : 15).toString(),
         barcode: prefilledBarcode || product?.barcode || '',
         saleType: product?.saleType || 'unit',
         isPaused: false
@@ -842,12 +845,34 @@ export const Inventory: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const testSearchImage = async () => {
+    console.log("🚀 Enviando prueba a search-product-image...");
+
+    const { data, error } = await supabase.functions.invoke('search-product-image', {
+      body: { query: "Galletitas Oreo 117g" }
+    });
+
+    if (error) {
+      console.error("❌ Error de Supabase:", error);
+      return;
+    }
+
+    console.log("✅ Respuesta exitosa de Edge Function:", data);
+  };
+
   return (
     <div className="flex flex-col gap-4 animate-in fade-in duration-500 pb-10 w-full overflow-hidden">
 
       {/* Header Bar Portal */}
       {portalTarget && (employeeProfile?.role === 'super_admin' || employeeProfile?.role === 'owner' || employeeProfile?.role === 'admin') && createPortal(
         <div className="flex items-center gap-3 ml-4">
+          <button
+            onClick={testSearchImage}
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2.5 rounded-full transition-colors shadow-sm shrink-0 text-xs"
+          >
+            <span className="material-symbols-outlined text-[18px]">science</span>
+            🧪 TEST Buscar Foto
+          </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-black font-bold px-6 py-2.5 rounded-full transition-colors shadow-sm"
@@ -1205,10 +1230,10 @@ export const Inventory: React.FC = () => {
                       </td>
                       <td className="px-8 py-4">
                         <div className="flex flex-col">
-                          <span className={`font-black text-base ${stock === 0 ? 'text-error' : stock < (product.minStock ?? 20) ? 'text-orange-500' : 'text-on-background'}`}>
+                          <span className={`font-black text-base ${stock === 0 ? 'text-error' : stock < (product.minStock || 15) ? 'text-orange-500' : 'text-on-background'}`}>
                             {stock}
                           </span>
-                          {stock < (product.minStock ?? 20) && stock > 0 && (
+                          {stock < (product.minStock || 15) && stock > 0 && (
                             <span className="text-[9px] font-black text-orange-400 uppercase tracking-tighter leading-none mt-0.5">Bajo Stock</span>
                           )}
                         </div>
@@ -1356,7 +1381,13 @@ export const Inventory: React.FC = () => {
                     <span className="text-[10px] font-bold mt-1">Sin imagen</span>
                   </div>
                 )}
-                <input type="text" value={productForm.image} onChange={e => setProductForm({ ...productForm, image: e.target.value })} className="w-full max-w-sm bg-white rounded-xl px-4 py-2 text-[10px] outline-none border border-outline-variant/20 text-center" placeholder="Link de imagen..." />
+                <div className="flex w-full max-w-sm items-center gap-2 mt-2">
+                  <input type="text" value={productForm.image} onChange={e => setProductForm({ ...productForm, image: e.target.value })} className="flex-1 bg-white rounded-xl px-4 py-2 text-[10px] outline-none border border-outline-variant/20 text-center" placeholder="Link de imagen..." />
+                  <button type="button" onClick={() => setShowImageSelector(true)} disabled={!productForm.name} className="shrink-0 bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-3 py-2 text-[10px] font-bold flex items-center gap-1 transition-colors shadow-sm">
+                    <span className="material-symbols-outlined text-[14px]">search</span>
+                    Buscar
+                  </button>
+                </div>
               </div>
               {/* Código de Barras */}
               <div className="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/10">
@@ -1417,6 +1448,18 @@ export const Inventory: React.FC = () => {
                       <option value="unit">Por unidad</option>
                       <option value="weight">Por kilogramo (peso)</option>
                     </select>
+                    {productForm.saleType === 'weight' && (
+                      <div className="mt-3 bg-primary/10 border border-primary/20 rounded-xl p-3 animate-in fade-in duration-300">
+                        <p className="text-[11px] text-primary font-bold flex items-center gap-1.5 mb-1.5">
+                          <span className="material-symbols-outlined text-[16px]">scale</span>
+                          Información para Balanzas
+                        </p>
+                        <p className="text-[10px] text-primary/80 leading-relaxed font-medium">
+                          Para productos por peso, en el campo de "Código de Barras", debes ingresar el código interno <b>(PLU) de 4 o 5 dígitos</b> que usas en la balanza (ej: <b>0045</b>).<br/><br/>
+                          El sistema detectará automáticamente cuando pases por caja un ticket impreso por la balanza <i>(Ej: 20<b>0045</b>008503)</i> leyendo el PLU y el peso.
+                        </p>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-on-surface-variant uppercase mb-1 block ml-1">{productForm.saleType === 'weight' ? 'Precio por kg *' : 'Precio *'}</label>
@@ -1467,6 +1510,17 @@ export const Inventory: React.FC = () => {
           </div>
         </div>
       )}
+
+      <ImageSelectorModal
+        isOpen={showImageSelector}
+        query={`${productForm.brand || ''} ${productForm.name || ''}`.trim()}
+        productId={productForm.id || 'new'}
+        onClose={() => setShowImageSelector(false)}
+        onSuccess={(url) => {
+          setProductForm(prev => ({ ...prev, image: url }));
+          setShowImageSelector(false);
+        }}
+      />
 
       {/* Modal de Ajuste en Masa */}
       {showBulkModal && (

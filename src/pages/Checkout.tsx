@@ -8,6 +8,7 @@ import { whatsappMessageService } from '../services/whatsapp-message.service';
 import { upsertCustomerProfile } from '../services/admin.service';
 import { checkCustomerOverdueDebt } from '../utils/billing-cycle';
 import { calculateDistanceKm, calculateShippingCost } from '../../supabase/functions/_shared/shipping';
+import { supabase } from '../lib/supabase';
 
 export const Checkout: React.FC = () => {
   const { items, totalPrice, totalItems, clearCart, originalPriceSum, discountApplied, potentialDiscount, orderOfferDiscount: cartOrderOfferDiscount, stockWarnings } = useCart();
@@ -110,6 +111,16 @@ export const Checkout: React.FC = () => {
 
   const cleanDni = (d: string) => (d || '').replace(/\D/g, '');
 
+  const getOrCreateDeviceId = (): string => {
+    const KEY = 'la_martina_trusted_device_id';
+    let deviceId = localStorage.getItem(KEY);
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      localStorage.setItem(KEY, deviceId);
+    }
+    return deviceId;
+  };
+
   // ─── OTP Verification (Server-Side) ───────────────────────
   // Solo consideramos verificado el teléfono si poseemos el checkoutToken emitido por el backend
   const [checkoutToken, setCheckoutToken] = useState<string | null>(null);
@@ -120,7 +131,7 @@ export const Checkout: React.FC = () => {
   const [otpSuccess, setOtpSuccess] = useState<string | null>(null);
   const [otpCountdown, setOtpCountdown] = useState(0);
 
-  const isPhoneEffectiveVerified = !!checkoutToken;
+  const isPhoneEffectiveVerified = isAuthenticated || !!checkoutToken;
 
   useEffect(() => {
     if (otpCountdown > 0) {
@@ -129,14 +140,60 @@ export const Checkout: React.FC = () => {
     }
   }, [otpCountdown]);
 
-  // Reset manual verification when phone changes
+  // Auto-validar teléfono y emitir checkoutToken si el usuario está autenticado O si este dispositivo ya fue verificado
   useEffect(() => {
+    let isCancelled = false;
+    const phoneDigits = cleanPhone(formData.phone);
+
+    // 1. Si está autenticado con cuenta (cliente/empleado/admin), obtener el token directamente sin OTP
+    if (isAuthenticated) {
+      const fetchAuthToken = async () => {
+        try {
+          const { data: authTok, error: authErr } = await supabase.rpc('get_authenticated_checkout_token', {
+            p_phone: phoneDigits || null
+          });
+          if (!isCancelled && !authErr && authTok) {
+            setCheckoutToken(authTok);
+          }
+        } catch (err) {
+          console.warn('No se pudo obtener checkout token autenticado:', err);
+        }
+      };
+      fetchAuthToken();
+      return () => { isCancelled = true; };
+    }
+
     setCheckoutToken(null);
     setOtpCodeSent(false);
     setOtpInput('');
     setOtpError(null);
     setOtpSuccess(null);
-  }, [formData.phone]);
+
+    if (!phoneDigits || phoneDigits.length < 8) return;
+
+    // 2. Para invitados: verificar si este dispositivo ya fue verificado para este número
+    const checkTrustedStatus = async () => {
+      try {
+        const deviceId = getOrCreateDeviceId();
+        const { data: devTok, error: devErr } = await supabase.rpc('get_trusted_checkout_token', {
+          p_phone: phoneDigits,
+          p_device_token: deviceId
+        });
+
+        if (!isCancelled && !devErr && devTok) {
+          setCheckoutToken(devTok);
+        }
+      } catch (err) {
+        console.warn('No se pudo verificar dispositivo de confianza automáticamente:', err);
+      }
+    };
+
+    checkTrustedStatus();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [formData.phone, isAuthenticated]);
 
   const handleSendOtp = async () => {
     setOtpError(null);
@@ -155,11 +212,16 @@ export const Checkout: React.FC = () => {
     setIsSendingOtp(true);
 
     try {
-      const { supabase } = await import('../lib/supabase');
-      const { error } = await supabase.rpc('request_otp', { 
+      const timeoutPromise = new Promise<{ error: Error }>((_, reject) =>
+        setTimeout(() => reject(new Error('La solicitud tardó demasiado tiempo. Por favor reintentá.')), 20000)
+      );
+
+      const rpcPromise = supabase.rpc('request_otp', { 
         p_phone: phoneDigits,
-        p_customer_name: formData.name 
+        p_customer_name: formData.name || 'Cliente'
       });
+
+      const { error } = await Promise.race([rpcPromise, timeoutPromise]) as any;
 
       if (error) {
         throw error;
@@ -186,11 +248,16 @@ export const Checkout: React.FC = () => {
     const phoneDigits = cleanPhone(formData.phone);
 
     try {
-      const { supabase } = await import('../lib/supabase');
-      const { data, error } = await supabase.rpc('verify_otp', { 
+      const timeoutPromise = new Promise<{ data: any; error: Error }>((_, reject) =>
+        setTimeout(() => reject(new Error('La verificación tardó demasiado tiempo. Por favor reintentá.')), 10000)
+      );
+
+      const rpcPromise = supabase.rpc('verify_otp', { 
         p_phone: phoneDigits, 
         p_code: otpInput.trim() 
       });
+
+      const { data, error } = await Promise.race([rpcPromise, timeoutPromise]) as any;
 
       if (error) {
         throw error;
@@ -200,6 +267,18 @@ export const Checkout: React.FC = () => {
         setCheckoutToken(data);
         setOtpSuccess('¡Número verificado correctamente!');
         setOtpError(null);
+
+        // Registrar este dispositivo como confiable para futuras compras
+        try {
+          const deviceId = getOrCreateDeviceId();
+          await supabase.rpc('register_trusted_device', {
+            p_phone: phoneDigits,
+            p_device_token: deviceId,
+            p_checkout_token: data
+          });
+        } catch (regErr) {
+          console.warn('Error registrando dispositivo de confianza:', regErr);
+        }
       } else {
         setOtpError('Respuesta inválida del servidor al verificar el código.');
       }
@@ -289,7 +368,7 @@ export const Checkout: React.FC = () => {
   }, [currentDistanceKm, activeTotalPrice, generalConfig, isPickup, hasSlotFreeShipping]);
 
   const shippingCost = shippingCalculation.cost;
-  const finalTotal = activeTotalPrice + shippingCost;
+  const finalTotal = Math.round((activeTotalPrice + shippingCost) * 100) / 100;
 
   // Helper de disponibilidad y horario de atención para franjas horarias
   const checkSlotAvailability = (slot: DeliveryTimeSlot, now: Date = new Date()) => {
@@ -512,13 +591,30 @@ export const Checkout: React.FC = () => {
     // Phone blocklist validation
     const cleanP = cleanPhone(formData.phone);
     if (isPhoneBlocked(cleanP)) {
+      setIsConfirming(false);
       setFormError('No es posible procesar este pedido con este número de contacto.');
       window.scrollTo({ top: 200, behavior: 'smooth' });
       return;
     }
 
-    // Phone OTP validation (device-based trust)
-    if (!isPhoneEffectiveVerified) {
+    // Phone OTP validation (solo para invitados si no tienen token ni están autenticados)
+    let effectiveToken = checkoutToken;
+    if (!effectiveToken && isAuthenticated) {
+      try {
+        const { data: authTok } = await supabase.rpc('get_authenticated_checkout_token', {
+          p_phone: cleanP || null
+        });
+        if (authTok) {
+          effectiveToken = authTok;
+          setCheckoutToken(authTok);
+        }
+      } catch (err) {
+        console.warn('No se pudo obtener checkout token autenticado:', err);
+      }
+    }
+
+    if (!isAuthenticated && !effectiveToken) {
+      setIsConfirming(false);
       setFormError('Debés verificar tu número de WhatsApp antes de confirmar tu pedido.');
       window.scrollTo({ top: 300, behavior: 'smooth' });
       return;
@@ -526,6 +622,7 @@ export const Checkout: React.FC = () => {
 
     // Coverage Zone Validation
     if (!isPickup && isOutsideCoverage) {
+      setIsConfirming(false);
       setFormError(`La ubicación seleccionada está fuera de nuestro radio de entrega (${maxRadiusKm} km). Podés optar por 'Retiro en sucursal'.`);
       window.scrollTo({ top: 300, behavior: 'smooth' });
       return;
@@ -536,18 +633,21 @@ export const Checkout: React.FC = () => {
       const enteredDigits = cleanDni(ccDniInput);
       const registeredDigits = cleanDni(currentCustomer?.dni || '');
       if (!isCcValidated || !currentCustomer?.hasCurrentAccount || !enteredDigits || enteredDigits !== registeredDigits) {
+        setIsConfirming(false);
         setFormError('Debés validar tu DNI antes de confirmar un pedido con Cuenta Corriente.');
         window.scrollTo({ top: 400, behavior: 'smooth' });
         return;
       }
 
       if (ccOverdueStatus.isOverdue) {
+        setIsConfirming(false);
         setFormError(`Tu Cuenta Corriente tiene un saldo vencido de $${formatCurrency(ccOverdueStatus.overdueDebt, true, true)}. No es posible realizar pedidos a cuenta hasta regularizar el pago en el local.`);
         window.scrollTo({ top: 400, behavior: 'smooth' });
         return;
       }
 
       if (isCcExceedingAmount) {
+        setIsConfirming(false);
         setFormError(`El pedido ($${formatCurrency(finalTotal, true, true)}) supera tu límite disponible de Cuenta Corriente ($${formatCurrency(effectiveCcAmountLimit, true, true)}). Por favor reducí las cantidades en el carrito o seleccioná otro método de pago.`);
         window.scrollTo({ top: 400, behavior: 'smooth' });
         return;
@@ -559,6 +659,7 @@ export const Checkout: React.FC = () => {
       // Valid if using saved profile address OR if new map coords were selected
       const hasValidAddress = usingProfileAddress && savedProfileAddress ? true : !!deliveryCoords;
       if (!hasValidAddress) {
+        setIsConfirming(false);
         setFormError('Por favor, seleccioná tu ubicación en el mapa antes de continuar.');
         window.scrollTo({ top: 200, behavior: 'smooth' });
         return;
@@ -566,10 +667,12 @@ export const Checkout: React.FC = () => {
       // Only require house number and reference if using the map (not saved address)
       if (!usingProfileAddress) {
         if (!deliveryHouseNumber.trim()) {
+          setIsConfirming(false);
           setFormError('Por favor, ingresá el número de casa, lote o depto.');
           return;
         }
         if (!deliveryReference.trim()) {
+          setIsConfirming(false);
           setFormError('Por favor, ingresá una referencia visual para guiar al repartidor.');
           return;
         }
@@ -603,13 +706,12 @@ export const Checkout: React.FC = () => {
     setIsConfirming(true);
 
     try {
-      const { supabase } = await import('../lib/supabase');
-      
       const payload = {
         items: items.map(i => ({ id: i.id, quantity: i.quantity })),
-        checkout_token: checkoutToken,
+        checkout_token: effectiveToken,
         isPickup: isPickup,
         customer_phone: cleanP,
+        customer_name: finalCustomerName,
         delivery_lat: finalLat,
         delivery_lng: finalLng,
         delivery_data: {
@@ -622,7 +724,7 @@ export const Checkout: React.FC = () => {
         payment_method: formData.paymentMethod,
         notes: orderNotes,
         dni: validatedDni,
-        expected_total: finalTotal
+        expected_total: Math.round(finalTotal * 100) / 100
       };
 
       const { data, error } = await supabase.functions.invoke('checkout-api/checkout', {
@@ -642,7 +744,9 @@ export const Checkout: React.FC = () => {
       const serverTotal = data.total;
       
       if (Math.abs(serverTotal - finalTotal) > 1) { // 1 peso tolerance
-        setFormError(`El importe cotizado por el servidor ($${formatCurrency(serverTotal, true, true)}) difiere de tu total en pantalla. Revisá los precios actualizados y confirmá de nuevo.`);
+        const sFmt = (Math.round(serverTotal * 100) / 100).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+        const cFmt = (Math.round(finalTotal * 100) / 100).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+        setFormError(`El importe cotizado por el servidor ($${sFmt}) difiere de tu total en pantalla ($${cFmt}). Revisá los precios actualizados y confirmá de nuevo.`);
         window.scrollTo({ top: 300, behavior: 'smooth' });
         setIsConfirming(false);
         // Aquí idealmente deberíamos refrescar el carrito, pero como mínimo bloqueamos
@@ -676,7 +780,14 @@ export const Checkout: React.FC = () => {
         setFormError('La sesión de pago expiró o es inválida. Verificá nuevamente tu teléfono.');
         setCheckoutToken(null);
       } else {
-        setFormError('Error al crear el pedido: ' + err.message);
+        // Limitar números decimales a un máximo de 2 dígitos después de la coma
+        let cleanMsg = err.message || '';
+        cleanMsg = cleanMsg.replace(/\$(\d+(?:\.\d+)?)/g, (_: string, numStr: string) => {
+          const num = parseFloat(numStr);
+          if (isNaN(num)) return `$${numStr}`;
+          return `$${(Math.round(num * 100) / 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })}`;
+        });
+        setFormError('Error al crear el pedido: ' + cleanMsg);
       }
       window.scrollTo({ top: 300, behavior: 'smooth' });
     } finally {
@@ -834,8 +945,8 @@ export const Checkout: React.FC = () => {
                   </div>
                 </div>
 
-                {/* OTP Verification Block (si el número no está verificado en este dispositivo) */}
-                {!isPhoneEffectiveVerified && cleanPhone(formData.phone).length >= 8 && (
+                {/* OTP Verification Block (solo para invitados si el número no está verificado en este dispositivo) */}
+                {!isAuthenticated && !isPhoneEffectiveVerified && cleanPhone(formData.phone).length >= 8 && (
                   <div className="md:col-span-2 bg-amber-50/70 border border-amber-200 rounded-2xl p-4 md:p-5 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                     <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-amber-800 shrink-0 mt-0.5">
@@ -844,8 +955,14 @@ export const Checkout: React.FC = () => {
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-sm text-amber-950">Verificación de seguridad requerida</p>
                         <p className="text-xs text-amber-900/80 mt-0.5 leading-relaxed">
-                          Para proteger tu pedido, te enviaremos un código de 4 dígitos por WhatsApp. Una vez verificado, este dispositivo quedará autorizado para futuras compras.
+                          Para proteger tu pedido, te enviaremos un código de 4 dígitos por WhatsApp. Una vez verificado, este dispositivo quedará autorizado para futuras compras sin pedirlo nuevamente.
                         </p>
+                        <div className="mt-2.5 p-2.5 bg-amber-100/90 border border-amber-300/80 rounded-xl flex items-center gap-2 text-xs text-amber-950">
+                          <span className="material-symbols-outlined text-amber-800 text-[18px] shrink-0">schedule</span>
+                          <p>
+                            <strong>Aviso importante:</strong> El código por WhatsApp se enviará cuando el supermercado esté abierto y con su sistema operativo.
+                          </p>
+                        </div>
                       </div>
                     </div>
 
@@ -1372,8 +1489,12 @@ export const Checkout: React.FC = () => {
               <div className="max-h-[50vh] overflow-y-auto space-y-4 mb-6 pr-2 no-scrollbar">
                 {items.map(item => (
                   <div key={item.id} className="flex gap-4 items-center">
-                    <div className="w-12 h-12 bg-[#fcf9f8] rounded-lg p-1">
-                      <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain mix-blend-multiply" />
+                    <div className="w-12 h-12 bg-[#fcf9f8] rounded-lg p-1 flex items-center justify-center">
+                      {item.image ? (
+                        <img src={item.image} alt="" aria-hidden="true" className="w-full h-full object-contain mix-blend-multiply" />
+                      ) : (
+                        <span className="material-symbols-outlined text-outline-variant/40 text-[20px]">shopping_bag</span>
+                      )}
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-bold line-clamp-1">{item.name}</p>

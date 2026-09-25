@@ -13,6 +13,7 @@ export interface CreateMovementInput {
 }
 
 export interface CreateCashCloseInput {
+  id?: string;
   date: string;
   period: 'diario' | 'semanal' | 'mensual';
   total_sales: number;
@@ -77,7 +78,7 @@ export const cashRepository = {
    */
   async createCashClose(input: CreateCashCloseInput): Promise<OfflineCashClose> {
     const cajaId = cajaManager.getCajaIdSync();
-    const closeId = cajaManager.generateCloseId();
+    const closeId = input.id || cajaManager.generateCloseId();
     const now = new Date();
 
     const close: OfflineCashClose = {

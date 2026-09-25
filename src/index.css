@@ -177,15 +177,26 @@ body {
     background: white !important;
     margin: 0 !important;
     padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Reset fixed modal containers to allow full scrolling content to print */
+  .fixed {
+    position: absolute !important;
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
   }
 
   /* Only show portals (like our printable modal) */
   .printable-area {
     display: block !important;
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
+    position: relative !important;
     width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
     margin: 0 !important;
     padding: 15mm !important;
     box-shadow: none !important;
@@ -193,12 +204,19 @@ body {
     visibility: visible !important;
   }
 
+  /* Force inner scrollable areas to expand fully */
+  .printable-area * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
   .no-print {
     display: none !important;
   }
 
-  /* Avoid page breaks inside the report */
+  /* Avoid page breaks inside the report where possible */
   .printable-area > div {
     page-break-inside: avoid;
   }
 }
+

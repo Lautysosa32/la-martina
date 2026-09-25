@@ -77,7 +77,9 @@ interface POSCartItem {
   productId: string;
   productCode: string;
   name: string;
+  brand?: string;
   price: number;
+  originalPrice?: number | null;
   quantity: number;
   image: string;
   offerDiscount?: number;
@@ -87,6 +89,9 @@ interface POSCartItem {
   offerId?: string | null;
   discountedQuantity?: number;
   saleType?: 'unit' | 'weight';
+  categoryId?: string;
+  subcategoryId?: string;
+  badge?: string | null;
 }
 
 interface POSTab {
@@ -134,12 +139,13 @@ export const POS: React.FC = () => {
     performCashClose, lastPOSCloseTimestamp, formatCurrency, applyOffersToCartItem, applyOrderOffers,
     orders, cashRegister, openCashRegister, isCashRegisterOpen, getStock, currentAccountConfig,
     ticketConfig, cashCloses, updateCashCloseOpeningControl,
-    invoices, addInvoice, refreshInvoices, checkSaleBilledStatus
+    invoices, addInvoice, refreshInvoices, checkSaleBilledStatus,
+    posConfig
   } = useAdmin();
 
-  // Asegurar carga de catálogo de productos frescos para el POS
   const storeProducts = useProductStore((state) => state.products);
   const fetchProducts = useProductStore((state) => state.fetchProducts);
+  const updateProduct = useProductStore((state) => state.updateProduct);
 
   useEffect(() => {
     if (storeProducts.length === 0) {
@@ -232,10 +238,15 @@ export const POS: React.FC = () => {
           productId: item.productId || 'PRODUCTO_COMUN',
           productCode: item.barcode || 'COMUN',
           name: item.name,
+          brand: matchingProduct?.brand || '',
           price: matchingProduct ? matchingProduct.price : item.price,
+          originalPrice: matchingProduct?.originalPrice || (matchingProduct as any)?.original_price || null,
           quantity: item.quantity,
           image: matchingProduct ? matchingProduct.image : (item.image || ''),
-          saleType: matchingProduct?.saleType || 'unit'
+          saleType: matchingProduct?.saleType || 'unit',
+          categoryId: matchingProduct?.categoryId || (matchingProduct as any)?.category_id,
+          subcategoryId: matchingProduct?.subcategoryId || (matchingProduct as any)?.subcategory_id,
+          badge: matchingProduct?.badge
         };
       });
 
@@ -656,31 +667,7 @@ export const POS: React.FC = () => {
     // Register withdrawals as movements before close
     withdrawals.forEach(w => addCashWithdrawal(w));
 
-    // Conteo de operaciones pendientes en este momento
-    const pendingCount = await syncQueue.getPendingCount();
-
-    // Registrar en cashRepository (IndexedDB + cola de sync)
-    try {
-      await cashRepository.createCashClose({
-        date: new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        period: 'diario',
-        total_sales: stats.totalToday,
-        total_orders: 0,
-        cash_payments: stats.cash,
-        card_payments: stats.card,
-        transfer_payments: stats.transfer,
-        cuenta_corriente_payments: 0,
-        initial_amount: stats.initialAmount,
-        total_withdrawals: totalWithdrawals,
-        closed_at: new Date().toISOString(),
-        closed_by: cashierName,
-        pending_sync_count: pendingCount,
-        withdrawals: withdrawals.map(w => ({ amount: w.amount, reason: w.reason, timestamp: w.timestamp }))
-      });
-    } catch (err) {
-      console.warn('Error saving cash close to local repository:', err);
-    }
-
+    // Realizar el cierre canónico completo (incluye todos los pedidos, ventas, retiros y arqueo)
     const result = performCashClose(withdrawals);
     if (result === null) {
       // Register was already closed — show feedback and abort
@@ -689,6 +676,32 @@ export const POS: React.FC = () => {
       setShowWithdrawalModal(false);
       alert('La caja ya se encuentra cerrada.');
       return;
+    }
+
+    // Conteo de operaciones pendientes en este momento
+    const pendingCount = await syncQueue.getPendingCount();
+
+    // Registrar en cashRepository (IndexedDB + cola de sync) con el MISMO ID canónico y datos completos
+    try {
+      await cashRepository.createCashClose({
+        id: result.id,
+        date: result.date,
+        period: result.period,
+        total_sales: result.totalSales,
+        total_orders: result.totalOrders,
+        cash_payments: result.cashPayments,
+        card_payments: result.cardPayments,
+        transfer_payments: result.transferPayments,
+        cuenta_corriente_payments: result.cuentaCorrientePayments || 0,
+        initial_amount: result.initialAmount,
+        total_withdrawals: result.totalWithdrawals,
+        closed_at: result.closedAt,
+        closed_by: cashierName,
+        pending_sync_count: pendingCount,
+        withdrawals: withdrawals.map(w => ({ amount: w.amount, reason: w.reason, timestamp: w.timestamp }))
+      });
+    } catch (err) {
+      console.warn('Error saving cash close to local repository:', err);
     }
 
     // Si hay conexión, sincronizar de inmediato
@@ -708,12 +721,41 @@ export const POS: React.FC = () => {
   // --- POS CART LOGIC ---
   const cartWithDiscounts = useMemo(() => {
     return cart.map(item => {
+      // Buscar en activeCatalogProducts si faltan metadatos para ofertas por categoría / subcategoría / etiqueta / marca
+      const catProduct = (!item.categoryId || !item.subcategoryId || !item.brand)
+        ? activeCatalogProducts.find(p => p.id === item.productId || (p.barcode && p.barcode === item.productCode))
+        : null;
+
+      const categoryId = item.categoryId || catProduct?.categoryId || (catProduct as any)?.category_id;
+      const subcategoryId = item.subcategoryId || catProduct?.subcategoryId || (catProduct as any)?.subcategory_id;
+      const badge = item.badge !== undefined ? item.badge : catProduct?.badge;
+      const brand = (item.brand !== undefined && item.brand !== null) ? item.brand : (catProduct?.brand || '');
+      const originalPrice = item.originalPrice !== undefined && item.originalPrice !== null
+        ? item.originalPrice
+        : (catProduct?.originalPrice || (catProduct as any)?.original_price || null);
+
+      const basePrice = (originalPrice && originalPrice > item.price) ? originalPrice : item.price;
+
       const calculation = applyOffersToCartItem(
-        { productId: item.productId, price: item.price, quantity: item.quantity },
+        {
+          productId: item.productId,
+          productCode: item.productCode,
+          categoryId,
+          subcategoryId,
+          badge,
+          price: basePrice,
+          originalPrice,
+          quantity: item.quantity
+        },
         validatedCustomer
       );
       return {
         ...item,
+        brand,
+        categoryId,
+        subcategoryId,
+        badge,
+        originalPrice: calculation.originalPrice || originalPrice || item.price,
         finalPrice: calculation.finalPrice,
         lineDiscount: calculation.discountAmount,
         offerLabel: calculation.offerLabel,
@@ -721,9 +763,9 @@ export const POS: React.FC = () => {
         discountedQuantity: calculation.discountedQuantity
       };
     });
-  }, [cart, validatedCustomer, applyOffersToCartItem]);
+  }, [cart, validatedCustomer, applyOffersToCartItem, activeCatalogProducts]);
 
-  const subtotal = cartWithDiscounts.reduce((s, i) => s + (i.price * i.quantity), 0);
+  const subtotal = cartWithDiscounts.reduce((s, i) => s + (((i.originalPrice && i.originalPrice > i.finalPrice) ? i.originalPrice : i.price) * i.quantity), 0);
   const itemDiscountsTotal = cartWithDiscounts.reduce((s, i) => s + (i.lineDiscount || 0), 0);
   const subtotalAfterItemDiscounts = subtotal - itemDiscountsTotal;
 
@@ -739,18 +781,28 @@ export const POS: React.FC = () => {
     let productId: string;
     let productCode: string;
     let name: string;
+    let brand = '';
     let price: number;
+    let originalPrice: number | null = null;
     let image: string;
     let saleType: 'unit' | 'weight' = 'unit';
     let itemQuantity = searchQty;
+    let categoryId: string | undefined;
+    let subcategoryId: string | undefined;
+    let badge: string | null | undefined;
 
     if (typeof productOrCode !== 'string') {
       productId = productOrCode.id;
       productCode = productOrCode.barcode || productOrCode.id;
       name = productOrCode.name;
+      brand = productOrCode.brand || '';
       price = productOrCode.price;
+      originalPrice = productOrCode.originalPrice || (productOrCode as any).original_price || null;
       image = productOrCode.image;
       saleType = productOrCode.saleType || 'unit';
+      categoryId = productOrCode.categoryId || (productOrCode as any).category_id;
+      subcategoryId = productOrCode.subcategoryId || (productOrCode as any).subcategory_id;
+      badge = productOrCode.badge;
     } else {
       const cleanCode = productOrCode.trim();
       if (!cleanCode) return;
@@ -762,10 +814,15 @@ export const POS: React.FC = () => {
         productId = sp.id;
         productCode = sp.barcode || sp.id;
         name = sp.name;
+        brand = sp.brand || '';
         price = sp.price;
+        originalPrice = sp.originalPrice || (sp as any).original_price || null;
         image = sp.image;
         saleType = 'weight';
         itemQuantity = scaleResult.weightKg || 1;
+        categoryId = sp.categoryId || (sp as any).category_id;
+        subcategoryId = sp.subcategoryId || (sp as any).subcategory_id;
+        badge = sp.badge;
       } else {
         const cleanLower = cleanCode.toLowerCase();
         const exactMatch = activeCatalogProducts.find(p => {
@@ -777,17 +834,27 @@ export const POS: React.FC = () => {
           productId = exactMatch.id;
           productCode = exactMatch.barcode || exactMatch.id;
           name = exactMatch.name;
+          brand = exactMatch.brand || '';
           price = exactMatch.price;
+          originalPrice = exactMatch.originalPrice || (exactMatch as any).original_price || null;
           image = exactMatch.image;
           saleType = exactMatch.saleType || 'unit';
+          categoryId = exactMatch.categoryId || (exactMatch as any).category_id;
+          subcategoryId = exactMatch.subcategoryId || (exactMatch as any).subcategory_id;
+          badge = exactMatch.badge;
         } else if (filteredProducts.length > 0) {
           const firstSug = filteredProducts[0];
           productId = firstSug.id;
           productCode = firstSug.barcode || firstSug.id;
           name = firstSug.name;
+          brand = firstSug.brand || '';
           price = firstSug.price;
+          originalPrice = firstSug.originalPrice || (firstSug as any).original_price || null;
           image = firstSug.image;
           saleType = firstSug.saleType || 'unit';
+          categoryId = firstSug.categoryId || (firstSug as any).category_id;
+          subcategoryId = firstSug.subcategoryId || (firstSug as any).subcategory_id;
+          badge = firstSug.badge;
         } else {
           productId = 'GENERIC';
           productCode = cleanCode.toUpperCase();
@@ -816,11 +883,30 @@ export const POS: React.FC = () => {
         const newCart = [...prev];
         newCart[existingIdx] = {
           ...newCart[existingIdx],
+          brand: newCart[existingIdx].brand || brand,
+          categoryId: newCart[existingIdx].categoryId || categoryId,
+          subcategoryId: newCart[existingIdx].subcategoryId || subcategoryId,
+          badge: newCart[existingIdx].badge ?? badge,
+          originalPrice: newCart[existingIdx].originalPrice ?? originalPrice,
           quantity: parseFloat((newCart[existingIdx].quantity + itemQuantity).toFixed(3))
         };
         return newCart;
       }
-      return [{ id: Date.now().toString() + Math.random(), productId, productCode, name, price, quantity: itemQuantity, image, saleType }, ...prev];
+      return [{
+        id: Date.now().toString() + Math.random(),
+        productId,
+        productCode,
+        name,
+        brand,
+        price,
+        originalPrice,
+        quantity: itemQuantity,
+        image,
+        saleType,
+        categoryId,
+        subcategoryId,
+        badge
+      }, ...prev];
     });
 
     setSearchCode('');
@@ -1170,6 +1256,21 @@ export const POS: React.FC = () => {
         lineDiscount: i.lineDiscount
       }))
     });
+
+    // Auto-activación de productos inactivos vendidos (Offline First)
+    if (posConfig?.autoActivateProducts) {
+      try {
+        cartWithDiscounts.forEach(item => {
+        const prod = activeCatalogProducts.find(p => p.id === item.productId);
+        if (prod && prod.isPaused) {
+          console.log(`Auto-activando producto que pasó por caja: ${prod.name}`);
+          updateProduct(prod.id, { isPaused: false }).catch(err => console.warn('Error auto-activando producto:', err));
+        }
+      });
+    } catch (actErr) {
+      console.warn('Error en proceso de auto-activación de productos:', actErr);
+    }
+    }
 
     setShowSuccessModal({
       orderId,
@@ -2107,26 +2208,59 @@ export const POS: React.FC = () => {
                     <table className="w-full text-left block lg:table table-auto lg:table-fixed border-separate border-spacing-0 lg:min-w-0">
                       <thead className="bg-[#fcfcfc] sticky top-0 z-20 block lg:table-header-group border-b border-outline-variant/20 lg:border-none">
                         <tr className="text-[10px] lg:text-[11px] font-bold text-on-surface-variant uppercase tracking-wider flex lg:table-row w-full">
-                          <th className="order-1 lg:order-none w-[105px] lg:w-32 px-1 lg:px-6 py-2 lg:py-4 text-center lg:border-b border-outline-variant/20 block lg:table-cell">Cant.</th>
-                          <th className="order-2 lg:order-none w-[75px] lg:w-32 px-2 lg:px-6 py-2 lg:py-4 text-right lg:border-b border-outline-variant/20 block lg:table-cell">Total</th>
-                          <th className="order-3 lg:order-none flex-1 px-2 lg:px-6 py-2 lg:py-4 lg:border-b border-outline-variant/20 block lg:table-cell text-left">Desc.</th>
-                          <th className="order-4 lg:order-none w-10 lg:w-16 px-1 lg:px-6 py-2 lg:py-4 text-center lg:border-b border-outline-variant/20 block lg:table-cell"></th>
-                          <th className="hidden lg:table-cell px-6 py-4 w-32 text-right border-b border-outline-variant/20">Precio Unit.</th>
+                          {/* 1. # (Móvil: order-4 para espacio de botón eliminar) */}
+                          <th className="order-4 lg:order-none w-10 lg:w-16 px-1 lg:px-4 py-2 lg:py-4 text-center lg:border-b border-outline-variant/20 block lg:table-cell">
+                            <span className="hidden lg:inline">#</span>
+                          </th>
+                          {/* 2. Descripción (Móvil: order-3) */}
+                          <th className="order-3 lg:order-none flex-1 px-2 lg:px-6 py-2 lg:py-4 lg:border-b border-outline-variant/20 block lg:table-cell text-left">
+                            <span className="sm:hidden">Desc.</span>
+                            <span className="hidden sm:inline">Descripción</span>
+                          </th>
+                          {/* 3. Precio Unit. (Oculto en móvil) */}
+                          <th className="hidden lg:table-cell px-4 lg:px-6 py-4 w-32 lg:w-36 text-right border-b border-outline-variant/20">
+                            Precio Unit.
+                          </th>
+                          {/* 4. Cantidad (Móvil: order-1) */}
+                          <th className="order-1 lg:order-none w-[105px] lg:w-36 px-1 lg:px-4 py-2 lg:py-4 text-center lg:border-b border-outline-variant/20 block lg:table-cell">
+                            Cant.
+                          </th>
+                          {/* 5. Total (Móvil: order-2) */}
+                          <th className="order-2 lg:order-none w-[75px] lg:w-32 px-2 lg:px-6 py-2 lg:py-4 text-right lg:border-b border-outline-variant/20 block lg:table-cell">
+                            Total
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-outline-variant/10 lg:divide-outline-variant/5 block lg:table-row-group w-full">
                         {cartWithDiscounts.map((item, idx) => {
                           const itemStock = item.productId !== 'GENERIC' && item.productId !== 'PRODUCTO_COMUN' && !item.productId.startsWith('GENERICO-') ? getStock(item.productId) : null;
                           const isItemOutOfStock = itemStock !== null && itemStock === 0;
+
+                          const brandTrimmed = (item.brand || '').trim();
+                          const nameTrimmed = (item.name || '').trim();
+                          const displayFullName = brandTrimmed && !nameTrimmed.toLowerCase().startsWith(brandTrimmed.toLowerCase())
+                            ? `${brandTrimmed} ${nameTrimmed}`
+                            : nameTrimmed;
+
                           return (
                             <tr key={item.id} onClick={() => setSelectedIndex(idx)} className={`group transition-colors relative flex lg:table-row items-center w-full py-2 lg:py-0 border-b border-outline-variant/10 lg:border-none ${isItemOutOfStock ? 'bg-red-50' : ''}`}>
-                              <td className="order-4 lg:order-none w-10 lg:w-16 px-1 lg:px-6 py-1 lg:py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-auto lg:h-[70px] block lg:table-cell shrink-0">
-                                <button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 m-1 lg:m-0 flex items-center justify-center bg-red-100 text-error opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all z-10 rounded-lg lg:rounded-none"><span className="material-symbols-outlined text-[18px] lg:text-[20px]">delete</span></button>
-                                <div className="hidden lg:flex items-center justify-center h-full">{selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}</div>
+                              {/* 1. # (Móvil: order-4 con botón borrar) */}
+                              <td className="order-4 lg:order-none w-10 lg:w-16 px-1 lg:px-4 py-1 lg:py-5 text-center text-sm font-bold text-on-surface-variant relative align-middle h-auto lg:h-[70px] block lg:table-cell shrink-0">
+                                <button onClick={(e) => { e.stopPropagation(); handleRemoveItem(idx); }} className="absolute inset-0 m-1 lg:m-0 flex items-center justify-center bg-red-100 text-error opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all z-10 rounded-lg lg:rounded-none" title="Eliminar ítem">
+                                  <span className="material-symbols-outlined text-[18px] lg:text-[20px]">delete</span>
+                                </button>
+                                <div className="hidden lg:flex items-center justify-center h-full">
+                                  {selectedIndex === idx ? <span className="material-symbols-outlined text-primary text-[18px]">arrow_right</span> : cartWithDiscounts.length - idx}
+                                </div>
                               </td>
+
+                              {/* 2. Descripción (Móvil: order-3, en PC marca primero y después nombre) */}
                               <td className="order-3 lg:order-none flex-1 min-w-0 px-2 lg:px-6 py-1 lg:py-5 font-black text-[11px] lg:text-sm text-on-background uppercase align-middle h-auto lg:h-[70px] block lg:table-cell">
                                 <div className="flex flex-col justify-center h-full overflow-hidden">
-                                  <span className="truncate w-full block">{item.name}</span>
+                                  <span className="truncate w-full block">
+                                    <span className="lg:hidden">{item.name}</span>
+                                    <span className="hidden lg:inline">{displayFullName}</span>
+                                  </span>
                                   {item.offerLabel && (
                                     <span className="text-[9px] lg:text-[10px] text-error font-extrabold flex items-center gap-0.5 lowercase tracking-wider mt-0.5 bg-error/5 self-start px-2 py-0.5 rounded-full truncate max-w-full">
                                       <span className="material-symbols-outlined text-[10px] lg:text-[12px]">local_offer</span>
@@ -2135,70 +2269,107 @@ export const POS: React.FC = () => {
                                   )}
                                 </div>
                               </td>
-                              <td className="order-1 lg:order-none w-[105px] lg:w-32 shrink-0 px-0 lg:px-6 py-1 lg:py-5 text-center font-bold text-sm align-middle h-auto lg:h-[70px] block lg:table-cell">
-                                <div className="flex items-center justify-center h-full w-full">
-                                  <div className="flex items-center justify-between lg:justify-center gap-1 lg:gap-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity w-full lg:absolute lg:inset-x-0">
-                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }} className="w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-surface-container-low hover:bg-black/10 flex items-center justify-center shrink-0">-</button>
-                                    {item.saleType === 'weight' ? (
-                                      inlineWeightEdit?.idx === idx ? (
-                                        <input
-                                          autoFocus
-                                          type="text"
-                                          inputMode="decimal"
-                                          value={inlineWeightEdit.str}
-                                          className="w-12 lg:w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary text-xs lg:text-sm"
-                                          onChange={(e) => {
-                                            const raw = e.target.value.replace(',', '.');
-                                            if (/^\d*\.?\d{0,2}$/.test(raw)) setInlineWeightEdit({ idx, str: raw });
-                                          }}
-                                          onBlur={() => {
-                                            const n = parseFloat(inlineWeightEdit.str);
-                                            if (!isNaN(n) && n > 0) updateItemQty(idx, n);
-                                            setInlineWeightEdit(null);
-                                          }}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault();
-                                              const n = parseFloat(inlineWeightEdit.str);
-                                              if (!isNaN(n) && n > 0) updateItemQty(idx, n);
-                                              setInlineWeightEdit(null);
-                                            }
-                                            if (e.key === 'Escape') setInlineWeightEdit(null);
-                                          }}
-                                          onClick={(e) => e.stopPropagation()}
-                                        />
-                                      ) : (
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); setInlineWeightEdit({ idx, str: parseFloat(item.quantity.toFixed(2)).toString() }); }}
-                                          className="flex-1 lg:w-12 text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate text-xs lg:text-sm"
-                                        >{parseFloat(item.quantity.toFixed(2)).toString()}</button>
-                                      )
-                                    ) : (
-                                      <span className="flex-1 lg:w-8 text-center text-xs lg:text-sm">{item.quantity}</span>
-                                    )}
-                                    <button onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }} className="w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-surface-container-low hover:bg-black/10 flex items-center justify-center shrink-0">+</button>
-                                  </div>
-                                  <span className="hidden lg:inline group-hover:hidden">
-                                    {item.saleType === 'weight' ? `${parseFloat(item.quantity.toFixed(2))} kg` : item.quantity}
-                                  </span>
-                                </div>
-                              </td>
-                              <td className="hidden lg:table-cell px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px]">
+
+                              {/* 3. Precio Unit. (Oculto en móvil, visible en PC) */}
+                              <td className="hidden lg:table-cell px-4 lg:px-6 py-5 text-right font-bold text-on-surface-variant align-middle h-[70px] w-32 lg:w-36">
                                 <div className="flex flex-col justify-center items-end h-full">
                                   {item.price === 0 ? (
                                     <button onClick={() => { setShowPriceModal({ idx, name: item.name }); setPriceInput(''); }} className="text-primary hover:underline bg-primary/10 px-2 py-1 rounded text-xs">Ingresar Precio</button>
                                   ) : (
                                     <>
-                                      {item.finalPrice < item.price && (
-                                        <span className="text-xs text-on-surface-variant/50 line-through">${formatCurrency(item.price)}</span>
+                                      {(item.originalPrice && item.originalPrice > item.finalPrice) ? (
+                                        <>
+                                          <span className="text-xs text-on-surface-variant/50 line-through">
+                                            ${formatCurrency(item.originalPrice)}
+                                          </span>
+                                          <span className="text-primary font-black">
+                                            ${formatCurrency(item.finalPrice, true, true)}
+                                          </span>
+                                        </>
+                                      ) : item.finalPrice < item.price ? (
+                                        <>
+                                          <span className="text-xs text-on-surface-variant/50 line-through">
+                                            ${formatCurrency(item.price)}
+                                          </span>
+                                          <span className="text-primary font-black">
+                                            ${formatCurrency(item.finalPrice, true, true)}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <span>
+                                          ${formatCurrency(item.finalPrice, true, true)}
+                                        </span>
                                       )}
-                                      <span className={item.finalPrice < item.price ? 'text-primary font-black' : ''}>
-                                        ${formatCurrency(item.finalPrice, true, true)}
-                                      </span>
                                     </>
                                   )}
                                 </div>
                               </td>
+
+                              {/* 4. Cantidad (Móvil: order-1) */}
+                              <td className="order-1 lg:order-none w-[105px] lg:w-36 shrink-0 px-0 lg:px-4 py-1 lg:py-5 text-center font-bold text-sm align-middle h-auto lg:h-[70px] block lg:table-cell">
+                                <div className="flex items-center justify-center h-full w-full">
+                                  <div className="flex items-center justify-between w-full max-w-[105px] lg:max-w-[120px] mx-auto">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity - 1); }}
+                                      className="w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-surface-container-low hover:bg-black/10 flex items-center justify-center shrink-0 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity pointer-events-auto lg:pointer-events-none lg:group-hover:pointer-events-auto"
+                                      title="Disminuir cantidad"
+                                    >
+                                      -
+                                    </button>
+                                    <div className="flex-1 text-center font-bold text-xs lg:text-sm px-1 min-w-0">
+                                      {item.saleType === 'weight' ? (
+                                        inlineWeightEdit?.idx === idx ? (
+                                          <input
+                                            autoFocus
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={inlineWeightEdit.str}
+                                            className="w-12 lg:w-16 text-center border-b-2 border-primary outline-none bg-transparent font-bold text-primary text-xs lg:text-sm"
+                                            onChange={(e) => {
+                                              const raw = e.target.value.replace(',', '.');
+                                              if (/^\d*\.?\d{0,2}$/.test(raw)) setInlineWeightEdit({ idx, str: raw });
+                                            }}
+                                            onBlur={() => {
+                                              const n = parseFloat(inlineWeightEdit.str);
+                                              if (!isNaN(n) && n > 0) updateItemQty(idx, n);
+                                              setInlineWeightEdit(null);
+                                            }}
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                const n = parseFloat(inlineWeightEdit.str);
+                                                if (!isNaN(n) && n > 0) updateItemQty(idx, n);
+                                                setInlineWeightEdit(null);
+                                              }
+                                              if (e.key === 'Escape') setInlineWeightEdit(null);
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                          />
+                                        ) : (
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); setInlineWeightEdit({ idx, str: parseFloat(item.quantity.toFixed(2)).toString() }); }}
+                                            className="w-full text-center text-primary underline decoration-primary/30 hover:decoration-primary cursor-pointer truncate text-xs lg:text-sm"
+                                          >
+                                            <span className="lg:hidden">{parseFloat(item.quantity.toFixed(2)).toString()}</span>
+                                            <span className="hidden lg:inline">{parseFloat(item.quantity.toFixed(2)).toString()} kg</span>
+                                          </button>
+                                        )
+                                      ) : (
+                                        <span className="text-xs lg:text-sm">{item.quantity}</span>
+                                      )}
+                                    </div>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); updateItemQty(idx, item.quantity + 1); }}
+                                      className="w-7 h-7 lg:w-6 lg:h-6 rounded-full bg-surface-container-low hover:bg-black/10 flex items-center justify-center shrink-0 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity pointer-events-auto lg:pointer-events-none lg:group-hover:pointer-events-auto"
+                                      title="Aumentar cantidad"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 5. Total (Móvil: order-2) */}
                               <td className="order-2 lg:order-none w-[75px] lg:w-32 shrink-0 px-2 lg:px-6 py-1 lg:py-5 text-right font-black text-[#9c1c1c] align-middle h-auto lg:h-[70px] block lg:table-cell">
                                 <div className="flex items-center justify-end h-full text-[13px] lg:text-base">${formatCurrency(item.finalPrice * item.quantity, true, true)}</div>
                               </td>
@@ -2373,11 +2544,42 @@ export const POS: React.FC = () => {
                   <p className="font-bold text-xs tracking-[0.2em] uppercase mb-2 text-white/80">Monto Final</p>
                   <p className="text-3xl sm:text-5xl lg:text-6xl font-black mb-4 sm:mb-6 flex items-start gap-1 sm:gap-2"><span className="text-xl sm:text-2xl mt-1 sm:mt-2">$</span> <span className="truncate">{formatCurrency(cartTotal, true, true)}</span></p>
                   <div className="flex justify-between text-xs font-bold text-white/80 pt-4 sm:pt-5 border-t border-white/20">
-                    <div className="flex flex-col gap-1">
-                      <span>Subtotal: $ {formatCurrency(subtotal, true, true)}</span>
-                      {globalDiscount > 0 && <span className="text-white/60">Desc ({globalDiscount}%): -${formatCurrency(discountAmount, true, true)}</span>}
+                    <div className="flex flex-col gap-1 w-full">
+                      <div className="flex justify-between">
+                        <span>Subtotal:</span>
+                        <span>$ {formatCurrency(subtotal, true, true)}</span>
+                      </div>
+                      {itemDiscountsTotal > 0 && (
+                        <div className="flex justify-between text-emerald-200">
+                          <span className="flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">local_offer</span>
+                            Ofertas en productos:
+                          </span>
+                          <span>-${formatCurrency(itemDiscountsTotal, true, true)}</span>
+                        </div>
+                      )}
+                      {orderOfferCalc.discountAmount > 0 && (
+                        <div className="flex justify-between text-emerald-200">
+                          <span className="flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">loyalty</span>
+                            {orderOfferCalc.offerLabel || 'Oferta general'}:
+                          </span>
+                          <span>-${formatCurrency(orderOfferCalc.discountAmount, true, true)}</span>
+                        </div>
+                      )}
+                      {globalDiscount > 0 && (
+                        <div className="flex justify-between text-amber-200">
+                          <span>Desc. manual ({globalDiscount}%):</span>
+                          <span>-${formatCurrency(manualDiscountAmount, true, true)}</span>
+                        </div>
+                      )}
+                      {(itemDiscountsTotal > 0 || orderOfferCalc.discountAmount > 0 || manualDiscountAmount > 0) && (
+                        <div className="flex justify-between text-white font-black pt-1.5 border-t border-white/10 text-[11px]">
+                          <span>Ahorro total aplicado:</span>
+                          <span className="text-emerald-300">-${formatCurrency(itemDiscountsTotal + orderOfferCalc.discountAmount + manualDiscountAmount, true, true)}</span>
+                        </div>
+                      )}
                     </div>
-                    <span className="self-end">Tax (0%): $ 0,00</span>
                   </div>
                 </div>
 
@@ -2408,8 +2610,6 @@ export const POS: React.FC = () => {
                   </button>
                 </div>
               </div>
-
-
             </div>
 
             {showPaymentModal && createPortal(
@@ -2417,7 +2617,16 @@ export const POS: React.FC = () => {
                 <div className="bg-white rounded-3xl sm:rounded-[3rem] w-full max-w-2xl max-h-[92vh] shadow-2xl overflow-hidden animate-in zoom-in-95 flex flex-col">
                   <div className="p-4 sm:p-8 border-b border-outline-variant/10 flex justify-between items-center bg-surface-container-lowest flex-shrink-0"><h3 className="text-xl sm:text-2xl font-black">Finalizar Venta</h3><button onClick={() => setShowPaymentModal(false)} className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-surface-container-low hover:bg-black/5 flex items-center justify-center"><span className="material-symbols-outlined text-[20px]">close</span></button></div>
                   <div className="p-4 sm:p-5 flex-1 overflow-y-auto no-scrollbar">
-                    <div className="text-center mb-6 sm:mb-8"><p className="text-xs sm:text-sm font-bold text-on-surface-variant uppercase mb-1 sm:mb-2 tracking-widest">Total a Pagar</p><p className="text-4xl sm:text-6xl font-black text-primary">${formatCurrency(cartTotal, true, true)}</p></div>
+                    <div className="text-center mb-6 sm:mb-8">
+                      <p className="text-xs sm:text-sm font-bold text-on-surface-variant uppercase mb-1 sm:mb-2 tracking-widest">Total a Pagar</p>
+                      <p className="text-4xl sm:text-6xl font-black text-primary">${formatCurrency(cartTotal, true, true)}</p>
+                      {(itemDiscountsTotal + orderOfferCalc.discountAmount + manualDiscountAmount) > 0 && (
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-bold mt-2">
+                          <span className="material-symbols-outlined text-[14px]">savings</span>
+                          <span>Ahorro aplicado: -${formatCurrency(itemDiscountsTotal + orderOfferCalc.discountAmount + manualDiscountAmount, true, true)}</span>
+                        </div>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-2.5 sm:gap-4 mb-6 sm:mb-8">
                       {PAYMENT_METHODS
                         .filter(m => m.id !== 'cuenta_corriente' || (validatedCustomer && validatedCustomer.hasCurrentAccount))
@@ -2802,7 +3011,7 @@ export const POS: React.FC = () => {
       />
       {/* Cash Register Open Modal */}
       {showCashOpenModal && (() => {
-        const lastDailyClose = cashCloses.find(c => c.period === 'diario');
+        const lastDailyClose = cashCloses.find(c => c.period === 'diario' && !c.openingControlCheckedAt) || cashCloses.find(c => c.period === 'diario') || cashCloses[0];
         const expected = lastDailyClose?.openingControlExpected ?? 0;
         const arqueoNum = parseFloat(arqueoContado.replace(',', '.')) || 0;
         const arqueoDiff = arqueoNum - expected;
@@ -2815,7 +3024,7 @@ export const POS: React.FC = () => {
             updateCashCloseOpeningControl(lastDailyClose.id, {
               counted: arqueoNum,
               notes: arqueoNotes,
-              checkedBy: 'Admin',
+              checkedBy: cashierName || 'Cajero',
             });
           }
           // Abre la caja directamente con el monto contado — sin segundo paso
@@ -2852,10 +3061,19 @@ export const POS: React.FC = () => {
                     </div>
                   </div>
                   <div className="p-6 space-y-5">
-                    {/* Efectivo esperado */}
-                    <div className="bg-surface-container-low rounded-2xl p-4 flex justify-between items-center">
-                      <span className="font-bold text-sm text-on-surface-variant">Efectivo esperado según último cierre:</span>
-                      <span className="font-black text-lg text-primary">${formatCurrency(expected)}</span>
+                    {/* Efectivo esperado con desglose */}
+                    <div className="bg-surface-container-low rounded-2xl p-4 space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-sm text-on-surface-variant">Efectivo esperado según cierre:</span>
+                        <span className="font-black text-lg text-primary">${formatCurrency(expected)}</span>
+                      </div>
+                      <div className="text-[10px] text-on-surface-variant/80 flex flex-wrap gap-x-2 pt-1.5 border-t border-outline-variant/10">
+                        <span>Inicio: ${formatCurrency(lastDailyClose.initialAmount ?? 0)}</span>
+                        <span>+ Ventas Ef.: ${formatCurrency(lastDailyClose.cashPayments ?? 0)}</span>
+                        {Boolean((lastDailyClose.totalWithdrawals ?? 0) > 0) && (
+                          <span className="text-error font-medium">- Retiros: ${formatCurrency(lastDailyClose.totalWithdrawals ?? 0)}</span>
+                        )}
+                      </div>
                     </div>
                     {/* Campo: efectivo encontrado */}
                     <div>

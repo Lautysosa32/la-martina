@@ -6,6 +6,7 @@ import { useAdmin } from '../context/AdminContext';
 import { useNavigate } from 'react-router-dom';
 import { MapSelector } from '../components/MapSelector';
 import { useScrollLock } from '../utils/useScrollLock';
+import { supabase } from '../lib/supabase';
 
 export const Profile: React.FC = () => {
   const { 
@@ -20,7 +21,7 @@ export const Profile: React.FC = () => {
     loading: authLoading,
     updateOrderStatus: updateLocalOrderStatus
   } = useAuth();
-  const { addItem, currentCustomer } = useCart();
+  const { addItem, addItems, currentCustomer } = useCart();
   const { customers, orders, toggleCurrentAccount, updateOrderStatus } = useAdmin();
   const navigate = useNavigate();
   
@@ -91,11 +92,86 @@ export const Profile: React.FC = () => {
     }));
   }, [ccOrders]);
 
-  const handleRepeatOrder = (items: any[]) => {
-    items.forEach(item => {
-      addItem(item);
-    });
-    navigate('/cart');
+  const [repeatingOrderId, setRepeatingOrderId] = useState<string | null>(null);
+
+  const handleRepeatOrder = async (orderId: string, items: any[]) => {
+    if (!items || items.length === 0) return;
+    setRepeatingOrderId(orderId);
+
+    try {
+      const itemIds = items.map(i => i.id || i.product_id).filter(Boolean);
+      const { data: dbProducts } = await supabase
+        .from('products')
+        .select('*')
+        .in('id', itemIds);
+
+      const itemsToAdd = items.map(item => {
+        const pid = item.id || item.product_id;
+        const dbProd = (dbProducts || []).find((p: any) => p.id === pid);
+
+        const productData = dbProd ? {
+          id: dbProd.id,
+          name: dbProd.name,
+          brand: dbProd.brand || '',
+          price: Number(dbProd.price || 0),
+          originalPrice: dbProd.original_price ? Number(dbProd.original_price) : null,
+          image: dbProd.image || item.image || '',
+          format: dbProd.format || null,
+          isNew: Boolean(dbProd.is_new),
+          discount: dbProd.discount ? Number(dbProd.discount) : null,
+          badge: dbProd.badge || null,
+          minStock: dbProd.min_stock || 0,
+          barcode: dbProd.barcode || null,
+          stock: dbProd.stock !== undefined ? Number(dbProd.stock) : 999,
+          categoryId: dbProd.category_id || 'general',
+          isPaused: Boolean(dbProd.is_paused)
+        } : {
+          id: pid,
+          name: item.name,
+          brand: '',
+          price: Number(item.price || 0),
+          originalPrice: null,
+          image: item.image || '',
+          format: null,
+          isNew: false,
+          discount: null,
+          badge: null,
+          minStock: 0,
+          barcode: null,
+          stock: 999,
+          categoryId: 'general',
+          isPaused: false
+        };
+
+        return {
+          product: productData,
+          quantity: Number(item.quantity || 1)
+        };
+      }).filter(i => !i.product.isPaused && (i.product.stock === undefined || i.product.stock > 0));
+
+      if (itemsToAdd.length > 0) {
+        addItems(itemsToAdd);
+        navigate('/cart');
+      } else {
+        alert('Los productos de este pedido ya no se encuentran disponibles o están sin stock.');
+      }
+    } catch (err) {
+      console.error('Error al repetir pedido:', err);
+      addItems(items.map(i => ({
+        product: {
+          id: i.id || i.product_id,
+          name: i.name,
+          price: Number(i.price || 0),
+          image: i.image || '',
+          stock: 999,
+          categoryId: 'general'
+        },
+        quantity: Number(i.quantity || 1)
+      })));
+      navigate('/cart');
+    } finally {
+      setRepeatingOrderId(null);
+    }
   };
 
   const [formData, setFormData] = useState({
@@ -778,11 +854,14 @@ export const Profile: React.FC = () => {
                             </button>
                           )}
                           <button
-                            onClick={() => handleRepeatOrder(order.items)}
-                            className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-all text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                            disabled={repeatingOrderId === order.id}
+                            onClick={() => handleRepeatOrder(order.id, order.items)}
+                            className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 transition-all text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                           >
-                            <span className="material-symbols-outlined text-[20px]">refresh</span>
-                            Repetir Pedido
+                            <span className={`material-symbols-outlined text-[20px] ${repeatingOrderId === order.id ? 'animate-spin' : ''}`}>
+                              {repeatingOrderId === order.id ? 'sync' : 'refresh'}
+                            </span>
+                            {repeatingOrderId === order.id ? 'Agregando...' : 'Repetir Pedido'}
                           </button>
                         </div>
                       </div>

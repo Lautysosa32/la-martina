@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabase';
 import {
   fetchOrders, insertOrder, updateOrderInDb, updateOrderItemsInDb,
   fetchCashMovements, insertCashMovement,
-  fetchCashCloses, insertCashClose,
+  fetchCashCloses, insertCashClose, updateCashCloseOpeningControlInDb,
   fetchOffers, insertOffer, updateOfferInDb, deleteOfferInDb,
   fetchCustomerProfiles, upsertCustomerProfile,
   fetchSetting, saveSetting,
@@ -395,6 +395,10 @@ export interface AutoCashCloseConfig {
   time: string; // HH:mm format, e.g. "22:00"
 }
 
+export interface POSConfig {
+  autoActivateProducts: boolean;
+}
+
 export interface OfferRedemption {
   id: string;
   offer_id: string;
@@ -546,7 +550,7 @@ export interface AdminContextType {
   updateOffer: (offerId: string, updates: Partial<Offer>) => void;
   deleteOffer: (offerId: string) => void;
   activeOffers: Offer[];
-  applyOffersToCartItem: (item: { productId: string; categoryId?: string; price: number; quantity: number }, customer?: AdminCustomer | null, options?: { forDisplay?: boolean }) => { finalPrice: number; discountAmount: number; offerLabel: string | null; offerId: string | null; discountedQuantity: number; originalPrice?: number };
+  applyOffersToCartItem: (item: { productId: string; productCode?: string; categoryId?: string; subcategoryId?: string; badge?: string | null; price: number; originalPrice?: number | null; quantity: number }, customer?: AdminCustomer | null, options?: { forDisplay?: boolean }) => { finalPrice: number; discountAmount: number; offerLabel: string | null; offerId: string | null; discountedQuantity: number; originalPrice?: number };
   applyOrderOffers: (subtotalAfterItemDiscounts: number, customer?: AdminCustomer | null) => { discountAmount: number; offerLabel: string | null; offerId: string | null };
   offerRedemptions: OfferRedemption[];
   addOfferRedemption: (redemption: Omit<OfferRedemption, 'id' | 'created_at' | 'redemption_date'>) => void;
@@ -595,6 +599,10 @@ export interface AdminContextType {
   autoCashCloseConfig: AutoCashCloseConfig;
   updateAutoCashCloseConfig: (config: AutoCashCloseConfig) => Promise<void> | void;
   isCashRegisterOpen: boolean;
+
+  // POS
+  posConfig: POSConfig;
+  updatePosConfig: (config: POSConfig) => Promise<void> | void;
 
   // Invoices
   invoices: Invoice[];
@@ -1243,7 +1251,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const [
         _orders, _cashMovements, _cashCloses, _profiles, _accCfg,
-        _cashReg, _lastCloseTs, _expenses, _autoCashClose
+        _cashReg, _lastCloseTs, _expenses, _autoCashClose, _posConfig
       ] = await Promise.all([
         fetchOrders(),
         fetchCashMovements(),
@@ -1254,6 +1262,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         fetchSetting('last_pos_close_timestamp', 0),
         fetchExpenses(),
         fetchSetting<AutoCashCloseConfig>('auto_cash_close_config', { enabled: false, time: '22:00' }),
+        fetchSetting<POSConfig>('pos_config', { autoActivateProducts: true }),
       ]);
 
       setOrders(_orders);
@@ -1265,6 +1274,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setLastPOSCloseTimestamp(_lastCloseTs);
       setExpenses(_expenses);
       setAutoCashCloseConfig(_autoCashClose);
+      setPosConfig(_posConfig);
       setIsAdminDataLoaded(true);
 
       // Cargar facturas fiscales reales desde el backend ARCA / PostgreSQL
@@ -1774,6 +1784,14 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateAutoCashCloseConfig = async (config: AutoCashCloseConfig) => {
     setAutoCashCloseConfig(config);
     await saveSetting('auto_cash_close_config', config);
+  };
+
+  // ─── POS Config ──────────────────────────────────────────
+  const defaultPosConfig: POSConfig = { autoActivateProducts: true };
+  const [posConfig, setPosConfig] = useState<POSConfig>(defaultPosConfig);
+  const updatePosConfig = async (config: POSConfig) => {
+    setPosConfig(config);
+    await saveSetting('pos_config', config);
   };
 
   // ─── Auto Cash Close Timer ────────────────────────────────
@@ -2548,9 +2566,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       idsToUpdate.forEach(pId => {
         const prod = adminProducts.find(p => p.id === pId);
         if (prod) {
-          const discountedPrice = Math.round(prod.price * (1 - o.discountValue / 100));
+          const basePrice = prod.originalPrice || prod.price;
+          const discountedPrice = Math.round(basePrice * (1 - o.discountValue / 100));
           updateProduct(pId, {
-            originalPrice: prod.originalPrice || prod.price,
+            originalPrice: basePrice,
             price: discountedPrice,
             discount: o.discountValue,
             badge: o.label || 'Oferta'
@@ -2595,7 +2614,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Apply offers to a cart item at POS/Cart time (product, category, subcategory, tag level)
   const applyOffersToCartItem = (
-    item: { productId: string; categoryId?: string; price: number; quantity: number },
+    item: { productId: string; productCode?: string; categoryId?: string; subcategoryId?: string; badge?: string | null; price: number; originalPrice?: number | null; quantity: number },
     customer?: AdminCustomer | null,
     options?: { forDisplay?: boolean }
   ) => {
@@ -2604,10 +2623,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     })();
 
+    const prods = adminProducts.length > 0 ? adminProducts : (useProductStore.getState().products as any);
+
     // Adapter for pure function
     return pureApplyOffersToCartItem(
       item as PricingItemInput,
-      adminProducts,
+      prods,
       offers,
       offerRedemptions,
       todayStr,
@@ -2741,25 +2762,40 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return close;
   };
 
-  const updateCashCloseOpeningControl = (
+  const updateCashCloseOpeningControl = async (
     closeId: string,
     data: { counted: number; notes: string; checkedBy: string }
   ) => {
+    const checkedAt = new Date().toISOString();
+    let expected = 0;
+
     setCashCloses(prev => prev.map(c => {
       if (c.id === closeId) {
-        const updated = {
+        expected = c.openingControlExpected ?? 0;
+        const diff = data.counted - expected;
+        return {
           ...c,
           openingControlCounted: data.counted,
-          openingControlDifference: data.counted - (c.openingControlExpected ?? 0),
+          openingControlDifference: diff,
           openingControlNotes: data.notes,
-          openingControlCheckedAt: new Date().toISOString(),
+          openingControlCheckedAt: checkedAt,
           openingControlCheckedBy: data.checkedBy,
         };
-        supabase.from('cash_closes').update(updated).eq('id', closeId).eq('branch_id', 'main').then(({ error }) => { if (error) console.error('Error updating cash close:', error); });
-        return updated;
       }
       return c;
     }));
+
+    try {
+      await updateCashCloseOpeningControlInDb(closeId, {
+        counted: data.counted,
+        difference: data.counted - expected,
+        notes: data.notes,
+        checkedBy: data.checkedBy,
+        checkedAt,
+      });
+    } catch (err) {
+      console.error('Error updating cash close opening control:', err);
+    }
   };
 
   const addCashMovement = (mov: Omit<CashMovement, 'id' | 'timestamp'>) => {
@@ -2998,6 +3034,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       storeStatus, updateStoreStatus,
       deliveryTimeSlots, updateDeliveryTimeSlots,
       autoCashCloseConfig, updateAutoCashCloseConfig,
+      posConfig, updatePosConfig,
       generalConfig, updateGeneralConfig, blockPhone, unblockPhone, isPhoneBlocked,
       offers, addOffer, updateOffer, deleteOffer, activeOffers, applyOffersToCartItem, applyOrderOffers, offerRedemptions, addOfferRedemption,
       cashCloses, performCashClose, updateCashCloseOpeningControl,

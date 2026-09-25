@@ -17,20 +17,22 @@ export const WhatsAppMessages: React.FC = () => {
     setPortalTarget(document.getElementById('admin-header-portal'));
   }, []);
 
-  const fetchMessages = async () => {
-    setLoading(true);
+  const fetchMessages = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     try {
       const data = await whatsappMessageService.getAllMessages();
       setMessages(data || []);
     } catch (err: any) {
       setError('Error al obtener mensajes: ' + err.message);
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchMessages();
+    const interval = setInterval(() => fetchMessages(true), 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleCancel = async (id: string) => {
@@ -101,6 +103,7 @@ export const WhatsAppMessages: React.FC = () => {
       case 'current_account_payment_received': return 'Pago Cta. Cte.';
       case 'current_account_limit_exceeded': return 'Límite Superado';
       case 'current_account_debt_due': return 'Deuda Vencida';
+      case 'otp_verification': return 'Verificación OTP';
       default: return type;
     }
   };
@@ -123,7 +126,7 @@ export const WhatsAppMessages: React.FC = () => {
       {portalTarget && createPortal(
         <div className="flex items-center gap-3">
           <button
-            onClick={fetchMessages}
+            onClick={() => fetchMessages()}
             className="flex items-center justify-center gap-2 bg-surface-container-low hover:bg-surface-container-highest border border-outline-variant/10 text-on-surface font-bold px-4 py-2 rounded-xl transition-all text-sm shadow-sm"
           >
             <span className="material-symbols-outlined text-[18px] animate-spin-hover">sync</span>
@@ -204,6 +207,7 @@ export const WhatsAppMessages: React.FC = () => {
             className="bg-surface-container-low border-none rounded-2xl px-5 py-3 text-sm font-bold outline-none cursor-pointer focus:ring-2 ring-primary/10 transition-all flex-1 md:flex-none"
           >
             <option value="All">Tipo Alerta: Todos</option>
+            <option value="otp_verification">Verificación OTP</option>
             <option value="order_status_changed">Estado Pedido</option>
             <option value="current_account_debt_added">Compra Cta. Cte.</option>
             <option value="current_account_payment_received">Pago Cta. Cte.</option>

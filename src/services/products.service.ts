@@ -4,7 +4,7 @@ import { catalogCache, TTL } from './catalogCache';
 import { ProductWeeklySalesStat } from '../utils/replenishment';
 
 // Columnas estrictas para vistas de catálogo y listas (Ahorro crítico de Egress)
-export const PRODUCT_CATALOG_SELECT = 'id,name,brand,category_id,subcategory_id,price,original_price,barcode,image,format,is_new,discount,badge,stock,sale_type,is_paused';
+export const PRODUCT_CATALOG_SELECT = 'id,name,brand,category_id,subcategory_id,price,original_price,barcode,image,format,is_new,discount,badge,stock,min_stock,sale_type,is_paused';
 
 // Columnas mínimas para autocompletado y búsqueda rápida en navbar
 export const PRODUCT_AUTOCOMPLETE_SELECT = 'id,name,brand,price,image,category_id';

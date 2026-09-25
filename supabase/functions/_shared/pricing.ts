@@ -23,10 +23,12 @@ export const applyOffersToCartItem = (
   customer?: PricingCustomer | null,
   options?: { forDisplay?: boolean }
 ) => {
-  const prod = products.find(p => p.id === item.productId);
-  const itemCategoryId = item.categoryId || prod?.categoryId;
-  const itemSubcategoryId = prod?.subcategoryId || prod?.subcategory_id;
-  const itemBadge = prod?.badge;
+  const prod = products.find(p => p.id === item.productId || (p.barcode && item.productCode && p.barcode === item.productCode));
+  const rawCatId = item.categoryId || prod?.categoryId || prod?.category_id || '';
+  const itemCategoryId = rawCatId.toString().trim();
+  const rawSubcatId = item.subcategoryId || prod?.subcategoryId || prod?.subcategory_id || '';
+  const itemSubcategoryId = rawSubcatId.toString().trim();
+  const itemBadge = ((item.badge !== undefined && item.badge !== null) ? item.badge : prod?.badge) || '';
 
   const applicable = offers.filter(o => {
     if (!o.active) return false;
@@ -35,28 +37,47 @@ export const applyOffersToCartItem = (
     if (startStr && startStr > todayStr) return false;
     if (endStr && endStr < todayStr) return false;
 
+    // Restricción por nivel de cliente (si aplica a todos, requiredTier es 'all', '' o undefined)
     if (o.requiredTier && o.requiredTier !== 'all' && !options?.forDisplay) {
       if (!customer) return false;
       if (!isTierMatch(customer.tier, o.requiredTier)) return false;
     }
 
     if (o.scope === 'product') {
-      if (o.targetIds && Array.isArray(o.targetIds) && o.targetIds.length > 0) {
-        return o.targetIds.includes(item.productId);
-      }
-      if (o.targetId && o.targetId.includes(',')) {
-        return o.targetId.split(',').map(s => s.trim()).includes(item.productId);
-      }
-      return o.targetId === item.productId || o.productId === item.productId;
+      const pIds = o.targetIds && Array.isArray(o.targetIds) && o.targetIds.length > 0
+        ? o.targetIds
+        : (o.targetId && o.targetId.includes(','))
+          ? o.targetId.split(',').map(s => s.trim())
+          : [o.targetId || o.productId || ''].filter(Boolean);
+
+      const targetList = pIds.map(id => id.toLowerCase().trim());
+      const curId = (item.productId || '').toLowerCase().trim();
+      const curCode = (item.productCode || '').toLowerCase().trim();
+      const prodBarcode = (prod?.barcode || '').toLowerCase().trim();
+
+      return targetList.includes(curId) ||
+        (curCode !== '' && targetList.includes(curCode)) ||
+        (prodBarcode !== '' && targetList.includes(prodBarcode));
     }
 
     if (o.scope === 'category') {
-      return Boolean(itemCategoryId && itemCategoryId === o.targetId);
+      if (!itemCategoryId) return false;
+      const targetCat = (o.targetId || '').trim();
+      if (!targetCat) return false;
+      const catList = targetCat.includes(',')
+        ? targetCat.split(',').map(s => s.trim().toLowerCase())
+        : [targetCat.toLowerCase()];
+      return catList.includes(itemCategoryId.toLowerCase());
     }
 
     if (o.scope === 'subcategory') {
-      const targetSub = o.subcategoryId || o.targetId;
-      return Boolean(itemSubcategoryId && itemSubcategoryId === targetSub);
+      if (!itemSubcategoryId) return false;
+      const targetSub = (o.subcategoryId || o.targetId || '').trim();
+      if (!targetSub) return false;
+      const subList = targetSub.includes(',')
+        ? targetSub.split(',').map(s => s.trim().toLowerCase())
+        : [targetSub.toLowerCase()];
+      return subList.includes(itemSubcategoryId.toLowerCase());
     }
 
     if (o.scope === 'tag') {
@@ -67,7 +88,12 @@ export const applyOffersToCartItem = (
     return false;
   });
 
-  if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null, offerId: null, discountedQuantity: 0, originalPrice: item.price };
+  const rawOriginalPrice = item.originalPrice ?? prod?.originalPrice ?? (prod as any)?.original_price ?? null;
+  const regularBasePrice = (rawOriginalPrice && rawOriginalPrice > item.price)
+    ? rawOriginalPrice
+    : item.price;
+
+  if (applicable.length === 0) return { finalPrice: item.price, discountAmount: 0, offerLabel: null, offerId: null, discountedQuantity: 0, originalPrice: regularBasePrice };
 
   let bestDiscount = 0;
   let bestLabel: string | null = null;
@@ -97,13 +123,13 @@ export const applyOffersToCartItem = (
 
     let discVal = 0;
     if (o.discountType === 'percent') {
-      const unitDiscount = item.price * (o.discountValue / 100);
+      const unitDiscount = regularBasePrice * (o.discountValue / 100);
       discVal = unitDiscount * allowedQuantity;
       if (o.maxDiscountAmount && discVal > o.maxDiscountAmount) {
         discVal = o.maxDiscountAmount;
       }
     } else {
-      discVal = Math.min(o.discountValue * allowedQuantity, item.price * allowedQuantity);
+      discVal = Math.min(o.discountValue * allowedQuantity, regularBasePrice * allowedQuantity);
     }
 
     if (discVal > bestDiscount) {
@@ -114,12 +140,17 @@ export const applyOffersToCartItem = (
     }
   });
 
+  const calculatedFinalPrice = bestDiscount > 0 && finalDiscountedQuantity > 0
+    ? Math.max(0, regularBasePrice - (bestDiscount / finalDiscountedQuantity))
+    : item.price;
+
   return {
-    finalPrice: bestDiscount > 0 && finalDiscountedQuantity > 0 ? Math.max(0, item.price - (bestDiscount / finalDiscountedQuantity)) : item.price,
+    finalPrice: calculatedFinalPrice,
     discountAmount: bestDiscount,
     offerLabel: bestLabel,
     offerId: bestOfferId,
-    discountedQuantity: finalDiscountedQuantity
+    discountedQuantity: finalDiscountedQuantity,
+    originalPrice: regularBasePrice
   };
 };
 

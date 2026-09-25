@@ -34,6 +34,18 @@ scripts/create_admin.ts
 scripts/verify.ts
 scripts/generate_sample_pdf.ts
 scripts/run_harness_chain.ts
+scripts/test_*
 scratch/
 scratch_*.ts
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Local bulk image downloads and test excels
+/imagenes de productos/
+/imagenes_productos/
+*.xlsx
+types.ts
+
 

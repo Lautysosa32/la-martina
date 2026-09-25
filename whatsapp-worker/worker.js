@@ -3,6 +3,15 @@ const { createClient } = require('@supabase/supabase-js');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
+// Ignorar error transitorio de navegación inicial en whatsapp-web.js
+process.on('unhandledRejection', (reason) => {
+  if (reason && reason.message && reason.message.includes('Execution context was destroyed')) {
+    console.log('⏳ Esperando carga completa de navegación en WhatsApp Web...');
+    return;
+  }
+  console.error('Unhandled Rejection:', reason);
+});
+
 // 1. Inicializar Cliente Supabase (soporta service_role key, anon key o credenciales de empleado)
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 
@@ -52,8 +61,13 @@ const client = new Client({
   authStrategy: new LocalAuth({
     dataPath: './session' // Guarda la sesión para no tener que escanear el QR cada vez
   }),
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+  },
   puppeteer: {
     headless: true,
+    bypassCSP: true,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -132,8 +146,18 @@ client.initialize();
 const formatArgentinePhone = (phone) => {
   if (!phone) return '';
   let cleaned = phone.replace(/\D/g, '');
-  if (cleaned.startsWith('54') && cleaned.length === 12) {
-    cleaned = '549' + cleaned.substring(2);
+  if (!cleaned) return '';
+
+  if (cleaned.startsWith('549')) {
+    return cleaned;
+  } else if (cleaned.startsWith('54') && cleaned.length === 12) {
+    return '549' + cleaned.substring(2);
+  } else if (cleaned.length === 10 && !cleaned.startsWith('54')) {
+    return '549' + cleaned;
+  } else if (cleaned.length === 11 && cleaned.startsWith('9')) {
+    return '54' + cleaned;
+  } else if (!cleaned.startsWith('54') && cleaned.length < 12) {
+    return '549' + cleaned;
   }
   return cleaned;
 };

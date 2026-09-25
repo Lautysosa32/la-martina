@@ -402,6 +402,34 @@ export const insertCashClose = async (close: CashClose): Promise<void> => {
   }
 };
 
+export const updateCashCloseOpeningControlInDb = async (
+  closeId: string,
+  data: {
+    counted: number;
+    difference: number;
+    notes: string;
+    checkedBy: string;
+    checkedAt: string;
+  }
+): Promise<void> => {
+  const { error } = await supabase
+    .from('cash_closes')
+    .update({
+      opening_control_counted: data.counted,
+      opening_control_difference: data.difference,
+      opening_control_notes: data.notes,
+      opening_control_checked_by: data.checkedBy,
+      opening_control_checked_at: data.checkedAt,
+    })
+    .eq('id', closeId)
+    .eq('branch_id', BRANCH_ID);
+
+  if (error) {
+    console.error('Error updating cash close opening control:', error);
+    throw error;
+  }
+};
+
 // ─── OFFERS ─────────────────────────────────────────────────────────────
 // ─── OFFERS ─────────────────────────────────────────────────────────────
 const getCachedOffers = async (): Promise<Offer[]> => {

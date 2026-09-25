@@ -44,7 +44,8 @@ export const Analytics: React.FC = () => {
     adminProducts, adminCategories, adminSubcategories, adminTags, orders, totalRevenue, activeOffers, offers,
     addOffer, deleteOffer, cashCloses, performCashClose, getCashCloseMovements,
     getTopSellingProducts, getRevenueByCategory, getRevenueByDay, getOrderTimestamp,
-    formatCurrency, customers, cashMovements, offerRedemptions, expenses, isCashRegisterOpen
+    formatCurrency, customers, cashMovements, offerRedemptions, expenses, isCashRegisterOpen,
+    updateCashCloseOpeningControl
   } = useAdmin();
 
   const employeeProfile = useAuthStore((state) => state.employeeProfile);
@@ -101,6 +102,12 @@ export const Analytics: React.FC = () => {
   const [closeExpandedRowId, setCloseExpandedRowId] = useState<string | null>(null);
   const [activeCloseTicket, setActiveCloseTicket] = useState<TicketData | null>(null);
 
+  // Arqueo editing state
+  const [editingArqueoCloseId, setEditingArqueoCloseId] = useState<string | null>(null);
+  const [arqueoInput, setArqueoInput] = useState('');
+  const [arqueoNotesInput, setArqueoNotesInput] = useState('');
+  const [isSavingArqueo, setIsSavingArqueo] = useState(false);
+
   const analyticsParams = useMemo(() => {
     return getPeriodRange(period, customRange);
   }, [period, customRange]);
@@ -134,11 +141,33 @@ export const Analytics: React.FC = () => {
       };
     }
 
-    const closeTs = new Date(showCloseResult.closedAt).getTime();
+    const getCloseTimestamp = (c: any) => {
+      if (c.closedAt) {
+        const d = new Date(c.closedAt);
+        if (!isNaN(d.getTime())) return d.getTime();
+      }
+      if (c.date) {
+        const m = c.date.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})[,\s]+(\d{1,2}):(\d{2})/);
+        if (m) {
+          const isPM = /p\.?\s*m/i.test(c.date);
+          const isAM = /a\.?\s*m/i.test(c.date);
+          let h = parseInt(m[4], 10);
+          if (isPM && h < 12) h += 12;
+          if (isAM && h === 12) h = 0;
+          return new Date(`${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}T${h.toString().padStart(2, '0')}:${m[5]}:00`).getTime();
+        }
+      }
+      return 0;
+    };
+
+    const closeTs = getCloseTimestamp(showCloseResult) || Date.now();
     const prevClose = cashCloses
-      .filter(c => c.id !== showCloseResult.id && new Date(c.closedAt).getTime() < closeTs)
-      .sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime())[0];
-    const prevTs = prevClose ? new Date(prevClose.closedAt).getTime() : 0;
+      .filter(c => c.id !== showCloseResult.id)
+      .map(c => ({ c, ts: getCloseTimestamp(c) }))
+      .filter(x => x.ts > 0 && x.ts < closeTs - 30000)
+      .sort((a, b) => b.ts - a.ts)[0];
+      
+    const prevTs = prevClose ? prevClose.ts : 0;
 
     // Todas las ventas u órdenes correspondientes al período de este cierre
     const pOrders = orders.filter(o => {
@@ -261,30 +290,9 @@ export const Analytics: React.FC = () => {
     };
   }, [showCloseResult, orders, cashCloses, getCashCloseMovements, getOrderTimestamp]);
 
-  // Calculate revenue for each of the 6 fixed categories in the period
+  // Calculate revenue for each category in the period
   const catData = useMemo(() => {
-    const revenueMap: Record<string, number> = {
-      carnes: 0,
-      lacteos: 0,
-      limpieza: 0,
-      perfumeria: 0,
-      bebidas: 0,
-      almacen: 0
-    };
-
-    filteredOrdersForPeriod.forEach(o => {
-      o.items.forEach(item => {
-        const prod = adminProducts.find(p => p.id === item.id);
-        const rawCatId = prod?.categoryId || '';
-        // Normalizamos las categorías no encontradas o externas al grupo a 'almacen'
-        const catId = Object.hasOwnProperty.call(revenueMap, rawCatId) ? rawCatId : 'almacen';
-        revenueMap[catId] += item.price * item.quantity;
-      });
-    });
-
-    const totalRevenueInPeriod = Object.values(revenueMap).reduce((s, r) => s + r, 0);
-
-    const categoriesList = [
+    const defaultCategories = [
       { id: 'carnes', title: 'Carnes' },
       { id: 'lacteos', title: 'Lácteos' },
       { id: 'limpieza', title: 'Limpieza' },
@@ -293,17 +301,45 @@ export const Analytics: React.FC = () => {
       { id: 'almacen', title: 'Almacén' }
     ];
 
-    return categoriesList.map(cat => {
-      const revenue = revenueMap[cat.id];
-      const percent = totalRevenueInPeriod > 0 ? Math.round((revenue / totalRevenueInPeriod) * 100) : 0;
+    const categoriesList = adminCategories && adminCategories.length > 0
+      ? adminCategories.map(c => ({ id: c.id, title: c.title }))
+      : defaultCategories;
+
+    const revenueMap: Record<string, number> = {};
+    categoriesList.forEach(c => { revenueMap[c.id] = 0; });
+    if (!('almacen' in revenueMap)) revenueMap['almacen'] = 0;
+
+    filteredOrdersForPeriod.forEach(o => {
+      if (o.status === 'Cancelado') return;
+      o.items.forEach(item => {
+        const prod = adminProducts.find(p => p.id === item.id || (item as any).productId === p.id || (item as any).product_id === p.id)
+          || adminProducts.find(p => p.name && item.name && p.name.trim().toLowerCase() === item.name.trim().toLowerCase());
+        const rawCatId = prod?.categoryId || '';
+        const catId = Object.hasOwnProperty.call(revenueMap, rawCatId) ? rawCatId : 'almacen';
+        revenueMap[catId] = (revenueMap[catId] || 0) + (Number(item.price) || 0) * (Number(item.quantity) || 1);
+      });
+    });
+
+    const totalRevenueInPeriod = Object.values(revenueMap).reduce((s, r) => s + r, 0);
+
+    const mapped = categoriesList.map(cat => {
+      const revenue = revenueMap[cat.id] || 0;
+      const exactPercent = totalRevenueInPeriod > 0 ? (revenue / totalRevenueInPeriod) * 100 : 0;
+      const percent = Math.round(exactPercent);
       return {
         id: cat.id,
         category: cat.title,
         revenue,
-        percent
+        percent,
+        exactPercent
       };
     });
-  }, [filteredOrdersForPeriod, adminProducts]);
+
+    // Ordenar de mayor a menor recaudación
+    mapped.sort((a, b) => b.revenue - a.revenue);
+
+    return mapped;
+  }, [filteredOrdersForPeriod, adminProducts, adminCategories]);
 
   const totalCatRevenue = useMemo(() => {
     return catData.reduce((s, c) => s + c.revenue, 0);
@@ -848,34 +884,51 @@ export const Analytics: React.FC = () => {
         <div className="bg-white p-8 rounded-[2rem] border border-outline-variant/5 shadow-sm">
           <h3 className="text-xl font-bold text-on-background mb-2">Ventas por Categoría</h3>
           <p className="text-sm text-on-surface-variant mb-8">Distribución de ingresos totales</p>
-          {totalCatRevenue > 0 ? (
+          {periodComparison.revenue.current > 0 || totalCatRevenue > 0 ? (
             <div className="flex flex-col md:flex-row items-center gap-12">
-              <div className="relative w-48 h-48">
-                <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
+              <div className="relative w-48 h-48 shrink-0">
+                <svg viewBox="0 0 36 36" className="w-full h-full">
                   {(() => {
                     let offset = 0;
-                    return catData.map((cat, i) => {
-                      const el = <path key={i} stroke={getCategoryColor(cat.category)} strokeWidth="4"
-                        strokeDasharray={`${cat.percent}, 100`} strokeDashoffset={`${-offset}`} fill="none"
-                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />;
-                      offset += cat.percent;
+                    return catData.filter(cat => cat.revenue > 0).map((cat, i) => {
+                      const el = (
+                        <path
+                          key={cat.id || i}
+                          stroke={getCategoryColor(cat.category)}
+                          strokeWidth="4"
+                          strokeDasharray={`${cat.exactPercent}, 100`}
+                          strokeDashoffset={`${-offset}`}
+                          fill="none"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                        />
+                      );
+                      offset += cat.exactPercent;
                       return el;
                     });
                   })()}
                 </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <p className="text-2xl font-bold">${totalCatRevenue > 1000 ? formatCurrency(Math.round(totalCatRevenue / 1000), false) + 'k' : formatCurrency(totalCatRevenue)}</p>
-                  <p className="text-[10px] font-bold text-on-surface-variant uppercase">Total</p>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <p className="text-2xl font-bold">
+                    ${periodComparison.revenue.current >= 1000 
+                      ? formatCurrency(Math.floor(periodComparison.revenue.current / 1000), false) + 'k' 
+                      : formatCurrency(periodComparison.revenue.current)}
+                  </p>
+                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Total</p>
                 </div>
               </div>
-              <div className="flex-1 space-y-4 w-full">
+              <div className="flex-1 space-y-3 w-full">
                 {catData.map((cat) => (
-                  <div key={cat.category} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: getCategoryColor(cat.category) }}></div>
-                      <span className="text-sm font-bold text-on-surface-variant">{cat.category}</span>
+                  <div key={cat.category} className="flex items-center justify-between py-1 border-b border-outline-variant/5 last:border-b-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-3 h-3 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: getCategoryColor(cat.category) }}></div>
+                      <span className="text-sm font-bold text-on-background truncate">{cat.category}</span>
                     </div>
-                    <span className="text-sm font-bold">{cat.percent}%</span>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs font-semibold text-on-surface-variant/80">${formatCurrency(cat.revenue)}</span>
+                      <span className="text-xs font-black px-2 py-0.5 rounded-md bg-surface-container-low text-on-surface-variant min-w-[2.75rem] text-right">
+                        {cat.percent}%
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2413,60 +2466,222 @@ export const Analytics: React.FC = () => {
               {(showCloseResult.openingControlExpected !== undefined || showCloseResult.openingControlCounted != null) && (
                 <div className="bg-surface-container-lowest rounded-2xl p-4 sm:p-5 border border-outline-variant/10 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-outline-variant/5">
-                    <p className="text-xs font-black text-on-surface-variant uppercase tracking-wider">Control de Arqueo (Apertura)</p>
-                    {(() => {
-                      const isChecked = Boolean(
-                        showCloseResult.openingControlCheckedAt && 
-                        showCloseResult.openingControlCheckedAt.trim() !== ''
-                      );
-                      const diff = isChecked 
-                        ? ((showCloseResult.openingControlCounted ?? 0) - (showCloseResult.openingControlExpected ?? 0)) 
-                        : 0;
-                      const badgeColor = isChecked
-                        ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
-                        : 'bg-gray-100 text-gray-500';
-                      return (
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
-                          {isChecked
-                            ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `-${formatCurrency(Math.abs(diff))} Faltante`)
-                            : 'Sin arqueo'}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-                    {showCloseResult.openingControlExpected !== undefined && (
-                      <div>
-                        <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Efectivo Esperado</span>
-                        <span className="font-bold">${formatCurrency(showCloseResult.openingControlExpected)}</span>
-                      </div>
-                    )}
                     <div>
-                      <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Efectivo Contado</span>
-                      <span className="font-bold">
-                        {Boolean(showCloseResult.openingControlCheckedAt && showCloseResult.openingControlCheckedAt.trim() !== '')
-                          ? `$${formatCurrency(showCloseResult.openingControlCounted ?? 0)}` 
-                          : 'Pendiente de arqueo'}
-                      </span>
+                      <p className="text-xs font-black text-on-surface-variant uppercase tracking-wider">Control de Arqueo (Apertura)</p>
+                      <p className="text-[10px] text-on-surface-variant/70">Verificación de efectivo al iniciar turno / siguiente apertura</p>
                     </div>
-                    {Boolean(showCloseResult.openingControlCheckedAt && showCloseResult.openingControlCheckedAt.trim() !== '') && (
-                      <div>
-                        <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Diferencia</span>
-                        {(() => {
-                          const diff = (showCloseResult.openingControlCounted ?? 0) - (showCloseResult.openingControlExpected ?? 0);
-                          return (
-                            <span className={`font-black ${diff === 0 ? 'text-green-600' : diff > 0 ? 'text-blue-600' : 'text-error'}`}>
-                              {diff > 0 ? '+' : ''}${formatCurrency(diff)}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const isChecked = Boolean(
+                          showCloseResult.openingControlCheckedAt && 
+                          showCloseResult.openingControlCheckedAt.trim() !== ''
+                        );
+                        const diff = isChecked 
+                          ? ((showCloseResult.openingControlCounted ?? 0) - (showCloseResult.openingControlExpected ?? 0)) 
+                          : 0;
+                        const badgeColor = isChecked
+                          ? (diff === 0 ? 'bg-green-100 text-green-700' : Math.abs(diff) < 500 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')
+                          : 'bg-gray-100 text-gray-500';
+                        return (
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${badgeColor}`}>
+                            {isChecked
+                              ? (diff === 0 ? '✓ Arqueo OK' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `-${formatCurrency(Math.abs(diff))} Faltante`)
+                              : 'Sin arqueo'}
+                          </span>
+                        );
+                      })()}
+
+                      {editingArqueoCloseId !== showCloseResult.id && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingArqueoCloseId(showCloseResult.id);
+                            const currentCounted = showCloseResult.openingControlCounted;
+                            const fallback = showCloseResult.openingControlExpected ?? 0;
+                            setArqueoInput(currentCounted != null && currentCounted > 0 ? String(currentCounted) : String(fallback));
+                            setArqueoNotesInput(showCloseResult.openingControlNotes || '');
+                          }}
+                          className="px-2.5 py-1 bg-surface-container-high hover:bg-primary hover:text-white text-on-surface text-[10px] font-black rounded-xl transition-all flex items-center gap-1 shadow-sm"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {showCloseResult.openingControlCheckedAt ? 'edit' : 'add_task'}
+                          </span>
+                          {showCloseResult.openingControlCheckedAt ? 'Editar Arqueo' : 'Completar Arqueo'}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {showCloseResult.openingControlNotes && (
+
+                  {/* Explicación transparente del cálculo del efectivo esperado */}
+                  {showCloseResult.openingControlExpected !== undefined && (
+                    <div className="bg-surface-container-low/70 rounded-xl p-2.5 text-[11px] text-on-surface-variant flex flex-wrap items-center gap-x-2 gap-y-1 border border-outline-variant/10">
+                      <span className="font-bold text-[10px] uppercase text-on-surface-variant/80">Fórmula Esperado:</span>
+                      <span>Monto Inicial: <strong>${formatCurrency(showCloseResult.initialAmount ?? 0)}</strong></span>
+                      <span>+ Ventas Efectivo: <strong>${formatCurrency(showCloseResult.cashPayments ?? 0)}</strong></span>
+                      {Boolean((showCloseResult.totalWithdrawals ?? 0) > 0) && (
+                        <span className="text-error font-medium">- Retiros: <strong>${formatCurrency(showCloseResult.totalWithdrawals ?? 0)}</strong></span>
+                      )}
+                      <span className="font-black text-primary ml-auto">= ${formatCurrency(showCloseResult.openingControlExpected)}</span>
+                    </div>
+                  )}
+
+                  {/* Modo edición de arqueo */}
+                  {editingArqueoCloseId === showCloseResult.id ? (
+                    <div className="bg-surface-container-low rounded-2xl p-4 border-2 border-primary/30 space-y-3 animate-in fade-in duration-150">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[11px] font-black text-primary uppercase tracking-wide">
+                          {showCloseResult.openingControlCheckedAt ? 'Modificar datos de Arqueo' : 'Registrar Arqueo de Caja'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setEditingArqueoCloseId(null)}
+                          className="text-on-surface-variant hover:text-on-surface text-xs font-bold px-2 py-0.5"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider block mb-1">
+                            Efectivo real contado en caja *
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-lg text-on-surface-variant/60">$</span>
+                            <input
+                              type="number"
+                              step="any"
+                              value={arqueoInput}
+                              onChange={e => setArqueoInput(e.target.value)}
+                              placeholder="0"
+                              className="w-full bg-white border-2 border-outline-variant/30 rounded-xl py-2 pl-9 pr-3 text-lg font-black outline-none focus:border-primary transition-all"
+                              autoFocus
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider block mb-1">
+                            Diferencia Resultante
+                          </label>
+                          {(() => {
+                            const counted = parseFloat(arqueoInput.replace(',', '.')) || 0;
+                            const expected = showCloseResult.openingControlExpected ?? 0;
+                            const diff = counted - expected;
+                            const diffLabel = diff === 0 ? 'Caja cuadrada ✓' : diff > 0 ? `+${formatCurrency(diff)} Sobrante` : `-${formatCurrency(Math.abs(diff))} Faltante`;
+                            const diffClass = diff === 0 ? 'text-green-700 bg-green-50 border-green-200' : diff > 0 ? 'text-blue-700 bg-blue-50 border-blue-200' : 'text-red-700 bg-red-50 border-red-200';
+                            return (
+                              <div className={`h-[46px] rounded-xl px-3 flex items-center justify-between font-black text-xs border ${diffClass}`}>
+                                <span>{diffLabel}</span>
+                                <span className="text-[10px] font-medium opacity-70">
+                                  {diff === 0 ? 'Coincide exacto' : diff > 0 ? 'Más dinero del esperado' : 'Menos dinero del esperado'}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black text-on-surface-variant uppercase tracking-wider block mb-1">
+                          Observaciones / Justificación (opcional)
+                        </label>
+                        <input
+                          type="text"
+                          value={arqueoNotesInput}
+                          onChange={e => setArqueoNotesInput(e.target.value)}
+                          placeholder="Ej: Coincide monto de cierre / Se retiró vuelto / Turno mañana..."
+                          className="w-full bg-white border border-outline-variant/30 rounded-xl py-2 px-3 text-xs outline-none focus:border-primary transition-all"
+                        />
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditingArqueoCloseId(null)}
+                          className="px-4 py-2 font-bold text-on-surface-variant hover:bg-black/5 rounded-xl text-xs transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSavingArqueo || arqueoInput.trim() === ''}
+                          onClick={async () => {
+                            setIsSavingArqueo(true);
+                            const counted = parseFloat(arqueoInput.replace(',', '.')) || 0;
+                            const user = employeeProfile?.name || 'Admin';
+                            try {
+                              await updateCashCloseOpeningControl(showCloseResult.id, {
+                                counted,
+                                notes: arqueoNotesInput,
+                                checkedBy: user
+                              });
+                              setShowCloseResult(prev => prev ? {
+                                ...prev,
+                                openingControlCounted: counted,
+                                openingControlDifference: counted - (prev.openingControlExpected ?? 0),
+                                openingControlNotes: arqueoNotesInput,
+                                openingControlCheckedAt: new Date().toISOString(),
+                                openingControlCheckedBy: user
+                              } : null);
+                              setEditingArqueoCloseId(null);
+                            } catch (err) {
+                              console.error('Error saving arqueo:', err);
+                              alert('Error al guardar el arqueo. Por favor intentá nuevamente.');
+                            } finally {
+                              setIsSavingArqueo(false);
+                            }
+                          }}
+                          className="bg-primary text-white font-black px-5 py-2 rounded-xl text-xs hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-md shadow-primary/20 disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">check</span>
+                          {isSavingArqueo ? 'Guardando...' : 'Guardar Arqueo'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Vista regular de arqueo */
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pt-1">
+                      {showCloseResult.openingControlExpected !== undefined && (
+                        <div>
+                          <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Efectivo Esperado</span>
+                          <span className="font-bold">${formatCurrency(showCloseResult.openingControlExpected)}</span>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Efectivo Contado</span>
+                        <span className="font-bold">
+                          {Boolean(showCloseResult.openingControlCheckedAt && showCloseResult.openingControlCheckedAt.trim() !== '')
+                            ? `$${formatCurrency(showCloseResult.openingControlCounted ?? 0)}` 
+                            : 'Pendiente de arqueo'}
+                        </span>
+                      </div>
+                      {Boolean(showCloseResult.openingControlCheckedAt && showCloseResult.openingControlCheckedAt.trim() !== '') && (
+                        <div>
+                          <span className="text-[10px] text-on-surface-variant block font-bold uppercase">Diferencia</span>
+                          {(() => {
+                            const diff = (showCloseResult.openingControlCounted ?? 0) - (showCloseResult.openingControlExpected ?? 0);
+                            return (
+                              <span className={`font-black ${diff === 0 ? 'text-green-600' : diff > 0 ? 'text-blue-600' : 'text-error'}`}>
+                                {diff > 0 ? '+' : ''}${formatCurrency(diff)}
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showCloseResult.openingControlNotes && editingArqueoCloseId !== showCloseResult.id && (
                     <div className="pt-2 text-xs border-t border-outline-variant/5">
                       <span className="text-[10px] text-on-surface-variant font-bold block uppercase">Notas de arqueo</span>
                       <p className="text-on-background italic">"{showCloseResult.openingControlNotes}"</p>
+                    </div>
+                  )}
+                  {showCloseResult.openingControlCheckedBy && editingArqueoCloseId !== showCloseResult.id && (
+                    <div className="text-[10px] text-on-surface-variant/70">
+                      Verificado por: <strong className="text-on-surface-variant">{showCloseResult.openingControlCheckedBy}</strong>
+                      {showCloseResult.openingControlCheckedAt && ` (${new Date(showCloseResult.openingControlCheckedAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})`}
                     </div>
                   )}
                 </div>
@@ -2477,15 +2692,8 @@ export const Analytics: React.FC = () => {
             {/* Footer (Sticky) */}
             <div className="p-4 sm:p-6 border-t border-outline-variant/10 flex gap-3 bg-surface-container-lowest flex-shrink-0 sticky bottom-0 z-20 no-print">
               <button 
-                onClick={() => window.print()} 
-                className="flex-1 flex items-center justify-center gap-2 bg-surface-container-high text-on-surface font-bold py-3.5 sm:py-4 rounded-2xl hover:bg-surface-container-highest transition-colors text-sm"
-              >
-                <span className="material-symbols-outlined text-[18px]">print</span>
-                Imprimir
-              </button>
-              <button 
                 onClick={() => { setShowCloseResult(null); setCloseExpandedRowId(null); setCloseActivityTab('todos'); }} 
-                className="flex-[2] bg-primary text-white font-bold py-3.5 sm:py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-colors text-sm"
+                className="w-full bg-primary text-white font-bold py-3.5 sm:py-4 rounded-2xl shadow-lg shadow-primary/20 hover:bg-primary/90 transition-colors text-sm"
               >
                 Cerrar
               </button>

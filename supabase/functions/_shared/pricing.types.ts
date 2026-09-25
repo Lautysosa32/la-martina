@@ -38,15 +38,25 @@ export interface PricingOfferRedemption {
 
 export interface PricingProduct {
   id: string;
+  barcode?: string | null;
   categoryId?: string;
+  category_id?: string;
   subcategoryId?: string;
   subcategory_id?: string;
-  badge?: string;
+  badge?: string | null;
+  price?: number;
+  originalPrice?: number | null;
+  original_price?: number | null;
 }
 
 export interface PricingItemInput {
   productId: string;
+  productCode?: string;
   categoryId?: string;
+  subcategoryId?: string;
+  badge?: string | null;
   price: number;
+  originalPrice?: number | null;
   quantity: number;
 }
+

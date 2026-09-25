@@ -17,7 +17,8 @@ export interface CartItem extends Product {
 
 interface CartContextType {
   items: CartItem[];
-  addItem: (product: Product) => boolean;
+  addItem: (product: any, quantity?: number) => boolean;
+  addItems: (items: Array<{ product: any; quantity?: number }>) => void;
   removeItem: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => boolean;
   clearCart: () => void;
@@ -54,12 +55,13 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('cart', JSON.stringify(rawItems));
   }, [rawItems]);
 
-  const addItem = (product: Product): boolean => {
+  const addItem = (product: any, quantityToAdd: number = 1): boolean => {
+    const qty = Math.max(1, quantityToAdd);
     const availableStock = getStock(product.id, product.stock);
     const existing = rawItems.find(item => item.id === product.id);
     const currentQty = existing ? existing.quantity : 0;
 
-    if (currentQty + 1 > availableStock) {
+    if (availableStock > 0 && currentQty + qty > availableStock) {
       return false; // Excede stock
     }
 
@@ -67,12 +69,32 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const idx = prev.findIndex(item => item.id === product.id);
       if (idx > -1) {
         const next = [...prev];
-        next[idx] = { ...next[idx], ...product, quantity: next[idx].quantity + 1 };
+        next[idx] = { ...next[idx], ...product, quantity: next[idx].quantity + qty };
         return next;
       }
-      return [...prev, { ...product, quantity: 1 }];
+      return [...prev, { ...product, quantity: qty }];
     });
     return true;
+  };
+
+  const addItems = (itemsToAdd: Array<{ product: any; quantity?: number }>) => {
+    setRawItems(prev => {
+      const next = [...prev];
+      for (const { product, quantity } of itemsToAdd) {
+        const qty = Math.max(1, quantity || 1);
+        const availableStock = getStock(product.id, product.stock);
+        const idx = next.findIndex(item => item.id === product.id);
+
+        if (idx > -1) {
+          const newQty = availableStock > 0 ? Math.min(availableStock, next[idx].quantity + qty) : (next[idx].quantity + qty);
+          next[idx] = { ...next[idx], ...product, quantity: newQty };
+        } else {
+          const finalQty = availableStock > 0 ? Math.min(availableStock, qty) : qty;
+          next.push({ ...product, quantity: finalQty });
+        }
+      }
+      return next;
+    });
   };
 
   const removeItem = (productId: string) => {
@@ -259,13 +281,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return applyOrderOffers(subtotalAfterItemDiscounts, currentCustomer);
   }, [subtotalAfterItemDiscounts, currentCustomer, applyOrderOffers, isAuthenticated]);
 
-  const totalPrice = subtotalAfterItemDiscounts - orderOfferCalc.discountAmount;
+  const totalPrice = Math.round((subtotalAfterItemDiscounts - orderOfferCalc.discountAmount) * 100) / 100;
   const discountApplied = isAuthenticated ? Math.max(0, originalPriceSum - totalPrice) : 0;
 
   return (
     <CartContext.Provider value={{ 
       items, 
       addItem, 
+      addItems, 
       removeItem, 
       updateQuantity, 
       clearCart, 

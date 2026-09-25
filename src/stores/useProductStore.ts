@@ -361,6 +361,11 @@ export const useProductStore = create<ProductState>((set, get) => ({
         products: [...state.products, newProduct],
         loading: false
       }));
+      try {
+        await productRepository.saveProducts([toLocalProductFromStoreProduct(newProduct)]);
+      } catch (repoErr) {
+        console.warn('Could not save new product to IndexedDB:', repoErr);
+      }
       console.log('✅ Product created successfully', newProduct.id);
       return newProduct;
     } catch (err: any) {
@@ -422,6 +427,11 @@ export const useProductStore = create<ProductState>((set, get) => ({
         inventoryProducts: state.inventoryProducts.map(p => p.id === id ? updatedProduct : p),
         lowStockDashboardProducts: state.lowStockDashboardProducts.map(p => p.id === id ? updatedProduct : p)
       }));
+      try {
+        await productRepository.saveProducts([toLocalProductFromStoreProduct(updatedProduct)]);
+      } catch (repoErr) {
+        console.warn('Could not update product in IndexedDB:', repoErr);
+      }
       console.log('✅ Product updated successfully');
       return true;
     } catch (err: any) {
