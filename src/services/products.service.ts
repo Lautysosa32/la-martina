@@ -77,6 +77,7 @@ export interface PaginatedProductsParams {
   brands?: string[];
   onlyInStock?: boolean;
   includePaused?: boolean;
+  status?: 'active' | 'paused' | 'all';
 }
 
 export const productsService = {
@@ -87,7 +88,7 @@ export const productsService = {
     const columns = params.columns || PRODUCT_CATALOG_SELECT;
     const useCache = params.useCache ?? true;
 
-    const cacheKey = `catalog_v6_${params.categoryId || 'all'}_${params.subcategoryId || 'all'}_p${params.page}_l${params.limit}_s${params.search || ''}_sort${params.sortBy || 'def'}_${params.sortDesc ? 'desc' : 'asc'}_min${params.minPrice || ''}_max${params.maxPrice || ''}_b${(params.brands || []).sort().join(',')}_stk${params.onlyInStock ? '1' : '0'}_pau${params.includePaused ? '1' : '0'}`;
+    const cacheKey = `catalog_v6_${params.categoryId || 'all'}_${params.subcategoryId || 'all'}_p${params.page}_l${params.limit}_s${params.search || ''}_sort${params.sortBy || 'def'}_${params.sortDesc ? 'desc' : 'asc'}_min${params.minPrice || ''}_max${params.maxPrice || ''}_b${(params.brands || []).sort().join(',')}_stk${params.onlyInStock ? '1' : '0'}_pau${params.includePaused ? '1' : '0'}_st${params.status || 'def'}`;
 
     if (useCache) {
       const cached = catalogCache.get<{ data: Product[]; total: number }>(cacheKey);
@@ -99,9 +100,14 @@ export const productsService = {
     const offset = (params.page - 1) * params.limit;
     let url = `/products?select=${columns}&limit=${params.limit}&offset=${offset}`;
 
-    // 1. Regla de productos pausados:
-    // Para clientes (includePaused = false o omitido), NUNCA mostrar productos pausados
-    if (!params.includePaused) {
+    // 1. Regla de productos pausados / activos:
+    if (params.status === 'active') {
+      url += `&is_paused=eq.false`;
+    } else if (params.status === 'paused') {
+      url += `&is_paused=eq.true`;
+    } else if (params.status === 'all') {
+      // No filtrar por is_paused
+    } else if (!params.includePaused) {
       url += `&is_paused=eq.false`;
     }
 

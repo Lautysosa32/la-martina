@@ -80,6 +80,72 @@ export function formatTagPrice(amount: number): string {
   }).format(amount);
 }
 
+export interface TagFontStyles {
+  brandSize: string;
+  nameSize: string;
+  priceSize: string;
+  barcodeHeight: number;
+  barcodeWidth: number;
+  barcodeFontSize: number;
+  boxPadding: string;
+  minHeight: string;
+  formatSize: string;
+  brandClass: string;
+  nameClass: string;
+  priceClass: string;
+}
+
+export function getFontSizeStyles(fontSize: 'compact' | 'medium' | 'large'): TagFontStyles {
+  switch (fontSize) {
+    case 'compact':
+      return {
+        brandSize: '11px',
+        nameSize: '9px',
+        priceSize: '22px',
+        barcodeHeight: 24,
+        barcodeWidth: 1.3,
+        barcodeFontSize: 9,
+        boxPadding: '4px 6px',
+        minHeight: '32mm',
+        formatSize: '7.5px',
+        brandClass: 'text-[11px] leading-tight',
+        nameClass: 'text-[9px] leading-tight',
+        priceClass: 'text-xl tracking-tight leading-none',
+      };
+    case 'large':
+      return {
+        brandSize: '16px',
+        nameSize: '13px',
+        priceSize: '36px',
+        barcodeHeight: 40,
+        barcodeWidth: 1.8,
+        barcodeFontSize: 12,
+        boxPadding: '8px 10px',
+        minHeight: '44mm',
+        formatSize: '10px',
+        brandClass: 'text-[16px] leading-tight',
+        nameClass: 'text-[13px] leading-tight',
+        priceClass: 'text-4xl tracking-tight leading-none',
+      };
+    case 'medium':
+    default:
+      return {
+        brandSize: '13px',
+        nameSize: '10.5px',
+        priceSize: '28px',
+        barcodeHeight: 32,
+        barcodeWidth: 1.5,
+        barcodeFontSize: 10.5,
+        boxPadding: '6px 8px',
+        minHeight: '38mm',
+        formatSize: '8.5px',
+        brandClass: 'text-[13px] leading-tight',
+        nameClass: 'text-[10.5px] leading-tight',
+        priceClass: 'text-2xl tracking-tight leading-none',
+      };
+  }
+}
+
 /**
  * Genera el HTML de una etiqueta individual con los estilos exactos de la imagen.
  */
@@ -88,13 +154,14 @@ export function renderSinglePriceTagHtml(
   config: PriceTagConfig,
   currentDateStr: string
 ): string {
+  const fStyles = getFontSizeStyles(config.fontSize);
   const barcode = (product.barcode || product.id || '').trim();
   const barcodeSvg = config.showBarcode && barcode
     ? generateBarcodeSvg(barcode, {
-        height: config.fontSize === 'compact' ? 26 : config.fontSize === 'large' ? 38 : 32,
-        width: config.paperFormat === '58mm' ? 1.2 : 1.5,
+        height: fStyles.barcodeHeight,
+        width: config.paperFormat === '58mm' ? 1.2 : fStyles.barcodeWidth,
         displayValue: config.showBarcodeText,
-        fontSize: config.fontSize === 'compact' ? 9 : 11,
+        fontSize: fStyles.barcodeFontSize,
       })
     : '';
 
@@ -112,19 +179,14 @@ export function renderSinglePriceTagHtml(
         ? '72mm' 
         : '100%';
 
-  const minHeightCss = config.heightMm ? `${config.heightMm}mm` : 'auto';
-
-  // Tamaños de fuente
-  const titleSize = config.fontSize === 'compact' ? '11px' : config.fontSize === 'large' ? '15px' : '13px';
-  const subtitleSize = config.fontSize === 'compact' ? '9px' : config.fontSize === 'large' ? '12px' : '10.5px';
-  const priceSize = config.fontSize === 'compact' ? '22px' : config.fontSize === 'large' ? '32px' : '26px';
+  const minHeightCss = config.heightMm ? `${config.heightMm}mm` : fStyles.minHeight;
 
   return `
     <div class="price-tag-wrapper" style="width: ${widthCss}; margin: 0 auto; page-break-inside: avoid; break-inside: avoid; ${config.pageBreakPerTag ? 'page-break-after: always; break-after: page;' : ''}">
       <div class="price-tag-box" style="
         border: 1.5px solid #000;
         border-radius: 4px;
-        padding: 6px 8px 6px 8px;
+        padding: ${fStyles.boxPadding};
         background: #ffffff;
         box-sizing: border-box;
         text-align: center;
@@ -136,22 +198,22 @@ export function renderSinglePriceTagHtml(
         <!-- Encabezado con Marca / Nombre / Formato -->
         <div style="position: relative; margin-bottom: 2px;">
           ${config.showFormat && format ? `
-            <span style="position: absolute; right: 0; top: 0; font-size: 8.5px; font-weight: 800; color: #333; text-transform: uppercase;">
+            <span style="position: absolute; right: 0; top: 0; font-size: ${fStyles.formatSize}; font-weight: 800; color: #333; text-transform: uppercase;">
               ${format}
             </span>
           ` : ''}
 
           ${config.showBrand && brand ? `
-            <div style="font-size: ${titleSize}; font-weight: 900; color: #000; text-transform: uppercase; letter-spacing: 0.2px; line-height: 1.15; padding-right: ${format ? '28px' : '0'}; word-break: break-word;">
+            <div style="font-size: ${fStyles.brandSize}; font-weight: 900; color: #000; text-transform: uppercase; letter-spacing: 0.2px; line-height: 1.15; padding-right: ${format ? '28px' : '0'}; word-break: break-word;">
               ${brand}
             </div>
             ${config.showName && name && name.toLowerCase() !== brand.toLowerCase() ? `
-              <div style="font-size: ${subtitleSize}; font-weight: 700; color: #111; text-transform: uppercase; line-height: 1.15; margin-top: 1px; word-break: break-word;">
+              <div style="font-size: ${fStyles.nameSize}; font-weight: 700; color: #111; text-transform: uppercase; line-height: 1.15; margin-top: 1px; word-break: break-word;">
                 ${name}
               </div>
             ` : ''}
           ` : `
-            <div style="font-size: ${titleSize}; font-weight: 900; color: #000; text-transform: uppercase; line-height: 1.15; padding-right: ${format ? '28px' : '0'}; word-break: break-word;">
+            <div style="font-size: ${fStyles.brandSize}; font-weight: 900; color: #000; text-transform: uppercase; line-height: 1.15; padding-right: ${format ? '28px' : '0'}; word-break: break-word;">
               ${name || brand}
             </div>
           `}
@@ -159,7 +221,7 @@ export function renderSinglePriceTagHtml(
 
         <!-- Precio Grande Destacado -->
         <div style="margin: 3px 0 2px 0;">
-          <div style="font-size: ${priceSize}; font-weight: 950; color: #000; letter-spacing: -0.5px; line-height: 1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <div style="font-size: ${fStyles.priceSize}; font-weight: 950; color: #000; letter-spacing: -0.5px; line-height: 1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
             ${priceFormatted}
           </div>
         </div>

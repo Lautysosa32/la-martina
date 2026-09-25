@@ -84,10 +84,11 @@ export const Inventory: React.FC = () => {
       search: debouncedSearchQuery,
       categoryId: activeTab,
       subcategoryId: activeSubcategoryTab,
+      status: statusFilter,
       sortBy: sortConfig?.key,
       sortDesc: sortConfig?.direction === 'desc'
     });
-  }, [fetchInventoryProducts, page, limit, debouncedSearchQuery, activeTab, activeSubcategoryTab, sortConfigs]);
+  }, [fetchInventoryProducts, page, limit, debouncedSearchQuery, activeTab, activeSubcategoryTab, statusFilter, sortConfigs]);
 
   const handleTabChange = (catId: string) => {
     setActiveTab(catId);
@@ -1074,22 +1075,31 @@ export const Inventory: React.FC = () => {
             <div className="flex items-center gap-1 bg-surface-container-low p-1 rounded-2xl border border-outline-variant/10 text-xs font-bold shrink-0 self-stretch sm:self-auto justify-center">
               <button
                 type="button"
-                onClick={() => setStatusFilter('active')}
-                className={`px-3 py-2 rounded-xl transition-all ${statusFilter === 'active' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+                onClick={() => {
+                  setStatusFilter('active');
+                  setPage(1);
+                }}
+                className={`px-3 py-2 rounded-xl transition-all cursor-pointer ${statusFilter === 'active' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
               >
                 Activos
               </button>
               <button
                 type="button"
-                onClick={() => setStatusFilter('paused')}
-                className={`px-3 py-2 rounded-xl transition-all ${statusFilter === 'paused' ? 'bg-neutral-800 text-white dark:bg-neutral-200 dark:text-neutral-900 shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+                onClick={() => {
+                  setStatusFilter('paused');
+                  setPage(1);
+                }}
+                className={`px-3 py-2 rounded-xl transition-all cursor-pointer ${statusFilter === 'paused' ? 'bg-neutral-800 text-white dark:bg-neutral-200 dark:text-neutral-900 shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
               >
                 Desactivados
               </button>
               <button
                 type="button"
-                onClick={() => setStatusFilter('all')}
-                className={`px-3 py-2 rounded-xl transition-all ${statusFilter === 'all' ? 'bg-white text-on-surface shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
+                onClick={() => {
+                  setStatusFilter('all');
+                  setPage(1);
+                }}
+                className={`px-3 py-2 rounded-xl transition-all cursor-pointer ${statusFilter === 'all' ? 'bg-white text-on-surface shadow-xs' : 'text-on-surface-variant hover:text-on-surface'}`}
               >
                 Todos
               </button>

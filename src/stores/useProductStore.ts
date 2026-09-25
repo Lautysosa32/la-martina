@@ -27,7 +27,7 @@ interface ProductState {
   inventoryProducts: Product[];
   inventoryTotal: number;
   inventoryLoading: boolean;
-  fetchInventoryProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string; sortBy?: string; sortDesc?: boolean }) => Promise<void>;
+  fetchInventoryProducts: (params: { page: number; limit: number; search?: string; categoryId?: string; subcategoryId?: string; status?: 'active' | 'paused' | 'all'; sortBy?: string; sortDesc?: boolean }) => Promise<void>;
 
   lowStockDashboardProducts: ProductWithReplenishment[];
   lowStockDashboardTotal: number;
@@ -203,7 +203,7 @@ export const useProductStore = create<ProductState>((set, get) => ({
     try {
       const { data, total } = await productsService.getProductsPaginated({
         ...params,
-        includePaused: true,
+        includePaused: params.status === 'all' || params.status === 'paused',
         onlyInStock: false,
         useCache: false
       });

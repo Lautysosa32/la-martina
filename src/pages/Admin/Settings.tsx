@@ -6,7 +6,7 @@ import { useScrollLock } from '../../utils/useScrollLock';
 import { fetchSetting, saveSetting } from '../../services/admin.service';
 import { ReplenishmentConfig, defaultReplenishmentConfig, validateReplenishmentConfig } from '../../utils/replenishment';
 import { useProductStore } from '../../stores/useProductStore';
-import { PriceTagConfig, defaultPriceTagConfig, generateBarcodeSvg, formatTagPrice, printPriceTags } from '../../utils/priceTagUtils';
+import { PriceTagConfig, defaultPriceTagConfig, generateBarcodeSvg, formatTagPrice, printPriceTags, getFontSizeStyles } from '../../utils/priceTagUtils';
 import { Product } from '../../types/product.types';
 const PAYMENT_LABELS: Record<string, string> = {
   cash: 'Efectivo',
@@ -3820,52 +3820,75 @@ export const Settings: React.FC = () => {
                         }`}
                       >
                         {/* Sample Tag Box */}
-                        <div className="border-[1.5px] border-black rounded-xs p-2 bg-white text-center flex flex-col justify-between select-none">
-                          <div className="relative mb-1">
-                            {priceTagForm.showFormat && (
-                              <span className="absolute right-0 top-0 text-[8.5px] font-black text-neutral-700 uppercase tracking-tighter">
-                                X50G
-                              </span>
-                            )}
-                            {priceTagForm.showBrand && (
-                              <div className="text-[12px] font-black text-black uppercase tracking-wide leading-tight px-3">
-                                ARCOR
+                        {(() => {
+                          const fStyles = getFontSizeStyles(priceTagForm.fontSize);
+                          return (
+                            <div
+                              className="border-[1.5px] border-black rounded-xs bg-white text-center flex flex-col justify-between select-none transition-all duration-200"
+                              style={{
+                                padding: fStyles.boxPadding,
+                                minHeight: priceTagForm.heightMm ? `${priceTagForm.heightMm}mm` : fStyles.minHeight
+                              }}
+                            >
+                              <div className="relative mb-1">
+                                {priceTagForm.showFormat && (
+                                  <span
+                                    className="absolute right-0 top-0 font-black text-neutral-700 uppercase tracking-tighter"
+                                    style={{ fontSize: fStyles.formatSize }}
+                                  >
+                                    X50G
+                                  </span>
+                                )}
+                                {priceTagForm.showBrand && (
+                                  <div
+                                    className={`font-black text-black uppercase tracking-wide px-3 ${fStyles.brandClass}`}
+                                    style={{ fontSize: fStyles.brandSize }}
+                                  >
+                                    ARCOR
+                                  </div>
+                                )}
+                                {priceTagForm.showName && (
+                                  <div
+                                    className={`font-bold text-neutral-800 uppercase mt-0.5 ${fStyles.nameClass}`}
+                                    style={{ fontSize: fStyles.nameSize }}
+                                  >
+                                    CARAMELO BUTTER TOFFE
+                                  </div>
+                                )}
                               </div>
-                            )}
-                            {priceTagForm.showName && (
-                              <div className="text-[10px] font-bold text-neutral-800 uppercase leading-tight mt-0.5">
-                                CARAMELO BUTTER TOFFE
+
+                              <div className="my-1">
+                                <span
+                                  className={`font-black text-black font-sans ${fStyles.priceClass}`}
+                                  style={{ fontSize: fStyles.priceSize }}
+                                >
+                                  $5.000
+                                </span>
                               </div>
-                            )}
-                          </div>
 
-                          <div className="my-1">
-                            <span className="text-2xl font-black text-black tracking-tight font-sans">
-                              $5.000
-                            </span>
-                          </div>
-
-                          <div className="flex flex-col items-center justify-center mt-1">
-                            {priceTagForm.showBarcode && (
-                              <div
-                                className="w-full flex justify-center [&_svg]:max-w-full [&_svg]:h-auto"
-                                dangerouslySetInnerHTML={{
-                                  __html: generateBarcodeSvg('779123456789', {
-                                    height: priceTagForm.fontSize === 'compact' ? 24 : 30,
-                                    width: priceTagForm.paperFormat === '58mm' ? 1.2 : 1.5,
-                                    displayValue: priceTagForm.showBarcodeText,
-                                    fontSize: 10,
-                                  })
-                                }}
-                              />
-                            )}
-                            {priceTagForm.showDate && (
-                              <span className="text-[8px] text-neutral-400 font-semibold mt-1">
-                                Act. {new Date().toLocaleDateString('es-AR')}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                              <div className="flex flex-col items-center justify-center mt-1">
+                                {priceTagForm.showBarcode && (
+                                  <div
+                                    className="w-full flex justify-center [&_svg]:max-w-full [&_svg]:h-auto"
+                                    dangerouslySetInnerHTML={{
+                                      __html: generateBarcodeSvg('779123456789', {
+                                        height: fStyles.barcodeHeight,
+                                        width: priceTagForm.paperFormat === '58mm' ? 1.2 : fStyles.barcodeWidth,
+                                        displayValue: priceTagForm.showBarcodeText,
+                                        fontSize: fStyles.barcodeFontSize,
+                                      })
+                                    }}
+                                  />
+                                )}
+                                {priceTagForm.showDate && (
+                                  <span className="text-[8px] text-neutral-400 font-semibold mt-1">
+                                    Act. {new Date().toLocaleDateString('es-AR')}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         {priceTagForm.showCuttingLine && (
                           <div className="flex items-center justify-center my-2 text-neutral-400 select-none">
