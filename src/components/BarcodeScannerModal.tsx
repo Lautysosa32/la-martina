@@ -2,19 +2,26 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Scanner, IScannerError } from '@yudiel/react-qr-scanner';
 import { useScrollLock } from '../utils/useScrollLock';
 
-const playBeep = () => {
+// Sonido característico de caja de supermercado (bip brillante y corto a 2093Hz - C7)
+const playCashierBeep = () => {
   try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2093, ctx.currentTime);
+
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
+
     osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.type = 'sine';
-    osc.frequency.value = 1000;
-    gain.gain.setValueAtTime(0.1, ctx.currentTime);
-    osc.start();
-    gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.1);
-    osc.stop(ctx.currentTime + 0.1);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.08);
   } catch (e) {
     console.warn('Audio not supported', e);
   }
@@ -37,6 +44,10 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   const [scannerKey, setScannerKey] = useState<number>(0);
   const [scannedHistory, setScannedHistory] = useState<string[]>([]);
   const [scanSuccess, setScanSuccess] = useState(false);
+  
+  // Anti-rebote y verificación por consenso de frames consecutivos
+  const candidateRef = useRef<{ code: string; count: number; lastTime: number } | null>(null);
+  const cooldownUntilRef = useRef<number>(0);
   const lastScannedRef = useRef<string | null>(null);
   const lastScannedTimeRef = useRef<number>(0);
 
@@ -48,6 +59,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       setScannedHistory([]);
       lastScannedRef.current = null;
       lastScannedTimeRef.current = 0;
+      candidateRef.current = null;
+      cooldownUntilRef.current = 0;
     }
   }, [open]);
 
@@ -77,40 +90,59 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   const handleScan = (detectedCodes: any[]) => {
     if (!detectedCodes || detectedCodes.length === 0) return;
-    
-    // We get the first detected code
+    const now = Date.now();
+
+    // 1. Si está en período de enfriamiento (cooldown post-escaneo), ignorar para evitar lecturas múltiples
+    if (now < cooldownUntilRef.current) {
+      return;
+    }
+
     const rawCode = detectedCodes[0]?.rawValue;
     if (!rawCode) return;
     
     const code = rawCode.trim();
-    const now = Date.now();
+    if (!code) return;
 
-    // Debounce: prevent same code scanning within 2 seconds
-    if (lastScannedRef.current === code && now - lastScannedTimeRef.current < 2000) {
-      return;
-    }
+    // 2. Doble verificación (consenso de 2 frames consecutivos coincidentes)
+    // Esto descarta el 100% de las lecturas ópticas ruidosas o dígitos borrosos de un único fotograma
+    const candidate = candidateRef.current;
+    if (candidate && candidate.code === code && (now - candidate.lastTime < 650)) {
+      candidate.count += 1;
+      candidate.lastTime = now;
 
-    lastScannedRef.current = code;
-    lastScannedTimeRef.current = now;
+      if (candidate.count >= 2) {
+        // Confirmado por consenso
+        candidateRef.current = null;
+        // Cooldown de 1.5s antes de permitir el siguiente escaneo (tiempo suficiente para apartar el producto)
+        cooldownUntilRef.current = now + 1500;
+        lastScannedRef.current = code;
+        lastScannedTimeRef.current = now;
 
-    // Add to history for visual feedback inside modal
-    setScannedHistory((prev) => [code, ...prev.slice(0, 4)]);
+        // Feedback en historial
+        setScannedHistory((prev) => [code, ...prev.slice(0, 4)]);
 
-    // Haptic feedback (vibration) if supported
-    try {
-      if ('vibrate' in navigator) {
-        navigator.vibrate(100);
+        // Haptic feedback (vibración corta)
+        try {
+          if ('vibrate' in navigator) {
+            navigator.vibrate(80);
+          }
+        } catch (e) {
+          console.warn('Haptic feedback not supported or blocked:', e);
+        }
+
+        // Sonido de caja registradora
+        playCashierBeep();
+
+        setScanSuccess(true);
+        setTimeout(() => setScanSuccess(false), 400);
+
+        // Notificar al componente padre
+        onDetected(code);
       }
-    } catch (e) {
-      console.warn('Haptic feedback not supported or blocked:', e);
+    } else {
+      // Primer frame detectado: guardamos candidato a la espera del frame de confirmación
+      candidateRef.current = { code, count: 1, lastTime: now };
     }
-
-    playBeep();
-    setScanSuccess(true);
-    setTimeout(() => setScanSuccess(false), 300);
-
-    // Call callback
-    onDetected(code);
   };
 
   const handleError = (error: IScannerError) => {
@@ -202,18 +234,21 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     onError={handleError}
                     paused={false}
                     allowMultiple={true}
-                    scanDelay={500}
+                    scanDelay={150}
+                    sound={false}
                     startTimeoutMs={10000}
                     constraints={{
-                      facingMode: { ideal: 'environment' }
+                      facingMode: { ideal: 'environment' },
+                      width: { ideal: 1920 },
+                      height: { ideal: 1080 },
+                      aspectRatio: { ideal: 1.7777777778 }
                     }}
                     formats={[
                       'ean_13',
                       'ean_8',
                       'upc_a',
                       'upc_e',
-                      'code_128',
-                      'code_39'
+                      'code_128'
                     ]}
                   />
                 </div>

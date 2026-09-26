@@ -915,7 +915,11 @@ export const POS: React.FC = () => {
     setShowSuggestions(false);
     setFocusedSuggestionIndex(-1);
     setSelectedIndex(null);
-    inputRef.current?.focus();
+    // Solo enfocar el input de búsqueda en pantallas grandes (Desktop con pistola USB)
+    // En móviles o si el modal de escaneo de cámara está activo, evitamos enfocar para no desplegar el teclado virtual
+    if (!showBarcodeScanner && window.innerWidth >= 1024) {
+      inputRef.current?.focus();
+    }
   };
 
   const handleRemoveItem = (index: number) => {
@@ -4431,8 +4435,10 @@ export const POS: React.FC = () => {
           open={showBarcodeScanner}
           onClose={() => setShowBarcodeScanner(false)}
           onDetected={(code) => {
-            setSearchCode(code);
             handleAddItem(code);
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
           }}
         />
       )}
