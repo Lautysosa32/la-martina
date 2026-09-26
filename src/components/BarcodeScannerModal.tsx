@@ -33,6 +33,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 }) => {
   useScrollLock(open);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const [scannerKey, setScannerKey] = useState<number>(0);
   const [scannedHistory, setScannedHistory] = useState<string[]>([]);
   const [scanSuccess, setScanSuccess] = useState(false);
   const lastScannedRef = useRef<string | null>(null);
@@ -42,6 +44,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   useEffect(() => {
     if (open) {
       setErrorMsg(null);
+      setErrorDetails(null);
       setScannedHistory([]);
       lastScannedRef.current = null;
       lastScannedTimeRef.current = 0;
@@ -49,6 +52,28 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   }, [open]);
 
   if (!open) return null;
+
+  const handleRetry = async () => {
+    setErrorMsg(null);
+    setErrorDetails(null);
+    setScannerKey((prev) => prev + 1);
+
+    // Direct permission probe triggered by explicit user gesture
+    try {
+      if (navigator?.mediaDevices?.getUserMedia) {
+        const testStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }
+        });
+        testStream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (err: any) {
+      console.warn('Manual permission probe error:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setErrorMsg('Acceso denegado a la cámara. Habilitalo en la configuración del sitio en tu navegador.');
+        setErrorDetails(`${err.name}: ${err.message || 'Permiso denegado'}`);
+      }
+    }
+  };
 
   const handleScan = (detectedCodes: any[]) => {
     if (!detectedCodes || detectedCodes.length === 0) return;
@@ -90,6 +115,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
   const handleError = (error: IScannerError) => {
     console.error('Camera Scanner Error:', error);
+    const details = error.message ? `[${error.kind}] ${error.message}` : `[${error.kind}]`;
+    setErrorDetails(details);
     
     switch (error.kind) {
       case 'permission-denied':
@@ -147,11 +174,16 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 Si es un celular, asegurate de dar permisos de cámara al navegador y de estar navegando mediante HTTPS.
               </p>
               <button
-                onClick={() => setErrorMsg(null)}
+                onClick={handleRetry}
                 className="mt-2 bg-primary text-on-primary font-bold px-6 py-2.5 rounded-full text-xs hover:bg-primary-hover active:scale-95 transition-all shadow-sm cursor-pointer"
               >
                 Reintentar
               </button>
+              {errorDetails && (
+                <span className="text-[10px] text-on-surface-variant/70 font-mono mt-1 px-2.5 py-1 bg-surface-container-high rounded-lg border border-outline-variant/10 max-w-xs break-all">
+                  {errorDetails}
+                </span>
+              )}
             </div>
           ) : (
             <div className="w-full flex flex-col items-center gap-6">
@@ -165,6 +197,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 {/* Camera Feed Component */}
                 <div className="w-full h-full [&_video]:object-cover [&_video]:w-full [&_video]:h-full">
                   <Scanner
+                    key={scannerKey}
                     onScan={handleScan}
                     onError={handleError}
                     paused={false}
@@ -172,7 +205,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     scanDelay={500}
                     startTimeoutMs={10000}
                     constraints={{
-                      facingMode: 'environment'
+                      facingMode: { ideal: 'environment' }
                     }}
                     formats={[
                       'ean_13',
