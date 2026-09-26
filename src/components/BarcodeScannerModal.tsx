@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Scanner, IScannerError } from '@yudiel/react-qr-scanner';
 import { useScrollLock } from '../utils/useScrollLock';
 
-// Sonido característico de caja de supermercado (bip brillante y corto a 2093Hz - C7)
+// Bip agudo convencional de lector de código de barras (2850Hz, seco y limpio de 55ms)
 const playCashierBeep = () => {
   try {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -12,16 +12,17 @@ const playCashierBeep = () => {
     const gain = ctx.createGain();
 
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(2093, ctx.currentTime);
+    // Frecuencia aguda convencional de pistolas lectoras tipo Zebra/Honeywell
+    osc.frequency.setValueAtTime(2850, ctx.currentTime);
 
-    gain.gain.setValueAtTime(0.25, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.055);
 
     osc.connect(gain);
     gain.connect(ctx.destination);
 
     osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.08);
+    osc.stop(ctx.currentTime + 0.055);
   } catch (e) {
     console.warn('Audio not supported', e);
   }
