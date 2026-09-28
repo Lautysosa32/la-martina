@@ -26,6 +26,8 @@ whatsapp-worker/.wwebjs_cache/
 whatsapp-worker/node_modules/
 whatsapp-worker/.env*
 !whatsapp-worker/.env.example
+whatsapp-worker/qr.txt
+whatsapp-worker/status.json
 
 # Diagnostic & Scratch Scripts
 scripts/diagnostic.ts

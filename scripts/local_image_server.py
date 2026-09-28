@@ -6,13 +6,14 @@ import re
 import io
 import time
 import html
+from urllib.parse import quote
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from PIL import Image
 
 # Agregar al path para importar los scripts originales sin modificarlos
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'imagenes de productos'))
-import descargar_imagenes
-import subir_a_r2
+import descargar_imagenes  # type: ignore
+import subir_a_r2  # type: ignore
 
 # Cache temporal en memoria. NO exponemos URLs que el frontend pueda alterar.
 # Formato: { "uuid-seguro": { "url": "https://...", "title": "..." } }
@@ -75,7 +76,7 @@ class ImageSelectorHandler(BaseHTTPRequestHandler):
 
     def search_mercadolibre(self, query: str, session) -> list:
         candidates = []
-        slug = descargar_imagenes.quote(query.replace(' ', '-').lower())
+        slug = quote(query.replace(' ', '-').lower())
         url_ml = f"https://listado.mercadolibre.com.ar/{slug}"
         try:
             resp = session.get(url_ml, timeout=8)
@@ -109,8 +110,8 @@ class ImageSelectorHandler(BaseHTTPRequestHandler):
 
     def search_bing(self, query: str, session) -> list:
         candidates = []
-        clean_q = query.strip()
-        url_bing = f"https://www.bing.com/images/search?q={descargar_imagenes.quote(clean_q)}"
+        clean_q = f"{query.strip()} supermercado argentina"
+        url_bing = f"https://www.bing.com/images/search?q={quote(clean_q)}&first=1"
         try:
             resp = session.get(url_bing, timeout=10)
             if resp.status_code == 200:
@@ -146,6 +147,18 @@ class ImageSelectorHandler(BaseHTTPRequestHandler):
                         cand_id = str(uuid.uuid4())
                         SEARCH_CACHE[cand_id] = {"url": murl, "title": query}
                         candidates.append({"id": cand_id, "url": murl, "title": query, "source": "Bing"})
+
+                # Si aún no hay candidatos, buscar imágenes img directas
+                if len(candidates) == 0:
+                    for img in soup.select("img"):
+                        if len(candidates) >= 6:
+                            break
+                        src = img.get("data-src") or img.get("src") or ""
+                        if src.startswith("http") and not any(bad in src.lower() for bad in ["logo", "icon", "vector", "placeholder"]):
+                            cand_id = str(uuid.uuid4())
+                            alt = img.get("alt") or query
+                            SEARCH_CACHE[cand_id] = {"url": src, "title": alt}
+                            candidates.append({"id": cand_id, "url": src, "title": alt, "source": "Bing"})
         except Exception as e:
             print(f"[Bing Search Error]: {e}")
         return candidates

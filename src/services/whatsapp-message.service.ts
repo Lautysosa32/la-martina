@@ -318,33 +318,47 @@ export const whatsappMessageService = {
         return false;
       }
 
-      // 1. Obtener empleados con rol 'owner', activos y con teléfono
-      const { data: owners, error } = await supabase
-        .from('employees')
-        .select('id, user_id, name, phone')
-        .eq('role', 'owner')
-        .eq('active', true)
-        .not('phone', 'is', null)
-        .not('phone', 'eq', '');
-
-      if (error) {
-        console.error('Error obteniendo dueños para alerta de stock:', error.message);
-        return false;
-      }
-
-      if (!owners || owners.length === 0) {
-        console.log('No hay dueños configurados con número de teléfono para recibir alertas de stock.');
-        return false;
-      }
-
-      // Filtrar por dueño configurado si se especificó uno
-      let targetOwners = owners;
+      // 1. Obtener destinatario(s): si hay un empleado/dueño configurado en stockAlertOwnerId, usarlo
       const configuredOwnerId = configData?.value?.stockAlertOwnerId;
+      let targetOwners: { id?: string; name: string; phone: string }[] = [];
+
       if (configuredOwnerId) {
-        const matched = owners.filter(o => o.id === configuredOwnerId || o.user_id === configuredOwnerId);
-        if (matched.length > 0) {
-          targetOwners = matched;
+        const { data: specificEmployee } = await supabase
+          .from('employees')
+          .select('id, user_id, name, phone')
+          .or(`id.eq.${configuredOwnerId},user_id.eq.${configuredOwnerId}`)
+          .eq('active', true)
+          .not('phone', 'is', null)
+          .not('phone', 'eq', '')
+          .maybeSingle();
+
+        if (specificEmployee && specificEmployee.phone) {
+          targetOwners = [specificEmployee];
         }
+      }
+
+      if (targetOwners.length === 0) {
+        const { data: fallbackOwners, error } = await supabase
+          .from('employees')
+          .select('id, user_id, name, phone')
+          .in('role', ['owner', 'super_admin'])
+          .eq('active', true)
+          .not('phone', 'is', null)
+          .not('phone', 'eq', '');
+
+        if (error) {
+          console.error('Error obteniendo dueños para alerta de stock:', error.message);
+          return false;
+        }
+
+        if (fallbackOwners && fallbackOwners.length > 0) {
+          targetOwners = fallbackOwners;
+        }
+      }
+
+      if (targetOwners.length === 0) {
+        console.log('No hay encargados o dueños configurados con número de teléfono para recibir alertas de stock.');
+        return false;
       }
 
       // Construcción del mensaje: enriquecido con Reposición Inteligente si hay datos, o formato clásico
@@ -357,7 +371,7 @@ export const whatsappMessageService = {
         message = `🚨 *Nuevo faltante*\n\n*${productName}* (${quantity} unidades)\n\n*Productos con bajo stock:* ${lowStockTotal}\n*Productos sin stock:* ${outOfStockTotal}`;
       }
 
-      // 2. Encolar un mensaje para cada dueño destinatario
+      // 2. Encolar un mensaje para cada dueño/encargado destinatario
       const promises = targetOwners.map(owner =>
         this.createWhatsAppMessage({
           phone: owner.phone,
@@ -373,6 +387,90 @@ export const whatsappMessageService = {
       return true;
     } catch (err) {
       console.error('Excepción al enviar alerta de stock a dueños:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Encola una alerta de egreso para el encargado/dueño seleccionado para alertas de stock.
+   */
+  async createExpenseAlertMessage(expense: {
+    amount: number;
+    description?: string | null;
+    type?: string;
+    supplier_name?: string | null;
+    created_by?: string;
+    payment_method?: string;
+  }) {
+    try {
+      const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
+      if (configData?.value?.suspendEmployeeNotifications) {
+        return false;
+      }
+
+      const configuredOwnerId = configData?.value?.stockAlertOwnerId;
+      let targetEmployees: { id?: string; name: string; phone: string }[] = [];
+
+      if (configuredOwnerId) {
+        const { data: specificEmployee } = await supabase
+          .from('employees')
+          .select('id, user_id, name, phone')
+          .or(`id.eq.${configuredOwnerId},user_id.eq.${configuredOwnerId}`)
+          .eq('active', true)
+          .not('phone', 'is', null)
+          .not('phone', 'eq', '')
+          .maybeSingle();
+
+        if (specificEmployee && specificEmployee.phone) {
+          targetEmployees = [specificEmployee];
+        }
+      }
+
+      if (targetEmployees.length === 0) {
+        const { data: fallbackOwners } = await supabase
+          .from('employees')
+          .select('id, user_id, name, phone')
+          .in('role', ['owner', 'super_admin'])
+          .eq('active', true)
+          .not('phone', 'is', null)
+          .not('phone', 'eq', '');
+
+        if (fallbackOwners && fallbackOwners.length > 0) {
+          targetEmployees = fallbackOwners;
+        }
+      }
+
+      if (targetEmployees.length === 0) {
+        console.log('No hay destinatario configurado con teléfono para recibir alertas de egresos.');
+        return false;
+      }
+
+      const formattedAmount = formatCurrency(expense.amount, true, true);
+      const concepto = expense.description?.trim() || expense.supplier_name?.trim() || expense.type || 'Egreso';
+      const supplierLine = expense.supplier_name && expense.supplier_name !== concepto ? `\n• *Proveedor:* ${expense.supplier_name}` : '';
+      const methodLabel = expense.payment_method === 'cash' ? 'Efectivo' : expense.payment_method === 'card' ? 'Tarjeta' : expense.payment_method === 'transfer' ? 'Transferencia' : expense.payment_method === 'cuenta_corriente' ? 'Cuenta Corriente' : expense.payment_method || 'Efectivo';
+
+      const message = `💸 *Nuevo Egreso Registrado*\n\n` +
+        `• *Detalle:* ${concepto}\n` +
+        `• *Monto:* ${formattedAmount}${supplierLine}\n` +
+        `• *Método:* ${methodLabel}\n` +
+        `• *Por:* ${expense.created_by || 'Personal'}`;
+
+      const promises = targetEmployees.map(emp =>
+        this.createWhatsAppMessage({
+          phone: emp.phone,
+          customer_name: emp.name,
+          type: 'expense_alert',
+          title: `Egreso: ${concepto} (${formattedAmount})`,
+          message,
+          status: 'pending'
+        })
+      );
+
+      await Promise.all(promises);
+      return true;
+    } catch (err) {
+      console.error('Error enviando alerta de egreso por WhatsApp:', err);
       return false;
     }
   },

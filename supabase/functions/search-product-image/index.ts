@@ -32,10 +32,10 @@ function slugify(text: string): string {
 
 function esRelevante(query: string, title: string): boolean {
   if (!title) return true;
-  const queryTokens = query.toLowerCase().match(/\w+/g) || [];
-  const titleTokens = new Set(title.toLowerCase().match(/\w+/g) || []);
+  const queryTokens: string[] = query.toLowerCase().match(/\w+/g) || [];
+  const titleTokens = new Set<string>(title.toLowerCase().match(/\w+/g) || []);
   
-  const keywords = queryTokens.filter(t => t.length > 1 && !STOP_WORDS.has(t));
+  const keywords = queryTokens.filter((t: string) => t.length > 1 && !STOP_WORDS.has(t));
   if (keywords.length === 0) return true;
   
   for (const kw of keywords) {

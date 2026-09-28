@@ -297,8 +297,9 @@ async function createWhatsAppClient() {
       dataPath: path.join(__dirname, 'session')
     }),
     webVersionCache: {
-      type: 'remotePath',
-      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+      type: 'remote',
+      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html',
+      strict: false,
     },
     puppeteer: {
       headless: true,

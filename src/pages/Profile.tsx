@@ -14,6 +14,8 @@ export const Profile: React.FC = () => {
     updateUser, 
     isAuthenticated, 
     isCustomer, 
+    isEmployee,
+    employeeProfile,
     customerProfile,
     signUpCustomer, 
     signInCustomer, 
@@ -250,7 +252,11 @@ export const Profile: React.FC = () => {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-[25px] font-bold text-on-background">Mi Perfil</h1>
-            {isCustomer ? (
+            {isEmployee ? (
+              <span className="text-[9px] font-black tracking-widest bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full uppercase">
+                {employeeProfile?.role?.toUpperCase() || 'EMPLEADO'}
+              </span>
+            ) : isCustomer ? (
               <span className="text-[9px] font-black tracking-widest bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full uppercase">MIEMBRO CLUB</span>
             ) : (
               <span className="text-[9px] font-black tracking-widest bg-surface-container-high text-on-surface-variant border border-outline-variant/20 px-2 py-0.5 rounded-full uppercase">MODO INVITADO</span>
@@ -259,15 +265,27 @@ export const Profile: React.FC = () => {
           <p className="text-on-surface-variant text-base">Gestioná tus datos y revisá tus pedidos anteriores.</p>
         </div>
 
-        {isCustomer && (
-          <button
-            onClick={() => signOutCustomer()}
-            className="self-start md:self-auto bg-surface-container-low hover:bg-red-50 hover:text-red-700 text-on-surface-variant font-bold px-6 py-3 rounded-2xl border border-outline-variant/20 transition-all text-xs flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined text-[18px]">logout</span>
-            CERRAR SESIÓN
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {isEmployee && (
+            <button
+              onClick={() => navigate('/admin')}
+              className="bg-primary text-white font-bold px-5 py-3 rounded-2xl shadow-md hover:bg-primary/90 transition-all text-xs flex items-center gap-2 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px]">admin_panel_settings</span>
+              PANEL ADMINISTRATIVO
+            </button>
+          )}
+
+          {isCustomer && (
+            <button
+              onClick={() => signOutCustomer()}
+              className="bg-surface-container-low hover:bg-red-50 hover:text-red-700 text-on-surface-variant font-bold px-5 py-3 rounded-2xl border border-outline-variant/20 transition-all text-xs flex items-center gap-2 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px]">logout</span>
+              CERRAR SESIÓN
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-12">

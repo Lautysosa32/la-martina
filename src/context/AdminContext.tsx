@@ -1579,6 +1579,16 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setExpenses(prev => [newExpense, ...prev]);
     insertExpense(newExpense).catch(console.error);
+
+    // Notificar al encargado/dueño seleccionado para stock y egresos
+    whatsappMessageService.createExpenseAlertMessage({
+      amount: newExpense.amount,
+      description: newExpense.description,
+      type: newExpense.type,
+      supplier_name: newExpense.supplier_name,
+      created_by: newExpense.created_by,
+      payment_method: newExpense.payment_method
+    }).catch(err => console.error('Error enviando notificación de egreso por WhatsApp:', err));
   };
 
   const updateExpense = (id: string, updates: Partial<Expense>) => {

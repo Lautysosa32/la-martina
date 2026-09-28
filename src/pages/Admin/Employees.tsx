@@ -323,24 +323,24 @@ export const Employees: React.FC = () => {
                 </div>
               </div>
 
-              {/* Selector de Dueño para Alertas de Faltantes */}
+              {/* Selector de Dueño/Encargado para Alertas de Faltantes y Egresos */}
               <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-1.5 shrink-0">
                 <span className="material-symbols-outlined text-red-600 text-[18px]">
                   notifications_active
                 </span>
                 <div className="flex flex-col">
-                  <span className="text-[9px] font-black uppercase tracking-wider text-red-700">Alertas de Faltantes</span>
+                  <span className="text-[9px] font-black uppercase tracking-wider text-red-700">Alertas Stock y Egresos</span>
                   <select
                     value={generalConfig?.stockAlertOwnerId || ''}
                     onChange={e => updateGeneralConfig({ stockAlertOwnerId: e.target.value || null })}
                     className="bg-transparent border-none p-0 text-xs font-bold text-red-900 focus:outline-none cursor-pointer pr-4"
                   >
-                    <option value="">Todos los dueños</option>
+                    <option value="">Todos los dueños / admin</option>
                     {employees
-                      .filter(e => e.active && e.role === 'owner')
+                      .filter(e => e.active)
                       .map(e => (
                         <option key={e.id} value={e.id}>
-                          {e.name} {e.phone ? `(${e.phone})` : '(Sin tel)'}
+                          {e.name} ({e.role}) {e.phone ? `(${e.phone})` : '(Sin tel)'}
                         </option>
                       ))}
                   </select>

@@ -6,8 +6,61 @@ import { ROLE_PERMISSIONS } from '../config/permissions';
 // API URL ya configurada en lib/axios.ts
 export const employeesService = {
   // Obtiene el perfil de empleado actual (usado durante el login)
-  async getCurrentEmployeeProfile(userId: string): Promise<Employee | null> {
+  async getCurrentEmployeeProfile(userId: string, email?: string, phone?: string): Promise<Employee | null> {
     try {
+      // 1. Intentar por user_id directo
+      const { data: byUserId, error: errUserId } = await supabase
+        .from('employees')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (byUserId) return byUserId;
+
+      // 2. Si no se encontró por user_id, buscar por email real si no es sintético
+      if (email && !email.endsWith('@lamartina.com')) {
+        const { data: byEmail } = await supabase
+          .from('employees')
+          .select('*')
+          .eq('email', email)
+          .maybeSingle();
+
+        if (byEmail) {
+          if (!byEmail.user_id) {
+            await supabase.from('employees').update({ user_id: userId }).eq('id', byEmail.id);
+            byEmail.user_id = userId;
+          }
+          return byEmail;
+        }
+      }
+
+      // 3. Si tiene teléfono, buscar coincidencia en empleados
+      if (phone) {
+        const cleanP = phone.replace(/\D/g, '');
+        if (cleanP.length >= 8) {
+          const { data: allEmps } = await supabase
+            .from('employees')
+            .select('*')
+            .not('phone', 'is', null);
+
+          if (allEmps) {
+            const matched = allEmps.find(e => {
+              const eClean = (e.phone || '').replace(/\D/g, '');
+              return eClean && (eClean === cleanP || eClean.endsWith(cleanP.slice(-8)) || cleanP.endsWith(eClean.slice(-8)));
+            });
+
+            if (matched) {
+              if (!matched.user_id) {
+                await supabase.from('employees').update({ user_id: userId }).eq('id', matched.id);
+                matched.user_id = userId;
+              }
+              return matched;
+            }
+          }
+        }
+      }
+
+      // Fallback a API axios si fuera necesario
       const response = await api.get(`/employees`, {
         params: {
           user_id: `eq.${userId}`,

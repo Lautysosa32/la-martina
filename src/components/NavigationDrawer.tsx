@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { categories as mockCategories } from '../data/mockData';
 import { useAdmin } from '../context/AdminContext';
+import { useAuth } from '../stores/useAuthStore';
 import { useScrollLock } from '../utils/useScrollLock';
 
 interface NavigationDrawerProps {
@@ -13,6 +14,7 @@ interface NavigationDrawerProps {
 
 export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onClose, onOpenZones }) => {
   useScrollLock(isOpen);
+  const { isEmployee } = useAuth();
   const { adminCategories, adminSubcategories } = useAdmin();
   const categoriesList = adminCategories.length > 0 ? adminCategories : mockCategories;
   const [expandedCatId, setExpandedCatId] = useState<string | null>(null);
@@ -174,6 +176,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({ isOpen, onCl
                 </li>
               )}
               {[
+                ...(isEmployee ? [{ label: 'Panel Administrativo', icon: 'admin_panel_settings', path: '/admin' }] : []),
                 { label: 'Calculadora en el Local', icon: 'calculate', path: '/calculadora-compras' },
                 { label: 'Métodos de Entrega', icon: 'local_shipping', path: '/delivery' },
                 { label: 'Sobre Nosotros', icon: 'storefront', path: '/about' },

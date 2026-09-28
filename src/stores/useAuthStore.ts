@@ -179,42 +179,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const isCustomerEmail = session.user.email?.endsWith('@lamartina.com') && /^\d+@lamartina\.com$/.test(session.user.email);
         const fallbackPhone = session.user.phone || session.user.user_metadata?.phone || (isCustomerEmail ? session.user.email?.split('@')[0] : undefined);
 
-        if (isCustomerEmail) {
-          const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
-          if (cust) {
-            customerProfile = cust;
-            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
-          } else {
-            customerProfile = loadCachedCustomerProfile();
-          }
-          employeeProfile = null;
-          permissions = [];
+        // 1. Verificar si el usuario es un empleado (por user_id, email o teléfono)
+        const fetchedEmployee = await employeesService.getCurrentEmployeeProfile(session.user.id, session.user.email, fallbackPhone);
+        if (fetchedEmployee) {
+          employeeProfile = fetchedEmployee;
+          permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+          try {
+            localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
+            localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
+          } catch (err) { console.warn('Storage Error:', err); }
         } else {
-          const fetchedProfile = await employeesService.getCurrentEmployeeProfile(session.user.id);
-          if (fetchedProfile) {
-            employeeProfile = fetchedProfile;
-            permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
-            try {
-              localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
-              localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
-            } catch (err) { console.warn('Storage Error:', err); }
-            customerProfile = null;
-          } else {
-            const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
-            if (cust) {
-              customerProfile = cust;
-              employeeProfile = null;
-              permissions = [];
-              try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
-            } else {
-              const cachedEmp = loadCachedEmployeeProfile();
-              if (cachedEmp && cachedEmp.user_id === session.user.id) {
-                employeeProfile = cachedEmp;
-                permissions = loadCachedPermissions();
-              } else {
-                customerProfile = loadCachedCustomerProfile();
-              }
-            }
+          const cachedEmp = loadCachedEmployeeProfile();
+          if (cachedEmp && cachedEmp.user_id === session.user.id) {
+            employeeProfile = cachedEmp;
+            permissions = loadCachedPermissions();
+          }
+        }
+
+        // 2. Verificar perfil de cliente (incluso los empleados son clientes para comprar)
+        const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
+        if (cust) {
+          customerProfile = cust;
+          try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
+        } else {
+          const cachedCust = loadCachedCustomerProfile();
+          if (cachedCust) {
+            customerProfile = cachedCust;
           }
         }
       }
@@ -250,46 +240,33 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const isCustomerEmail = session.user.email?.endsWith('@lamartina.com') && /^\d+@lamartina\.com$/.test(session.user.email);
         const fallbackPhone = session.user.phone || session.user.user_metadata?.phone || (isCustomerEmail ? session.user.email?.split('@')[0] : undefined);
 
-        if (isCustomerEmail) {
-          const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
-          if (cust) {
-            customerProfile = cust;
-            try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
-          } else {
-            customerProfile = loadCachedCustomerProfile();
-          }
-          employeeProfile = null;
-          permissions = [];
+        // 1. Obtener/actualizar perfil de empleado
+        const fetchedProfile = await employeesService.getCurrentEmployeeProfile(session.user.id, session.user.email, fallbackPhone);
+        if (fetchedProfile) {
+          employeeProfile = fetchedProfile;
+          permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+          try {
+            localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
+            localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
+          } catch (err) { console.warn('Storage Error:', err); }
         } else {
-          if (!employeeProfile || employeeProfile.user_id !== session.user.id) {
-            const fetchedProfile = await employeesService.getCurrentEmployeeProfile(session.user.id);
-            if (fetchedProfile) {
-              employeeProfile = fetchedProfile;
-              permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
-              customerProfile = null;
-              try {
-                localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
-                localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
-              } catch (err) { console.warn('Storage Error:', err); }
-            } else {
-              const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
-              if (cust) {
-                customerProfile = cust;
-                employeeProfile = null;
-                permissions = [];
-                try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
-              } else {
-                const cached = loadCachedEmployeeProfile();
-                if (cached && cached.user_id === session.user.id) {
-                  employeeProfile = cached;
-                  permissions = loadCachedPermissions();
-                  customerProfile = null;
-                } else {
-                  customerProfile = loadCachedCustomerProfile();
-                }
-              }
-            }
+          const cached = loadCachedEmployeeProfile();
+          if (cached && cached.user_id === session.user.id) {
+            employeeProfile = cached;
+            permissions = loadCachedPermissions();
+          } else {
+            employeeProfile = null;
+            permissions = [];
           }
+        }
+
+        // 2. Obtener/actualizar perfil de cliente
+        const cust = await customersService.getProfileByUserId(session.user.id, fallbackPhone);
+        if (cust) {
+          customerProfile = cust;
+          try { localStorage.setItem('la-martina-customer-profile', JSON.stringify(cust)); } catch (err) { console.warn('Storage Error:', err); }
+        } else {
+          customerProfile = loadCachedCustomerProfile();
         }
       } else {
         employeeProfile = null;
@@ -321,9 +298,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       console.error("❌ Error en signIn:", error);
       set({ loading: false });
     } else {
-      set({ user: data.user, session: data.session, customerProfile: null });
-
-      let employeeProfile = await employeesService.getCurrentEmployeeProfile(data.user.id);
+      let employeeProfile = await employeesService.getCurrentEmployeeProfile(data.user.id, data.user.email);
       let permissions: PermissionKey[] = [];
       if (employeeProfile) {
         permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
@@ -332,7 +307,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
         } catch (err) { console.warn('Storage Error:', err); }
       }
-      set({ employeeProfile, permissions, loading: false });
+
+      let customerProfile = await customersService.getProfileByUserId(data.user.id);
+      if (customerProfile) {
+        try {
+          localStorage.setItem('la-martina-customer-profile', JSON.stringify(customerProfile));
+        } catch (err) { console.warn('Storage Error:', err); }
+      }
+
+      set({ user: data.user, session: data.session, employeeProfile, customerProfile, permissions, loading: false });
     }
 
     return { data, error };
@@ -468,12 +451,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     if (data.user && data.session) {
-      try {
-        localStorage.removeItem('la-martina-employee-profile');
-        localStorage.removeItem('la-martina-permissions');
-      } catch (err) { console.warn('Storage Error:', err); }
-
-      let profileData = await customersService.getProfileByUserId(data.user.id, phone);
+      const fallbackPhone = cleanPhone;
+      let profileData = await customersService.getProfileByUserId(data.user.id, fallbackPhone);
 
       if (profileData) {
         try {
@@ -481,14 +460,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         } catch (err) { console.warn('Storage Error:', err); }
       }
 
-      console.log("✅ Login exitoso. Perfil encontrado:", profileData);
+      // Verificamos si este cliente también posee perfil de empleado activo
+      let employeeProfile = await employeesService.getCurrentEmployeeProfile(data.user.id, data.user.email, fallbackPhone);
+      let permissions: PermissionKey[] = [];
+      if (employeeProfile) {
+        permissions = employeesService.getEffectivePermissions(employeeProfile.role, employeeProfile.permissions_override);
+        try {
+          localStorage.setItem('la-martina-employee-profile', JSON.stringify(employeeProfile));
+          localStorage.setItem('la-martina-permissions', JSON.stringify(permissions));
+        } catch (err) { console.warn('Storage Error:', err); }
+      } else {
+        const cachedEmp = loadCachedEmployeeProfile();
+        if (cachedEmp && cachedEmp.user_id === data.user.id) {
+          employeeProfile = cachedEmp;
+          permissions = loadCachedPermissions();
+        }
+      }
+
+      console.log("✅ Login exitoso. Perfil encontrado:", profileData, "Empleado:", employeeProfile);
 
       set({
         user: data.user,
         session: data.session,
         customerProfile: profileData ?? null,
-        employeeProfile: null,
-        permissions: [],
+        employeeProfile: employeeProfile ?? null,
+        permissions,
         loading: false
       });
     } else {
@@ -567,7 +563,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   updateUser: (data) => {
-    const isCustomer = !!get().session && !get().employeeProfile;
+    const isCustomer = Boolean(get().session);
     if (isCustomer) {
       get().updateCustomerProfileInDb({
         address: data.address,
@@ -607,13 +603,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
 export const useAuth = () => {
   const store = useAuthStore();
-  const isCustomer = (!!store.customerProfile || !!store.session) && !store.employeeProfile;
   const isEmployee = !!store.session && !!store.employeeProfile;
+  const isCustomer = Boolean(store.session || store.customerProfile);
 
   const [dbOrders, setDbOrders] = React.useState<Order[]>([]);
 
   React.useEffect(() => {
-    const activePhone = isCustomer && store.customerProfile ? store.customerProfile.phone : store.guestProfile.phone;
+    const activePhone = store.customerProfile?.phone || store.employeeProfile?.phone || store.guestProfile.phone;
     if (!activePhone) {
       setDbOrders([]);
       return;
@@ -724,25 +720,38 @@ export const useAuth = () => {
 
   // Memoizar el objeto "user" para evitar referencias nuevas en cada render que causen bucles infinitos en useEffect
   const derivedUser = React.useMemo(() => {
-    return isCustomer && store.customerProfile ? {
-      name: `${store.customerProfile.name} ${store.customerProfile.last_name || ''}`.trim(),
-      phone: store.customerProfile.phone,
-      address: store.customerProfile.address || '',
-      address_lat: store.customerProfile.address_lat ?? null,
-      address_lng: store.customerProfile.address_lng ?? null,
-      orders: customerOrders
-    } : {
+    if (store.customerProfile) {
+      return {
+        name: `${store.customerProfile.name} ${store.customerProfile.last_name || ''}`.trim(),
+        phone: store.customerProfile.phone,
+        address: store.customerProfile.address || store.guestProfile.address || '',
+        address_lat: store.customerProfile.address_lat ?? store.guestProfile.address_lat ?? null,
+        address_lng: store.customerProfile.address_lng ?? store.guestProfile.address_lng ?? null,
+        orders: customerOrders
+      };
+    }
+    if (store.employeeProfile) {
+      return {
+        name: store.employeeProfile.name,
+        phone: store.employeeProfile.phone || store.guestProfile.phone || '',
+        address: store.guestProfile.address || '',
+        address_lat: store.guestProfile.address_lat ?? null,
+        address_lng: store.guestProfile.address_lng ?? null,
+        orders: customerOrders
+      };
+    }
+    return {
       ...store.guestProfile,
       name: store.guestProfile.name === 'Invitado' ? '' : (store.guestProfile.name || ''),
       orders: customerOrders
     };
-  }, [store.customerProfile, store.guestProfile, isCustomer, customerOrders]);
+  }, [store.customerProfile, store.employeeProfile, store.guestProfile, customerOrders]);
 
   return {
     user: derivedUser,
     
     updateUser: (updates: Partial<GuestProfile>) => {
-      if (isCustomer && store.customerProfile) {
+      if (isCustomer) {
         // Map GuestProfile updates to CustomerProfile
         const dbUpdates: Partial<CustomerProfile> = {};
         if (updates.name) {

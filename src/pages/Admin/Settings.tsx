@@ -119,7 +119,7 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     employeesService.getAllEmployees()
-      .then(emps => setOwners(emps.filter(e => e.active && e.role === 'owner')))
+      .then(emps => setOwners(emps.filter(e => e.active)))
       .catch(() => {});
   }, []);
 
@@ -4008,9 +4008,9 @@ export const Settings: React.FC = () => {
                 {/* Dueño asignado para alertas de stock / faltantes */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-surface-container-lowest border border-outline-variant/15">
                   <div>
-                    <h4 className="text-sm font-black text-on-surface">Dueño para alertas de faltantes (WhatsApp)</h4>
+                    <h4 className="text-sm font-black text-on-surface">Destinatario de alertas de faltantes y egresos (WhatsApp)</h4>
                     <p className="text-[11px] text-on-surface-variant mt-1">
-                      Seleccioná a qué dueño se le enviará el mensaje cuando un producto cruce el punto de reposición o quede sin stock.
+                      Seleccioná a qué encargado o dueño se le enviará el mensaje cuando haya stock crítico o se registre un egreso de dinero.
                     </p>
                   </div>
                   <select
@@ -4018,10 +4018,10 @@ export const Settings: React.FC = () => {
                     onChange={(e) => updateGeneralConfig({ stockAlertOwnerId: e.target.value || null })}
                     className="bg-white border border-outline-variant/30 rounded-xl px-4 py-2.5 text-xs font-bold text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
                   >
-                    <option value="">Todos los dueños</option>
+                    <option value="">Todos los dueños / administradores</option>
                     {owners.map(o => (
                       <option key={o.id} value={o.id}>
-                        {o.name} {o.phone ? `(${o.phone})` : '(Sin tel)'}
+                        {o.name} ({o.role}) {o.phone ? `(${o.phone})` : '(Sin tel)'}
                       </option>
                     ))}
                   </select>
