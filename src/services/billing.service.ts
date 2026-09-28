@@ -332,27 +332,15 @@ class BillingService {
   }
 
   /**
-   * Abre o descarga el PDF oficial de una factura fiscal autenticado mediante blob URL
+   * Abre o visualiza el comprobante oficial de una factura fiscal para descarga o impresión en PDF.
+   * Abre directamente la vista oficial A4 con CAE, código de barras, QR de ARCA y opción de PDF.
    */
   async openInvoicePdf(invoiceId: string): Promise<void> {
     if (!invoiceId) return;
-    try {
-      const res = await this.client.get(`/invoices/${invoiceId}/pdf`, {
-        responseType: 'blob'
-      });
-      const blob = new Blob([res.data], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      setTimeout(() => window.URL.revokeObjectURL(url), 60000);
-    } catch (err: any) {
-      console.warn('[BillingService] Fallback abriendo PDF por URL:', err.message);
-      let token = '';
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        token = session?.access_token || '';
-      } catch {}
-      const fallbackUrl = `/api/arca/invoices/${invoiceId}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-      window.open(fallbackUrl, '_blank');
+    const url = `/factura/${invoiceId}`;
+    const win = window.open(url, '_blank');
+    if (!win) {
+      window.location.href = url;
     }
   }
 }

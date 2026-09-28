@@ -98,36 +98,54 @@ export const saleRepository = {
         updated_at: timestamp
       };
 
-      // Transacción atómica en IndexedDB
-      await localDB.transaction('rw', [localDB.offline_sales, localDB.products, localDB.customers_cache, localDB.sync_queue], async () => {
-        // 1. Guardar la venta definitiva
-        await localDB.offline_sales.put(sale);
+      // Persistencia local en IndexedDB (con fallback resiliente si el motor de almacenamiento o transacción falla)
+      try {
+        await localDB.transaction('rw', [localDB.offline_sales, localDB.products, localDB.customers_cache, localDB.sync_queue], async () => {
+          // 1. Guardar la venta definitiva
+          await localDB.offline_sales.put(sale);
 
-        // 2. Descontar stock local para cada ítem
-        for (const item of sale.items) {
-          if (item.productId && item.productId !== 'PRODUCTO_COMUN' && item.productId !== 'COMUN') {
-            const prod = await localDB.products.get(item.productId);
-            if (prod) {
-              prod.stock = (prod.stock ?? 0) - item.quantity;
-              prod.updated_at = createdAtIso;
-              await localDB.products.put(prod);
+          // 2. Descontar stock local para cada ítem
+          for (const item of sale.items) {
+            if (item.productId && item.productId !== 'PRODUCTO_COMUN' && item.productId !== 'COMUN' && !item.productId.startsWith('GENERICO-')) {
+              try {
+                const prod = await localDB.products.get(item.productId);
+                if (prod) {
+                  prod.stock = (prod.stock ?? 0) - item.quantity;
+                  prod.updated_at = createdAtIso;
+                  await localDB.products.put(prod);
+                }
+              } catch (prodErr) {
+                console.warn('[saleRepository] Error actualizando stock local para ítem:', item.productId, prodErr);
+              }
             }
           }
-        }
 
-        // 3. Si es Cuenta Corriente, actualizar la deuda local del cliente
-        if (sale.payment_method === 'cuenta_corriente' && sale.customer_phone) {
-          const customer = await localDB.customers_cache.where('phone').equals(sale.customer_phone).first();
-          if (customer) {
-            customer.currentDebt = (customer.currentDebt || 0) + sale.total;
-            customer.updated_at = createdAtIso;
-            await localDB.customers_cache.put(customer);
+          // 3. Si es Cuenta Corriente, actualizar la deuda local del cliente
+          if (sale.payment_method === 'cuenta_corriente' && sale.customer_phone) {
+            try {
+              const customer = await localDB.customers_cache.where('phone').equals(sale.customer_phone).first();
+              if (customer) {
+                customer.currentDebt = (customer.currentDebt || 0) + sale.total;
+                customer.updated_at = createdAtIso;
+                await localDB.customers_cache.put(customer);
+              }
+            } catch (custErr) {
+              console.warn('[saleRepository] Error actualizando deuda en customers_cache:', custErr);
+            }
           }
-        }
 
-        // 4. Encolar en la cola de sincronización
-        await localDB.sync_queue.put(queueItem);
-      });
+          // 4. Encolar en la cola de sincronización
+          await localDB.sync_queue.put(queueItem);
+        });
+      } catch (txErr) {
+        console.warn('[saleRepository] Transacción IndexedDB falló, guardando directamente en IndexedDB:', txErr);
+        try {
+          await localDB.offline_sales.put(sale);
+          await localDB.sync_queue.put(queueItem);
+        } catch (dbFallbackErr) {
+          console.error('[saleRepository] Error persistiendo venta localmente (se continuará para registrar en Supabase):', dbFallbackErr);
+        }
+      }
 
       return sale;
     })();

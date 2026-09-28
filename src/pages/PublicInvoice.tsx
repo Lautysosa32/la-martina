@@ -100,13 +100,30 @@ export function PublicInvoice() {
           throw new Error(`Error al consultar el comprobante: ${dbError.message}`);
         }
 
-        if (!data) {
+        let invoiceRecord = data;
+
+        // Fallback: si no se encontró por ID primario de factura, buscar si id corresponde a una venta asociada (sale_ids)
+        if (!invoiceRecord) {
+          try {
+            const { data: fallbackData } = await supabase
+              .from('invoices')
+              .select('*')
+              .contains('sale_ids', [id])
+              .maybeSingle();
+
+            if (fallbackData) {
+              invoiceRecord = fallbackData;
+            }
+          } catch (_) {}
+        }
+
+        if (!invoiceRecord) {
           setError('El comprobante fiscal solicitado no fue encontrado o no está disponible.');
           setLoading(false);
           return;
         }
 
-        setInvoice(data as InvoiceData);
+        setInvoice(invoiceRecord as InvoiceData);
 
         // Consultar configuración fiscal del emisor
         try {

@@ -1057,8 +1057,14 @@ export const POS: React.FC = () => {
 
     // Validación de estado de caja registradora
     if (selectedPaymentMethod === 'cash' && !isCashRegisterOpen) {
-      alert('Caja cerrada: Debe realizar la apertura de caja antes de cobrar en efectivo.');
-      return;
+      const confirmOpen = window.confirm(
+        'La caja registradora se encuentra cerrada actualmente.\n\n¿Deseás realizar la apertura de caja ahora con $0 para registrar este cobro en efectivo?'
+      );
+      if (confirmOpen) {
+        openCashRegister(0, cashierName);
+      } else {
+        return;
+      }
     }
 
     // Validar que ningún ítem tenga cantidad o precio anómalo
@@ -2642,6 +2648,24 @@ export const POS: React.FC = () => {
                         ))
                       }
                     </div>
+                    {selectedPaymentMethod === 'cash' && !isCashRegisterOpen && (
+                      <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-900 animate-in fade-in">
+                        <div className="flex items-center gap-2.5">
+                          <span className="material-symbols-outlined text-amber-600">lock</span>
+                          <div className="text-left">
+                            <p className="text-xs font-bold">Caja cerrada actualmente</p>
+                            <p className="text-[11px] text-amber-700">Podés abrirla ahora mismo con $0 para continuar cobrando en efectivo.</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openCashRegister(0, cashierName)}
+                          className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shadow-sm transition-all shrink-0 cursor-pointer"
+                        >
+                          Abrir Caja ($0)
+                        </button>
+                      </div>
+                    )}
                     {selectedPaymentMethod === 'cuenta_corriente' && validatedCustomer && (
                       <div className="mt-4 space-y-2">
                         {!isHealthy && (
@@ -3803,7 +3827,7 @@ export const POS: React.FC = () => {
                   {/* Imprimir Factura (Solo mostrada después de CAE) */}
                   <button
                     onClick={() => {
-                      const printUrl = `/api/arca/invoices/${authorizedInvoiceResult.id}/pdf`;
+                      const printUrl = `/factura/${authorizedInvoiceResult.id}`;
                       const printWin = window.open(printUrl, '_blank');
                       if (printWin) printWin.focus();
                     }}
@@ -4374,7 +4398,7 @@ export const POS: React.FC = () => {
                 <p>Comprobante: Factura {showWhatsAppFiscalModal.invoice.type} #{showWhatsAppFiscalModal.invoice.folio}</p>
                 <p>CAE: {showWhatsAppFiscalModal.invoice.cae}</p>
                 <p>Total: ${formatCurrency(showWhatsAppFiscalModal.invoice.total, true, true)}</p>
-                <p className="text-blue-600 font-bold truncate">Descarga PDF: /api/arca/invoices/{showWhatsAppFiscalModal.invoice.id}/pdf</p>
+                <p className="text-blue-600 font-bold truncate">Descarga PDF: /factura/{showWhatsAppFiscalModal.invoice.id}</p>
               </div>
 
               <div className="pt-3 flex gap-3">
