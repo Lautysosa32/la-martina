@@ -181,74 +181,102 @@ export const employeesService = {
   // DELIVERY ASSIGNMENT
   // ==========================================
 
-  // Obtiene la asignación de delivery activa para el día actual
-  async getActiveDeliveryAssignment() {
+  // Obtiene todas las asignaciones de delivery activas para el día actual
+  async getActiveDeliveryAssignments() {
     try {
       const today = new Date().toISOString().split('T')[0];
       const { data, error } = await supabase
         .from('daily_delivery_assignments')
         .select('*, employee:employees(*)')
         .eq('date', today)
-        .eq('status', 'active')
-        .single();
+        .eq('status', 'active');
       
-      if (error && error.code !== 'PGRST116') {
-        console.error("Error obteniendo asignación de delivery:", error);
+      if (error) {
+        console.error("Error obteniendo asignaciones de delivery:", error);
       }
-      return data || null;
+      return data || [];
     } catch (error) {
-      console.error("Excepción obteniendo asignación de delivery:", error);
-      return null;
+      console.error("Excepción obteniendo asignaciones de delivery:", error);
+      return [];
     }
   },
 
-  // Asigna a un empleado como delivery, pausando o sobreescribiendo el anterior
-  async assignDailyDelivery(employeeId: string, employeePhone?: string | null) {
+  // Obtiene la primera asignación activa (compatibilidad hacia atrás)
+  async getActiveDeliveryAssignment() {
+    const list = await this.getActiveDeliveryAssignments();
+    return list[0] || null;
+  },
+
+  // Sincroniza múltiples empleados como delivery de turno para hoy
+  async setDailyDeliveries(employeeIds: string[]) {
     try {
       const today = new Date().toISOString().split('T')[0];
-      
-      // 1. Pausar todas las asignaciones activas de hoy
+
+      // Si la lista está vacía, pausar todos los de hoy
+      if (employeeIds.length === 0) {
+        await supabase
+          .from('daily_delivery_assignments')
+          .update({ status: 'paused' })
+          .eq('date', today)
+          .eq('status', 'active');
+        return [];
+      }
+
+      // Pausar las asignaciones activas de hoy que ya no estén en employeeIds
       await supabase
         .from('daily_delivery_assignments')
         .update({ status: 'paused' })
         .eq('date', today)
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .not('employee_id', 'in', `(${employeeIds.join(',')})`);
 
-      // 2. Crear nueva asignación activa
-      const { data, error } = await supabase
+      // Obtener asignaciones existentes de hoy
+      const { data: currentRows } = await supabase
         .from('daily_delivery_assignments')
-        .insert({
-          date: today,
-          employee_id: employeeId,
-          status: 'active'
-        })
-        .select()
-        .single();
+        .select('id, employee_id, status')
+        .eq('date', today);
 
-      if (error) throw error;
+      const existingMap = new Map((currentRows || []).map(r => [r.employee_id, r]));
 
-      // 3. (Opcional) Acá deberíamos llamar al servicio de WhatsApp para liberar los mensajes
-      // pending_delivery_assignment. Lo haremos en la capa superior o usando el servicio de WhatsApp.
-      
-      return data;
+      for (const empId of employeeIds) {
+        const existing = existingMap.get(empId);
+        if (existing) {
+          if (existing.status !== 'active') {
+            await supabase
+              .from('daily_delivery_assignments')
+              .update({ status: 'active' })
+              .eq('id', existing.id);
+          }
+        } else {
+          await supabase
+            .from('daily_delivery_assignments')
+            .insert({
+              date: today,
+              employee_id: empId,
+              status: 'active'
+            });
+        }
+      }
+
+      return await this.getActiveDeliveryAssignments();
     } catch (error) {
-      console.error("Error asignando delivery diario:", error);
+      console.error("Error actualizando repartidores de turno:", error);
       throw error;
     }
   },
 
-  // Pausa el delivery actual
+  // Asigna a un empleado como delivery (compatibilidad hacia atrás)
+  async assignDailyDelivery(employeeId: string, employeePhone?: string | null) {
+    return this.setDailyDeliveries([employeeId]);
+  },
+
+  // Pausa todos los repartidores activos de hoy
   async pauseDailyDelivery() {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      await supabase
-        .from('daily_delivery_assignments')
-        .update({ status: 'paused' })
-        .eq('date', today)
-        .eq('status', 'active');
+      await this.setDailyDeliveries([]);
       return true;
     } catch (error) {
-      console.error("Error pausando delivery:", error);
+      console.error("Error pausando deliveries:", error);
       return false;
     }
   }

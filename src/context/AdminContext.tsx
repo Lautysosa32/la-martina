@@ -174,6 +174,7 @@ export interface GeneralConfig {
   shippingCostPerKm: number;
   freeShippingMinAmount: number;
   stockAlertOwnerId?: string | null;
+  stockAlertOwnerIds?: string[];
 }
 
 export interface DeliveryTimeSlot {
@@ -1675,11 +1676,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     shippingBaseCost: 1000,
     shippingCostPerKm: 400,
     freeShippingMinAmount: 0,
-    stockAlertOwnerId: null
+    stockAlertOwnerId: null,
+    stockAlertOwnerIds: []
   };
   const [generalConfig, setGeneralConfig] = useState<GeneralConfig>(defaultGeneralConfig);
   const updateGeneralConfig = async (updates: Partial<GeneralConfig>) => {
-    const next = { ...generalConfig, ...updates };
+    let next = { ...generalConfig, ...updates };
+    if (updates.stockAlertOwnerIds !== undefined) {
+      next.stockAlertOwnerId = updates.stockAlertOwnerIds.length > 0 ? updates.stockAlertOwnerIds[0] : null;
+    } else if (updates.stockAlertOwnerId !== undefined) {
+      next.stockAlertOwnerIds = updates.stockAlertOwnerId ? [updates.stockAlertOwnerId] : [];
+    }
     setGeneralConfig(next);
     await saveSetting('general_config', next);
   };
@@ -2354,19 +2361,30 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
     }
 
-    // Encolar mensaje para el delivery si es envío (o.method === 'Envío' o 'envio')
-    if ((o.method?.toLowerCase() === 'envío' || o.method?.toLowerCase() === 'envio') && !generalConfig.suspendEmployeeNotifications) {
+    // Encolar mensaje para el personal de delivery tanto para envío a domicilio como para retiro
+    const orderMethodLower = (o.method || (o as any).delivery_method || '').toLowerCase();
+    const isDeliveryOrPickup = orderMethodLower === 'envío' || orderMethodLower === 'envio' || orderMethodLower === 'retiro';
+
+    if (isDeliveryOrPickup && !generalConfig.suspendEmployeeNotifications) {
       const { employeesService } = await import('../services/employees.service');
-      const activeDelivery = await employeesService.getActiveDeliveryAssignment();
-      let deliveryPhone = null;
-      if (activeDelivery && activeDelivery.employee && activeDelivery.employee.phone) {
-        deliveryPhone = activeDelivery.employee.phone;
-      }
+      const activeDeliveries = await employeesService.getActiveDeliveryAssignments();
       const itemsCount = o.items.reduce((acc, i) => acc + (i.quantity || 1), 0);
-      whatsappMessageService.createDeliveryAlertMessage(
-        { id: o.id, customer: o.customer, itemsCount, total: o.total },
-        deliveryPhone
-      );
+      const isRetiro = orderMethodLower === 'retiro';
+
+      if (activeDeliveries && activeDeliveries.length > 0) {
+        for (const assignment of activeDeliveries) {
+          const deliveryPhone = assignment.employee?.phone || null;
+          whatsappMessageService.createDeliveryAlertMessage(
+            { id: o.id, customer: o.customer, itemsCount, total: o.total, isPickup: isRetiro, address: o.address },
+            deliveryPhone
+          );
+        }
+      } else {
+        whatsappMessageService.createDeliveryAlertMessage(
+          { id: o.id, customer: o.customer, itemsCount, total: o.total, isPickup: isRetiro, address: o.address },
+          null
+        );
+      }
     }
 
     // Fase 3: Integración con Cuenta Corriente cuando se agrega una compra

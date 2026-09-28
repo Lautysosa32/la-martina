@@ -386,94 +386,113 @@ serve(async (req: any) => {
         const formattedTotal = `$${finalTotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         const paymentLabel = payment_method === 'cuenta_corriente' ? 'Cuenta Corriente' : payment_method === 'card' ? 'Tarjeta' : 'Efectivo'
 
-        // 1. Notificar al Repartidor si es envío a domicilio
-        if (!isPickup) {
-          try {
-            const today = new Date().toISOString().split('T')[0]
-            const { data: activeDelivery } = await supabase
-              .from('daily_delivery_assignments')
-              .select('id, employee:employees(name, phone)')
-              .eq('date', today)
-              .eq('status', 'active')
-              .maybeSingle()
+        // 1. Notificar al Repartidor/Delivery de Turno (Tanto para entrega a domicilio como para retiro en sucursal)
+        try {
+          const today = new Date().toISOString().split('T')[0]
+          const { data: activeDeliveries } = await supabase
+            .from('daily_delivery_assignments')
+            .select('id, employee:employees(name, phone)')
+            .eq('date', today)
+            .eq('status', 'active')
 
-            const deliveryEmp = activeDelivery?.employee as any
-            const deliveryPhoneRaw = deliveryEmp?.phone
+          const deliveryTitle = isPickup ? `Alerta Retiro en Local #${rpcData.order_id}` : `Alerta Delivery Pedido #${rpcData.order_id}`
+          const deliveryHeader = isPickup ? `🛍️ *Nuevo Pedido para Retiro en Sucursal #${rpcData.order_id}*` : `🚨 *Nuevo Pedido para Entrega #${rpcData.order_id}*`
+          const modalityDetail = isPickup ? `📍 *Modalidad:* Retiro en Sucursal` : `📍 *Dirección:* ${fullAddress.trim() || 'A coordinar'}`
 
-            let targetDeliveryPhone: string | null = null
-            if (deliveryPhoneRaw) {
-              const dDigits = deliveryPhoneRaw.replace(/\D/g, '')
-              targetDeliveryPhone = dDigits.startsWith('549')
-                ? dDigits
-                : dDigits.startsWith('54')
-                  ? '549' + dDigits.slice(2)
-                  : '549' + dDigits
+          const deliveryMsg = `${deliveryHeader}\n\n` +
+            `👤 *Cliente:* ${customerFullName}\n` +
+            `📞 *Teléfono:* +${realPhone.replace(/\D/g, '')}\n` +
+            `${modalityDetail}\n` +
+            `⏰ *Horario:* ${delivery_data?.deliveryTime || 'Lo antes posible'}\n` +
+            `📦 *Productos:* ${totalItemsCount} ítems\n` +
+            `💰 *Total:* ${formattedTotal}\n` +
+            `💳 *Pago:* ${paymentLabel}`
+
+          if (activeDeliveries && activeDeliveries.length > 0) {
+            for (const assignment of activeDeliveries) {
+              const deliveryEmp = assignment?.employee as any
+              const deliveryPhoneRaw = deliveryEmp?.phone
+
+              let targetDeliveryPhone: string | null = null
+              if (deliveryPhoneRaw) {
+                const dDigits = deliveryPhoneRaw.replace(/\D/g, '')
+                targetDeliveryPhone = dDigits.startsWith('549')
+                  ? dDigits
+                  : dDigits.startsWith('54')
+                    ? '549' + dDigits.slice(2)
+                    : '549' + dDigits
+              }
+
+              await supabase.from('whatsapp_messages').insert({
+                phone: targetDeliveryPhone || '0000000000',
+                customer_name: deliveryEmp?.name || 'Personal / Delivery',
+                type: 'delivery_alert',
+                title: deliveryTitle,
+                message: deliveryMsg,
+                order_id: rpcData.order_id,
+                status: targetDeliveryPhone ? 'pending' : 'failed',
+                error_message: targetDeliveryPhone ? null : 'NO_DELIVERY_ASSIGNED',
+                branch_id: 'main'
+              })
             }
-
-            const deliveryMsg = `🚨 *Nuevo Pedido para Entrega #${rpcData.order_id}*\n\n` +
-              `👤 *Cliente:* ${customerFullName}\n` +
-              `📞 *Teléfono:* +${realPhone.replace(/\D/g, '')}\n` +
-              `📍 *Dirección:* ${fullAddress.trim() || 'A coordinar'}\n` +
-              `⏰ *Horario:* ${delivery_data?.deliveryTime || 'Lo antes posible'}\n` +
-              `📦 *Productos:* ${totalItemsCount} ítems\n` +
-              `💰 *Total:* ${formattedTotal}\n` +
-              `💳 *Pago:* ${paymentLabel}`
-
+          } else {
             await supabase.from('whatsapp_messages').insert({
-              phone: targetDeliveryPhone || '0000000000',
-              customer_name: deliveryEmp?.name || 'Personal / Delivery',
+              phone: '0000000000',
+              customer_name: 'Personal / Delivery',
               type: 'delivery_alert',
-              title: `Alerta Delivery Pedido #${rpcData.order_id}`,
+              title: deliveryTitle,
               message: deliveryMsg,
               order_id: rpcData.order_id,
-              status: targetDeliveryPhone ? 'pending' : 'failed',
-              error_message: targetDeliveryPhone ? null : 'NO_DELIVERY_ASSIGNED',
+              status: 'failed',
+              error_message: 'NO_DELIVERY_ASSIGNED',
               branch_id: 'main'
             })
-          } catch (delivErr) {
-            console.error('Error encolando alerta para repartidor:', delivErr)
           }
+        } catch (delivErr) {
+          console.error('Error encolando alerta para repartidor:', delivErr)
         }
 
-        // 2. Notificar al Encargado/Dueño (destinatario de stockAlertOwnerId) sobre el nuevo pedido
+        // 2. Notificar al Encargado/Dueño (destinatarios configurados) sobre el nuevo pedido
         try {
-          const ownerId = configData?.value?.stockAlertOwnerId
-          let targetOwnerPhone: string | null = null
-          let targetOwnerName = 'Encargado'
+          const ownerIds: string[] = Array.isArray(configData?.value?.stockAlertOwnerIds) && configData.value.stockAlertOwnerIds.length > 0
+            ? configData.value.stockAlertOwnerIds
+            : configData?.value?.stockAlertOwnerId ? [configData.value.stockAlertOwnerId] : []
 
-          if (ownerId) {
-            const { data: ownerEmp } = await supabase
+          let targetOwners: { name: string; phone: string }[] = []
+
+          if (ownerIds.length > 0) {
+            const { data: specificEmployees } = await supabase
               .from('employees')
               .select('name, phone')
-              .or(`id.eq.${ownerId},user_id.eq.${ownerId}`)
+              .or(`id.in.(${ownerIds.join(',')}),user_id.in.(${ownerIds.join(',')})`)
               .eq('active', true)
-              .maybeSingle()
+              .not('phone', 'is', null)
+              .not('phone', 'eq', '')
 
-            if (ownerEmp?.phone) {
-              const oDigits = ownerEmp.phone.replace(/\D/g, '')
-              targetOwnerPhone = oDigits.startsWith('549') ? oDigits : oDigits.startsWith('54') ? '549' + oDigits.slice(2) : '549' + oDigits
-              targetOwnerName = ownerEmp.name
+            if (specificEmployees && specificEmployees.length > 0) {
+              targetOwners = specificEmployees
             }
           }
 
-          if (!targetOwnerPhone) {
-            const { data: fallbackOwner } = await supabase
+          if (targetOwners.length === 0) {
+            const { data: fallbackOwners } = await supabase
               .from('employees')
               .select('name, phone')
               .in('role', ['owner', 'super_admin'])
               .eq('active', true)
               .not('phone', 'is', null)
-              .limit(1)
-              .maybeSingle()
+              .not('phone', 'eq', '')
 
-            if (fallbackOwner?.phone) {
-              const oDigits = fallbackOwner.phone.replace(/\D/g, '')
-              targetOwnerPhone = oDigits.startsWith('549') ? oDigits : oDigits.startsWith('54') ? '549' + oDigits.slice(2) : '549' + oDigits
-              targetOwnerName = fallbackOwner.name
+            if (fallbackOwners && fallbackOwners.length > 0) {
+              targetOwners = fallbackOwners
             }
           }
 
-          if (targetOwnerPhone) {
+          for (const owner of targetOwners) {
+            if (!owner.phone) continue
+            const oDigits = owner.phone.replace(/\D/g, '')
+            const targetOwnerPhone = oDigits.startsWith('549') ? oDigits : oDigits.startsWith('54') ? '549' + oDigits.slice(2) : '549' + oDigits
+
             const ownerMsg = `🛒 *Nuevo Pedido Recibido #${rpcData.order_id}*\n\n` +
               `👤 *Cliente:* ${customerFullName}\n` +
               `📦 *Tipo:* ${isPickup ? 'Retiro en sucursal' : 'Envío a domicilio'}\n` +
@@ -483,7 +502,7 @@ serve(async (req: any) => {
 
             await supabase.from('whatsapp_messages').insert({
               phone: targetOwnerPhone,
-              customer_name: targetOwnerName,
+              customer_name: owner.name,
               type: 'delivery_alert',
               title: `Nuevo Pedido #${rpcData.order_id}`,
               message: ownerMsg,
@@ -491,27 +510,33 @@ serve(async (req: any) => {
               status: 'pending',
               branch_id: 'main'
             })
+          }
 
-            // 3. Revisar si algún producto quedó con stock bajo/cero tras la compra
-            try {
-              const itemIds = finalItems.map((fi: any) => fi.id)
-              const { data: updatedProds } = await supabase
-                .from('products')
-                .select('name, stock, min_stock')
-                .in('id', itemIds)
+          // 3. Revisar si algún producto quedó con stock bajo/cero tras la compra
+          try {
+            const itemIds = finalItems.map((fi: any) => fi.id)
+            const { data: updatedProds } = await supabase
+              .from('products')
+              .select('name, stock, min_stock')
+              .in('id', itemIds)
 
-              if (updatedProds) {
-                for (const p of updatedProds) {
-                  const threshold = p.min_stock ?? 3
-                  if (p.stock <= threshold) {
-                    const stockMsg = `🚨 *Alerta de Faltante (Post-Venta)*\n\n` +
-                      `El producto *${p.name}* tiene stock crítico tras el pedido #${rpcData.order_id}.\n` +
-                      `• Stock actual: *${p.stock}* u.\n` +
-                      `• Mínimo requerido: *${threshold}* u.`
+            if (updatedProds && targetOwners.length > 0) {
+              for (const p of updatedProds) {
+                const threshold = p.min_stock ?? 3
+                if (p.stock <= threshold) {
+                  const stockMsg = `🚨 *Alerta de Faltante (Post-Venta)*\n\n` +
+                    `El producto *${p.name}* tiene stock crítico tras el pedido #${rpcData.order_id}.\n` +
+                    `• Stock actual: *${p.stock}* u.\n` +
+                    `• Mínimo requerido: *${threshold}* u.`
+
+                  for (const owner of targetOwners) {
+                    if (!owner.phone) continue
+                    const oDigits = owner.phone.replace(/\D/g, '')
+                    const targetOwnerPhone = oDigits.startsWith('549') ? oDigits : oDigits.startsWith('54') ? '549' + oDigits.slice(2) : '549' + oDigits
 
                     await supabase.from('whatsapp_messages').insert({
                       phone: targetOwnerPhone,
-                      customer_name: targetOwnerName,
+                      customer_name: owner.name,
                       type: 'low_stock_alert',
                       title: `Stock Crítico: ${p.name}`,
                       message: stockMsg,
@@ -521,9 +546,9 @@ serve(async (req: any) => {
                   }
                 }
               }
-            } catch (stockCheckErr) {
-              console.error('Error verificando faltantes post-venta:', stockCheckErr)
             }
+          } catch (stockCheckErr) {
+            console.error('Error verificando faltantes post-venta:', stockCheckErr)
           }
         } catch (ownerNotifErr) {
           console.error('Error notificando nuevo pedido al dueño/encargado:', ownerNotifErr)

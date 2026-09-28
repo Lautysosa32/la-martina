@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { employeesService } from '../../services/employees.service';
@@ -16,7 +16,11 @@ export const Employees: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeDeliveryId, setActiveDeliveryId] = useState<string | null>(null);
+  const [activeDeliveryIds, setActiveDeliveryIds] = useState<string[]>([]);
+  const [showDeliveryDropdown, setShowDeliveryDropdown] = useState(false);
+  const [showStockDropdown, setShowStockDropdown] = useState(false);
+  const deliveryDropdownRef = useRef<HTMLDivElement>(null);
+  const stockDropdownRef = useRef<HTMLDivElement>(null);
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
@@ -32,6 +36,20 @@ export const Employees: React.FC = () => {
 
   useEffect(() => {
     setPortalNode(document.getElementById('admin-header-portal'));
+  }, []);
+
+  // Cierra los dropdowns al clickear afuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (deliveryDropdownRef.current && !deliveryDropdownRef.current.contains(event.target as Node)) {
+        setShowDeliveryDropdown(false);
+      }
+      if (stockDropdownRef.current && !stockDropdownRef.current.contains(event.target as Node)) {
+        setShowStockDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
   
   // Extendemos el tipo para incluir password que usará la Edge Function
@@ -53,13 +71,13 @@ export const Employees: React.FC = () => {
       setLoading(true);
       const [empData, deliveryData] = await Promise.all([
         employeesService.getAllEmployees(),
-        employeesService.getActiveDeliveryAssignment()
+        employeesService.getActiveDeliveryAssignments()
       ]);
       setEmployees(empData || []);
-      if (deliveryData) {
-        setActiveDeliveryId(deliveryData.employee_id);
+      if (deliveryData && deliveryData.length > 0) {
+        setActiveDeliveryIds(deliveryData.map((d: any) => d.employee_id));
       } else {
-        setActiveDeliveryId(null);
+        setActiveDeliveryIds([]);
       }
     } catch (err: any) {
       setError('Error al cargar datos: ' + err.message);
@@ -87,46 +105,72 @@ export const Employees: React.FC = () => {
 
   const [deliveryLoading, setDeliveryLoading] = useState(false);
 
-  const handleDeliveryChange = async (newEmployeeId: string) => {
+  // Alterna a un empleado como delivery de turno (soporta múltiples)
+  const handleToggleDelivery = async (employeeId: string) => {
     setDeliveryLoading(true);
     try {
-      if (!newEmployeeId) {
-        await employeesService.pauseDailyDelivery();
-        setActiveDeliveryId(null);
-      } else {
-        await employeesService.assignDailyDelivery(newEmployeeId);
-        setActiveDeliveryId(newEmployeeId);
-        const { whatsappMessageService } = await import('../../services/whatsapp-message.service');
-        const emp = employees.find(e => e.id === newEmployeeId);
-        if (emp && emp.phone) {
-          await whatsappMessageService.dispatchPendingDeliveryAlerts(emp.phone);
+      const isCurrentlyActive = activeDeliveryIds.includes(employeeId);
+      const nextIds = isCurrentlyActive
+        ? activeDeliveryIds.filter(id => id !== employeeId)
+        : [...activeDeliveryIds, employeeId];
+
+      setActiveDeliveryIds(nextIds);
+      await employeesService.setDailyDeliveries(nextIds);
+
+      // Si se acaba de asignar y tiene teléfono, despachar alertas pendientes
+      if (!isCurrentlyActive) {
+        const newlyActiveEmp = employees.find(e => e.id === employeeId);
+        if (newlyActiveEmp?.phone) {
+          const { whatsappMessageService } = await import('../../services/whatsapp-message.service');
+          await whatsappMessageService.dispatchPendingDeliveryAlerts(newlyActiveEmp.phone);
         }
       }
     } catch (err: any) {
       alert('Error al actualizar delivery: ' + err.message);
+      fetchData();
     } finally {
       setDeliveryLoading(false);
     }
   };
 
-  const handleToggleDelivery = async (employeeId: string, isCurrentlyActive: boolean) => {
+  const handleClearAllDeliveries = async () => {
+    setDeliveryLoading(true);
     try {
-      if (isCurrentlyActive) {
-        await employeesService.pauseDailyDelivery();
-        setActiveDeliveryId(null);
-      } else {
-        await employeesService.assignDailyDelivery(employeeId);
-        setActiveDeliveryId(employeeId);
-        // Despachar los mensajes pendientes (Llamamos a whatsappService)
-        const { whatsappMessageService } = await import('../../services/whatsapp-message.service');
-        const emp = employees.find(e => e.id === employeeId);
-        if (emp && emp.phone) {
-          await whatsappMessageService.dispatchPendingDeliveryAlerts(emp.phone);
-        }
-      }
+      setActiveDeliveryIds([]);
+      await employeesService.setDailyDeliveries([]);
     } catch (err: any) {
-      alert('Error al actualizar delivery: ' + err.message);
+      alert('Error al pausar repartidores: ' + err.message);
+      fetchData();
+    } finally {
+      setDeliveryLoading(false);
     }
+  };
+
+  // Encargados de stock y egresos seleccionados (soporta múltiples)
+  const selectedStockOwnerIds: string[] = useMemo(() => {
+    if (generalConfig?.stockAlertOwnerIds && generalConfig.stockAlertOwnerIds.length > 0) {
+      return generalConfig.stockAlertOwnerIds;
+    }
+    return generalConfig?.stockAlertOwnerId ? [generalConfig.stockAlertOwnerId] : [];
+  }, [generalConfig?.stockAlertOwnerIds, generalConfig?.stockAlertOwnerId]);
+
+  const handleToggleStockOwner = (employeeId: string) => {
+    const isCurrentlySelected = selectedStockOwnerIds.includes(employeeId);
+    const nextIds = isCurrentlySelected
+      ? selectedStockOwnerIds.filter(id => id !== employeeId)
+      : [...selectedStockOwnerIds, employeeId];
+
+    updateGeneralConfig({
+      stockAlertOwnerIds: nextIds,
+      stockAlertOwnerId: nextIds[0] || null
+    });
+  };
+
+  const handleSetAllStockOwners = () => {
+    updateGeneralConfig({
+      stockAlertOwnerIds: [],
+      stockAlertOwnerId: null
+    });
   };
 
   // Summary Stats calculations
@@ -298,53 +342,173 @@ export const Employees: React.FC = () => {
                 />
               </div>
 
-              {/* Delivery Assignment Selector */}
-              <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-1.5 shrink-0">
-                <span className={`material-symbols-outlined text-amber-600 text-[18px] ${deliveryLoading ? 'animate-spin' : ''}`}>
-                  {deliveryLoading ? 'sync' : 'local_shipping'}
-                </span>
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-black uppercase tracking-wider text-amber-700">Delivery de Turno</span>
-                  <select
-                    value={activeDeliveryId || ''}
-                    disabled={deliveryLoading}
-                    onChange={e => handleDeliveryChange(e.target.value)}
-                    className="bg-transparent border-none p-0 text-xs font-bold text-amber-900 focus:outline-none cursor-pointer pr-4"
-                  >
-                    <option value="">Sin delivery asignado</option>
-                    {employees
-                      .filter(e => e.active)
-                      .map(e => (
-                        <option key={e.id} value={e.id}>
-                          {e.name} ({e.role === 'admin' ? 'Admin' : e.role === 'owner' ? 'Dueño' : 'Empleado'})
-                        </option>
-                      ))}
-                  </select>
-                </div>
+              {/* Delivery Assignment Selector (Multi-select) */}
+              <div ref={deliveryDropdownRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeliveryDropdown(prev => !prev);
+                    setShowStockDropdown(false);
+                  }}
+                  className="flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl px-3 py-1.5 shrink-0 transition-colors text-left cursor-pointer"
+                >
+                  <span className={`material-symbols-outlined text-amber-600 text-[18px] ${deliveryLoading ? 'animate-spin' : ''}`}>
+                    {deliveryLoading ? 'sync' : 'local_shipping'}
+                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-amber-700">Delivery de Turno</span>
+                    <span className="text-xs font-bold text-amber-900 truncate max-w-[130px]">
+                      {activeDeliveryIds.length === 0
+                        ? 'Sin delivery'
+                        : activeDeliveryIds.length === 1
+                          ? employees.find(e => e.id === activeDeliveryIds[0])?.name || '1 asignado'
+                          : `${activeDeliveryIds.length} de turno`}
+                    </span>
+                  </div>
+                  <span className="material-symbols-outlined text-amber-700 text-[16px]">
+                    {showDeliveryDropdown ? 'expand_less' : 'expand_more'}
+                  </span>
+                </button>
+
+                {showDeliveryDropdown && (
+                  <div className="absolute top-full mt-2 left-0 w-72 bg-white rounded-2xl shadow-2xl border border-outline-variant/30 p-2.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-center justify-between px-2 py-1 mb-1 border-b border-outline-variant/20">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-on-surface-variant">
+                        Repartidores de Turno Hoy
+                      </span>
+                      {activeDeliveryIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleClearAllDeliveries}
+                          className="text-[10px] font-bold text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
+                        >
+                          Pausar todos
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-56 overflow-y-auto space-y-1">
+                      {employees.filter(e => e.active).map(e => {
+                        const isChecked = activeDeliveryIds.includes(e.id);
+                        return (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => handleToggleDelivery(e.id)}
+                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer ${
+                              isChecked ? 'bg-amber-500/15 text-amber-950 font-bold' : 'hover:bg-surface-container-low text-on-surface'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              readOnly
+                              className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer pointer-events-none"
+                            />
+                            <div className="flex flex-col min-w-0 flex-1">
+                              <span className="text-xs truncate">{e.name}</span>
+                              <span className="text-[10px] text-on-surface-variant/80">
+                                {e.role === 'admin' ? 'Admin' : e.role === 'owner' ? 'Dueño' : 'Empleado'}
+                                {e.phone ? ` • ${e.phone}` : ' • Sin tel'}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Selector de Dueño/Encargado para Alertas de Faltantes y Egresos */}
-              <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-1.5 shrink-0">
-                <span className="material-symbols-outlined text-red-600 text-[18px]">
-                  notifications_active
-                </span>
-                <div className="flex flex-col">
-                  <span className="text-[9px] font-black uppercase tracking-wider text-red-700">Alertas Stock y Egresos</span>
-                  <select
-                    value={generalConfig?.stockAlertOwnerId || ''}
-                    onChange={e => updateGeneralConfig({ stockAlertOwnerId: e.target.value || null })}
-                    className="bg-transparent border-none p-0 text-xs font-bold text-red-900 focus:outline-none cursor-pointer pr-4"
-                  >
-                    <option value="">Todos los dueños / admin</option>
-                    {employees
-                      .filter(e => e.active)
-                      .map(e => (
-                        <option key={e.id} value={e.id}>
-                          {e.name} ({e.role}) {e.phone ? `(${e.phone})` : '(Sin tel)'}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+              {/* Selector de Dueño/Encargado para Alertas de Faltantes y Egresos (Multi-select) */}
+              <div ref={stockDropdownRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowStockDropdown(prev => !prev);
+                    setShowDeliveryDropdown(false);
+                  }}
+                  className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-xl px-3 py-1.5 shrink-0 transition-colors text-left cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-red-600 text-[18px]">
+                    notifications_active
+                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-red-700">Alertas Stock y Egresos</span>
+                    <span className="text-xs font-bold text-red-900 truncate max-w-[130px]">
+                      {selectedStockOwnerIds.length === 0
+                        ? 'Todos (dueños/admin)'
+                        : selectedStockOwnerIds.length === 1
+                          ? employees.find(e => e.id === selectedStockOwnerIds[0])?.name || '1 seleccionado'
+                          : `${selectedStockOwnerIds.length} seleccionados`}
+                    </span>
+                  </div>
+                  <span className="material-symbols-outlined text-red-700 text-[16px]">
+                    {showStockDropdown ? 'expand_less' : 'expand_more'}
+                  </span>
+                </button>
+
+                {showStockDropdown && (
+                  <div className="absolute top-full mt-2 left-0 w-80 bg-white rounded-2xl shadow-2xl border border-outline-variant/30 p-2.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-center justify-between px-2 py-1 mb-1 border-b border-outline-variant/20">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-on-surface-variant">
+                        Destinatarios Alertas WhatsApp
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSetAllStockOwners}
+                      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors mb-1 cursor-pointer ${
+                        selectedStockOwnerIds.length === 0 ? 'bg-red-500/15 text-red-950 font-bold' : 'hover:bg-surface-container-low text-on-surface'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedStockOwnerIds.length === 0}
+                        readOnly
+                        className="rounded text-red-600 focus:ring-red-500 cursor-pointer pointer-events-none"
+                      />
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-xs font-bold">Todos los dueños y admin</span>
+                        <span className="text-[10px] text-on-surface-variant/80">Reciben todos los miembros con rol dueño o admin</span>
+                      </div>
+                    </button>
+
+                    <div className="text-[9px] font-black uppercase tracking-wider text-on-surface-variant/70 px-2.5 py-1">
+                      O elegir encargados específicos:
+                    </div>
+
+                    <div className="max-h-56 overflow-y-auto space-y-1">
+                      {employees.filter(e => e.active).map(e => {
+                        const isChecked = selectedStockOwnerIds.includes(e.id);
+                        return (
+                          <button
+                            key={e.id}
+                            type="button"
+                            onClick={() => handleToggleStockOwner(e.id)}
+                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer ${
+                              isChecked ? 'bg-red-500/15 text-red-950 font-bold' : 'hover:bg-surface-container-low text-on-surface'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              readOnly
+                              className="rounded text-red-600 focus:ring-red-500 cursor-pointer pointer-events-none"
+                            />
+                            <div className="flex flex-col min-w-0 flex-1">
+                              <span className="text-xs truncate">{e.name}</span>
+                              <span className="text-[10px] text-on-surface-variant/80">
+                                {e.role === 'admin' ? 'Admin' : e.role === 'owner' ? 'Dueño' : 'Empleado'}
+                                {e.phone ? ` • ${e.phone}` : ' • (Sin teléfono)'}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Filters Select Dropdown */}
@@ -401,10 +565,16 @@ export const Employees: React.FC = () => {
                         <span className="px-3 py-1 bg-surface-container-low text-on-surface text-xs font-bold rounded-lg uppercase tracking-wider">
                           {emp.role === 'admin' ? 'Administrador' : emp.role === 'owner' ? 'Dueño' : emp.role === 'employee' ? 'Empleado' : emp.role === 'super_admin' ? 'Super Admin' : emp.role}
                         </span>
-                        {activeDeliveryId === emp.id && (
+                        {activeDeliveryIds.includes(emp.id) && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary border border-primary/20 animate-pulse">
                             <span className="material-symbols-outlined text-[12px]">local_shipping</span>
                             Delivery Activo
+                          </span>
+                        )}
+                        {selectedStockOwnerIds.includes(emp.id) && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-red-500/10 text-red-600 border border-red-500/20">
+                            <span className="material-symbols-outlined text-[12px]">notifications_active</span>
+                            Alertas
                           </span>
                         )}
                       </div>

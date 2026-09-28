@@ -193,23 +193,32 @@ export const whatsappMessageService = {
   },
 
   /**
-   * Encola una alerta para el personal de delivery por un nuevo pedido.
-   * Si no hay teléfono especificado (porque no hay delivery activo), se guarda con estado 'pending_delivery_assignment'.
+   * Encola una alerta para el personal de delivery/armado por un nuevo pedido (tanto retiro como entrega).
+   * Si no hay teléfono especificado (porque no hay delivery activo), se guarda con estado 'NO_DELIVERY_ASSIGNED'.
    */
-  async createDeliveryAlertMessage(order: { id: string; customer: string; itemsCount: number; total: number }, deliveryPhone: string | null) {
+  async createDeliveryAlertMessage(
+    order: { id: string; customer: string; itemsCount: number; total: number; isPickup?: boolean; address?: string },
+    deliveryPhone: string | null
+  ) {
     const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
     if (configData?.value?.suspendEmployeeNotifications) {
       return false;
     }
 
     const formattedTotal = formatCurrency(order.total, true, true);
-    const message = `🚨 *Nuevo Pedido # ${order.id}*\n\nCliente: *${order.customer}*\nProductos: *${order.itemsCount}*\nTotal: *${formattedTotal}*`;
+    const title = order.isPickup ? `Alerta Retiro en Local #${order.id}` : `Alerta Delivery Pedido #${order.id}`;
+    const header = order.isPickup ? `🛍️ *Nuevo Pedido para Retiro en Sucursal #${order.id}*` : `🚨 *Nuevo Pedido para Entrega #${order.id}*`;
+    const details = order.isPickup 
+      ? `📍 *Modalidad:* Retiro en Sucursal` 
+      : (order.address ? `📍 *Dirección:* ${order.address}` : `📍 *Modalidad:* Envío a domicilio`);
+
+    const message = `${header}\n\n👤 *Cliente:* ${order.customer}\n${details}\n📦 *Productos:* ${order.itemsCount} ítems\n💰 *Total:* ${formattedTotal}`;
 
     return this.createWhatsAppMessage({
       phone: deliveryPhone || '0000000000', // Teléfono dummy si no hay delivery, luego se actualiza
-      customer_name: 'Delivery',
+      customer_name: 'Personal / Delivery',
       type: 'delivery_alert',
-      title: `Alerta Delivery Pedido #${order.id}`,
+      title,
       message,
       order_id: order.id,
       status: deliveryPhone ? 'pending' : 'failed',
@@ -261,11 +270,12 @@ export const whatsappMessageService = {
   },
 
   /**
-   * Despacha las alertas que estaban pausadas ('pending_delivery_assignment' -> failed por el constraint) al nuevo delivery asignado.
+   * Despacha las alertas que estaban pausadas ('NO_DELIVERY_ASSIGNED') a los deliveries asignados.
    */
-  async dispatchPendingDeliveryAlerts(employeePhone: string) {
-    const formattedPhone = cleanAndFormatPhone(employeePhone);
-    if (!formattedPhone) return false;
+  async dispatchPendingDeliveryAlerts(employeePhones: string | string[]) {
+    const phonesList = Array.isArray(employeePhones) ? employeePhones : [employeePhones];
+    const validPhones = phonesList.map(p => cleanAndFormatPhone(p)).filter(Boolean) as string[];
+    if (validPhones.length === 0) return false;
 
     try {
       const { data: configData } = await supabase.from('settings').select('value').eq('key', 'general_config').single();
@@ -273,22 +283,45 @@ export const whatsappMessageService = {
         return false;
       }
 
-      const { error } = await supabase
+      // Traer los mensajes pendientes sin repartidor asignado
+      const { data: pendingMessages } = await supabase
         .from('whatsapp_messages')
-        .update({
-          phone: formattedPhone,
-          status: 'pending',
-          error_message: null,
-          attempts: 0
-        })
+        .select('*')
         .eq('type', 'delivery_alert')
         .eq('status', 'failed')
         .eq('error_message', 'NO_DELIVERY_ASSIGNED');
 
-      if (error) {
-        console.error('Error despachando alertas al delivery:', error.message);
-        return false;
+      if (!pendingMessages || pendingMessages.length === 0) return true;
+
+      // Para el primer repartidor, actualizamos los registros existentes
+      const primaryPhone = validPhones[0];
+      await supabase
+        .from('whatsapp_messages')
+        .update({
+          phone: primaryPhone,
+          status: 'pending',
+          error_message: null,
+          attempts: 0
+        })
+        .in('id', pendingMessages.map(m => m.id));
+
+      // Si hay más repartidores de turno, duplicamos los mensajes para que también les lleguen
+      for (let i = 1; i < validPhones.length; i++) {
+        const extraPhone = validPhones[i];
+        const extraRows = pendingMessages.map(m => ({
+          phone: extraPhone,
+          customer_name: m.customer_name,
+          type: m.type,
+          title: m.title,
+          message: m.message,
+          order_id: m.order_id,
+          status: 'pending',
+          error_message: null,
+          branch_id: m.branch_id || 'main'
+        }));
+        await supabase.from('whatsapp_messages').insert(extraRows);
       }
+
       return true;
     } catch (err) {
       console.error('Excepción despachando alertas al delivery:', err);
@@ -318,22 +351,24 @@ export const whatsappMessageService = {
         return false;
       }
 
-      // 1. Obtener destinatario(s): si hay un empleado/dueño configurado en stockAlertOwnerId, usarlo
-      const configuredOwnerId = configData?.value?.stockAlertOwnerId;
+      // 1. Obtener destinatario(s): si hay configurados en stockAlertOwnerIds / stockAlertOwnerId, usarlos
+      const configuredOwnerIds: string[] = Array.isArray(configData?.value?.stockAlertOwnerIds) && configData.value.stockAlertOwnerIds.length > 0
+        ? configData.value.stockAlertOwnerIds
+        : configData?.value?.stockAlertOwnerId ? [configData.value.stockAlertOwnerId] : [];
+
       let targetOwners: { id?: string; name: string; phone: string }[] = [];
 
-      if (configuredOwnerId) {
-        const { data: specificEmployee } = await supabase
+      if (configuredOwnerIds.length > 0) {
+        const { data: specificEmployees } = await supabase
           .from('employees')
           .select('id, user_id, name, phone')
-          .or(`id.eq.${configuredOwnerId},user_id.eq.${configuredOwnerId}`)
+          .or(`id.in.(${configuredOwnerIds.join(',')}),user_id.in.(${configuredOwnerIds.join(',')})`)
           .eq('active', true)
           .not('phone', 'is', null)
-          .not('phone', 'eq', '')
-          .maybeSingle();
+          .not('phone', 'eq', '');
 
-        if (specificEmployee && specificEmployee.phone) {
-          targetOwners = [specificEmployee];
+        if (specificEmployees && specificEmployees.length > 0) {
+          targetOwners = specificEmployees;
         }
       }
 
@@ -408,21 +443,23 @@ export const whatsappMessageService = {
         return false;
       }
 
-      const configuredOwnerId = configData?.value?.stockAlertOwnerId;
+      const configuredOwnerIds: string[] = Array.isArray(configData?.value?.stockAlertOwnerIds) && configData.value.stockAlertOwnerIds.length > 0
+        ? configData.value.stockAlertOwnerIds
+        : configData?.value?.stockAlertOwnerId ? [configData.value.stockAlertOwnerId] : [];
+
       let targetEmployees: { id?: string; name: string; phone: string }[] = [];
 
-      if (configuredOwnerId) {
-        const { data: specificEmployee } = await supabase
+      if (configuredOwnerIds.length > 0) {
+        const { data: specificEmployees } = await supabase
           .from('employees')
           .select('id, user_id, name, phone')
-          .or(`id.eq.${configuredOwnerId},user_id.eq.${configuredOwnerId}`)
+          .or(`id.in.(${configuredOwnerIds.join(',')}),user_id.in.(${configuredOwnerIds.join(',')})`)
           .eq('active', true)
           .not('phone', 'is', null)
-          .not('phone', 'eq', '')
-          .maybeSingle();
+          .not('phone', 'eq', '');
 
-        if (specificEmployee && specificEmployee.phone) {
-          targetEmployees = [specificEmployee];
+        if (specificEmployees && specificEmployees.length > 0) {
+          targetEmployees = specificEmployees;
         }
       }
 

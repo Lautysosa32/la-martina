@@ -4006,25 +4006,84 @@ export const Settings: React.FC = () => {
                 </div>
 
                 {/* Dueño asignado para alertas de stock / faltantes */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-surface-container-lowest border border-outline-variant/15">
-                  <div>
-                    <h4 className="text-sm font-black text-on-surface">Destinatario de alertas de faltantes y egresos (WhatsApp)</h4>
-                    <p className="text-[11px] text-on-surface-variant mt-1">
-                      Seleccioná a qué encargado o dueño se le enviará el mensaje cuando haya stock crítico o se registre un egreso de dinero.
-                    </p>
+                <div className="flex flex-col gap-3 p-5 rounded-2xl bg-surface-container-lowest border border-outline-variant/15">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-sm font-black text-on-surface">Destinatarios de alertas de faltantes y egresos (WhatsApp)</h4>
+                      <p className="text-[11px] text-on-surface-variant mt-1">
+                        Seleccioná uno o más encargados/dueños para recibir las alertas. Si no seleccionás ninguno, se notificará a todos los dueños y administradores por defecto.
+                      </p>
+                    </div>
+                    {((generalConfig?.stockAlertOwnerIds && generalConfig.stockAlertOwnerIds.length > 0) || generalConfig?.stockAlertOwnerId) && (
+                      <button
+                        type="button"
+                        onClick={() => updateGeneralConfig({ stockAlertOwnerIds: [], stockAlertOwnerId: null })}
+                        className="text-xs font-bold text-primary hover:underline shrink-0 cursor-pointer"
+                      >
+                        Restablecer a todos
+                      </button>
+                    )}
                   </div>
-                  <select
-                    value={generalConfig?.stockAlertOwnerId || ''}
-                    onChange={(e) => updateGeneralConfig({ stockAlertOwnerId: e.target.value || null })}
-                    className="bg-white border border-outline-variant/30 rounded-xl px-4 py-2.5 text-xs font-bold text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20 shrink-0"
-                  >
-                    <option value="">Todos los dueños / administradores</option>
-                    {owners.map(o => (
-                      <option key={o.id} value={o.id}>
-                        {o.name} ({o.role}) {o.phone ? `(${o.phone})` : '(Sin tel)'}
-                      </option>
-                    ))}
-                  </select>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => updateGeneralConfig({ stockAlertOwnerIds: [], stockAlertOwnerId: null })}
+                      className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        (!generalConfig?.stockAlertOwnerIds || generalConfig.stockAlertOwnerIds.length === 0) && !generalConfig?.stockAlertOwnerId
+                          ? 'border-primary bg-primary/10 text-on-surface font-bold shadow-sm'
+                          : 'border-outline-variant/20 bg-surface-container-low text-on-surface-variant hover:border-outline-variant/40'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(!generalConfig?.stockAlertOwnerIds || generalConfig.stockAlertOwnerIds.length === 0) && !generalConfig?.stockAlertOwnerId}
+                        readOnly
+                        className="rounded text-primary focus:ring-primary pointer-events-none cursor-pointer"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold">Todos (dueños y admin)</span>
+                        <span className="text-[10px] opacity-75">Configuración por defecto</span>
+                      </div>
+                    </button>
+
+                    {owners.map(o => {
+                      const selectedIds = generalConfig?.stockAlertOwnerIds || (generalConfig?.stockAlertOwnerId ? [generalConfig.stockAlertOwnerId] : []);
+                      const isSelected = selectedIds.includes(o.id);
+                      return (
+                        <button
+                          key={o.id}
+                          type="button"
+                          onClick={() => {
+                            const next = isSelected ? selectedIds.filter(id => id !== o.id) : [...selectedIds, o.id];
+                            updateGeneralConfig({
+                              stockAlertOwnerIds: next,
+                              stockAlertOwnerId: next[0] || null
+                            });
+                          }}
+                          className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-red-500 bg-red-500/10 text-red-950 font-bold shadow-sm'
+                              : 'border-outline-variant/20 bg-surface-container-low text-on-surface-variant hover:border-outline-variant/40'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            readOnly
+                            className="rounded text-red-600 focus:ring-red-500 pointer-events-none cursor-pointer"
+                          />
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-xs truncate font-bold text-on-surface">{o.name}</span>
+                            <span className="text-[10px] opacity-80">
+                              {o.role === 'admin' ? 'Admin' : o.role === 'owner' ? 'Dueño' : 'Empleado'}
+                              {o.phone ? ` • ${o.phone}` : ' • (Sin teléfono)'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Params */}
