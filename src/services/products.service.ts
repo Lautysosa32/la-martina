@@ -1,4 +1,5 @@
 import api from '../lib/axios';
+import { supabase } from '../lib/supabase';
 import { Product, CreateProductInput, UpdateProductInput, SupabaseProduct } from '../types/product.types';
 import { catalogCache, TTL } from './catalogCache';
 import { ProductWeeklySalesStat, ReplenishmentResult, ReplenishmentStatus } from '../utils/replenishment';
@@ -604,20 +605,24 @@ export const productsService = {
    */
   async saveReplenishmentEvaluation(params: ReplenishmentEvaluationInput): Promise<ReplenishmentEvaluationResult | null> {
     try {
-      const response = await api.post<ReplenishmentEvaluationResult[]>('/rpc/save_replenishment_evaluation', {
+      const payload = {
+        p_queue_id: params.queueId || null,
         p_product_id: params.productId,
         p_status: params.status,
-        p_punto_reposicion: params.puntoReposicion,
-        p_dias_cobertura: params.diasCobertura,
-        p_promedio_diario: params.promedioDiario,
-        p_desviacion_diaria: params.desviacionDiaria,
-        p_lead_time_days: params.leadTimeDays,
-        p_stock_actual: params.stockActual,
-        p_sugerido_reposicion: params.sugeridoReposicion,
-        p_nivel_servicio_pct: params.nivelServicioPct,
-        p_etiqueta_margen: params.etiquetaMargen ?? null,
-        p_queue_id: params.queueId ?? null
-      });
+        p_stock_at_evaluation: params.stockActual ?? 0,
+        p_punto_reposicion: params.puntoReposicion ?? 0,
+        p_stock_objetivo: (params.puntoReposicion || 0) + (params.sugeridoReposicion || 0),
+        p_cantidad_recomendada: params.sugeridoReposicion ?? 0,
+        p_dias_cobertura: params.diasCobertura ?? 999,
+        p_etiqueta_margen: params.etiquetaMargen || null
+      };
+
+      const { data, error } = await supabase.rpc('save_replenishment_evaluation', payload);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data[0];
+      }
+
+      const response = await api.post<ReplenishmentEvaluationResult[]>('/rpc/save_replenishment_evaluation', payload);
       if (Array.isArray(response.data) && response.data.length > 0) {
         return response.data[0];
       }
