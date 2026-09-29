@@ -140,71 +140,22 @@ class SyncEngine {
         console.error(`Error syncing item ${item.id} (${item.operation_type}):`, err);
         const errMsg = err.message || JSON.stringify(err);
         await syncQueue.markStatus(item.id, 'pending_sync', errMsg);
-        // Si falló por desconexión repentina, interrumpir el lote
-        if (!connectionMonitor.isHealthy()) {
-          hasMore = false;
-        }
+        // Interrumpir el lote de reintentos continuos para no saturar las conexiones de la aplicación
+        // El ítem se reintentará en el próximo ciclo de sincronización
+        hasMore = false;
+        break;
       }
     }
   }
 
   /**
-   * Sincroniza una venta local hacia Supabase
+   * Sincroniza una venta local hacia Supabase de forma resiliente
    */
   private async syncSaleItem(item: SyncQueueItem): Promise<void> {
     const sale = item.payload;
-    const cajaId = item.caja_id || cajaManager.getCajaIdSync();
+    if (!sale) return;
 
-    // Estructura para el RPC de Supabase
-    const payload = {
-      id: sale.sale_id,
-      caja_id: cajaId,
-      user_id: null,
-      customer_name: sale.customer_name,
-      customer_email: null,
-      customer_phone: sale.customer_phone,
-      total: sale.total,
-      payment_method: sale.payment_method,
-      items: sale.items.map((it: any) => ({
-        product_id: it.productId,
-        name: it.name,
-        price: it.price,
-        quantity: it.quantity,
-        sale_type: it.saleType,
-        barcode: it.productCode
-      })),
-      branch_id: 'main',
-      employee_id: sale.employee_id,
-      cashier: sale.employee_name || 'Cajero',
-      timestamp: sale.timestamp,
-      created_at: sale.created_at,
-      is_offline: true
-    };
-
-    // 1. Intentar con RPC v2 (idempotente y con soporte de caja_id)
-    let rpcRes = await supabase.rpc('process_pos_sale_v2', { p_sale: payload });
-
-    // 2. Si el RPC v2 no está desplegado, intentar con el RPC anterior
-    if (rpcRes.error && rpcRes.error.message?.includes('function process_pos_sale_v2')) {
-      console.warn('process_pos_sale_v2 not found, falling back to process_pos_sale');
-      rpcRes = await supabase.rpc('process_pos_sale', { p_sale: payload });
-    }
-
-    // 3. Si ambos RPCs fallan, usar inserción directa en tablas (idempotente verificando si existe)
-    if (rpcRes.error) {
-      console.warn('RPC failed, falling back to direct Supabase insert:', rpcRes.error);
-      await this.syncSaleDirectInsert(sale, payload);
-    }
-
-    // Marcar la venta local como sincronizada
-    await saleRepository.markSaleAsSynced(sale.sale_id);
-  }
-
-  /**
-   * Fallback de inserción directa a Supabase
-   */
-  private async syncSaleDirectInsert(sale: any, payload: any): Promise<void> {
-    // A. Comprobar si la orden ya existe (idempotencia)
+    // 1. Idempotencia: Verificar si la orden ya existe en Supabase
     const { data: existing } = await supabase
       .from('orders')
       .select('id')
@@ -212,54 +163,131 @@ class SyncEngine {
       .maybeSingle();
 
     if (existing) {
-      // Ya existe en servidor, no duplicar
+      // Ya existe en el servidor, marcar localmente como sincronizada
+      await saleRepository.markSaleAsSynced(sale.sale_id);
       return;
     }
 
-    // B. Insertar en orders
-    const { error: orderErr } = await supabase.from('orders').insert({
-      id: sale.sale_id,
-      customer_name: sale.customer_name,
-      customer_phone: sale.customer_phone,
-      total: sale.total,
-      status: 'Entregado',
-      payment_status: sale.payment_method === 'cuenta_corriente' ? 'Pendiente' : 'Pagado',
-      payment_method: sale.payment_method,
-      items: payload.items,
-      created_at: sale.created_at,
-      origin: 'caja',
-      branch_id: 'main',
-      employee_id: sale.employee_id,
-      shipping_address: 'Compra en local'
+    // 2. Inserción directa en las tablas de Supabase (orders, order_items, cash_movements)
+    await this.syncSaleDirectInsert(sale);
+
+    // 3. Marcar la venta local como sincronizada
+    await saleRepository.markSaleAsSynced(sale.sale_id);
+  }
+
+  /**
+   * Inserción directa y segura a las tablas de Supabase alineada al esquema real
+   */
+  private async syncSaleDirectInsert(sale: any): Promise<void> {
+    const nowTs = sale.timestamp || Date.now();
+    const dateFormatted = new Date(nowTs).toLocaleDateString('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
     });
 
-    if (orderErr) throw orderErr;
+    const isPending = sale.payment_method === 'cuenta_corriente' && sale.payment_status !== 'Pagado';
 
-    // C. Si fue efectivo, insertar en cash_movements
-    if (sale.payment_method === 'cash') {
-      await supabase.from('cash_movements').insert({
-        branch_id: 'main',
-        type: 'Ingreso',
-        description: `Venta Local #${sale.sale_id}`,
-        cashier: sale.employee_name || 'Cajero',
-        amount: sale.total,
+    // A. Insertar en orders con los nombres reales de columnas de la BD
+    const dbOrder: any = {
+      id: sale.sale_id,
+      branch_id: 'main',
+      date: dateFormatted,
+      timestamp: nowTs,
+      customer: sale.customer_name || 'Cliente Local',
+      phone: sale.customer_phone || '',
+      address: 'Compra en local',
+      delivery_time: 'Inmediato',
+      method: 'Caja Fija',
+      payment_method: sale.payment_method || 'cash',
+      payment_status: isPending ? 'Pendiente' : 'Pagado',
+      status: 'Entregado',
+      total: Number(sale.total) || 0,
+      paid_amount: isPending ? 0 : (Number(sale.total) || 0),
+      discount: Number(sale.discount_amount) || 0,
+      discount_label: sale.discount_label || '',
+      source: 'pos',
+      created_at: sale.created_at || new Date(nowTs).toISOString()
+    };
+
+    if (sale.customer_dni) {
+      dbOrder.dni = sale.customer_dni;
+    }
+
+    const { error: orderErr } = await supabase.from('orders').insert(dbOrder);
+    if (orderErr) {
+      if (orderErr.code === '23505') {
+        console.warn(`Orden ${sale.sale_id} ya existía en Supabase (23505), continuando...`);
+      } else {
+        throw orderErr;
+      }
+    }
+
+    // B. Insertar ítems en order_items
+    if (sale.items && Array.isArray(sale.items) && sale.items.length > 0) {
+      const dbOrderItems = sale.items.map((it: any) => ({
         order_id: sale.sale_id,
-        timestamp: sale.timestamp
-      });
+        product_id: (it.productId || it.id) && (it.productId || it.id) !== 'PRODUCTO_COMUN' && !String(it.productId || it.id).startsWith('GENERICO-')
+          ? (it.productId || it.id)
+          : null,
+        name: it.name || 'Producto',
+        quantity: Number(it.quantity) || 1,
+        price: Number(it.price) || 0
+      }));
+
+      const { error: itemsErr } = await supabase.from('order_items').insert(dbOrderItems);
+      if (itemsErr) {
+        console.warn('Error insertando order_items en syncSaleDirectInsert:', itemsErr);
+        if (itemsErr.message?.includes('integer')) {
+          const fallbackItems = dbOrderItems.map((i: any) => ({
+            ...i,
+            quantity: Math.max(1, Math.round(i.quantity))
+          }));
+          await supabase.from('order_items').insert(fallbackItems);
+        }
+      }
+    }
+
+    // C. Si fue efectivo, registrar en cash_movements
+    if (sale.payment_method === 'cash') {
+      const { data: existingMov } = await supabase
+        .from('cash_movements')
+        .select('id')
+        .eq('order_id', sale.sale_id)
+        .maybeSingle();
+
+      if (!existingMov) {
+        await supabase.from('cash_movements').insert({
+          branch_id: 'main',
+          type: 'Ingreso',
+          description: `Venta Local #${sale.sale_id}`,
+          cashier: sale.employee_name || 'Cajero',
+          amount: Number(sale.total) || 0,
+          order_id: sale.sale_id,
+          timestamp: sale.timestamp || Date.now()
+        });
+      }
     }
 
     // D. Descontar stock en Supabase
-    for (const item of sale.items) {
-      if (item.productId && item.productId !== 'PRODUCTO_COMUN' && item.productId !== 'COMUN') {
-        const { data: currentProd } = await supabase
-          .from('products')
-          .select('stock')
-          .eq('id', item.productId)
-          .maybeSingle();
+    if (sale.items && Array.isArray(sale.items)) {
+      for (const item of sale.items) {
+        const prodId = item.productId || item.id;
+        if (prodId && prodId !== 'PRODUCTO_COMUN' && prodId !== 'COMUN' && !String(prodId).startsWith('GENERICO-')) {
+          try {
+            const { data: currentProd } = await supabase
+              .from('products')
+              .select('stock')
+              .eq('id', prodId)
+              .maybeSingle();
 
-        if (currentProd) {
-          const newStock = (currentProd.stock ?? 0) - item.quantity;
-          await supabase.from('products').update({ stock: newStock }).eq('id', item.productId);
+            if (currentProd && currentProd.stock !== null && currentProd.stock !== undefined) {
+              const newStock = Math.max(0, Number(currentProd.stock) - (Number(item.quantity) || 0));
+              await supabase.from('products').update({ stock: newStock }).eq('id', prodId);
+            }
+          } catch (stockErr) {
+            console.warn('Error descontando stock en direct sync:', stockErr);
+          }
         }
       }
     }
