@@ -496,7 +496,7 @@ export interface AdminContextType {
 
   // Customers
   customers: AdminCustomer[];
-  toggleCurrentAccount: (phone: string) => { success: boolean; message?: string };
+  toggleCurrentAccount: (phone: string) => Promise<{ success: boolean; message?: string }>;
   updateCustomerProfile: (oldPhone: string, updates: Partial<{ 
     name: string; 
     phone: string; 
@@ -963,7 +963,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return Object.values(customerMap);
   }, [orders, customerProfiles, currentAccountConfig]);
 
-  const toggleCurrentAccount = (phone: string) => {
+  const toggleCurrentAccount = async (phone: string): Promise<{ success: boolean; message?: string }> => {
     // Find debt from derived customers
     const customer = customers.find(c => c.phone === phone);
     if (customer && customer.hasCurrentAccount && (customer.currentDebt ?? 0) > 0) {
@@ -973,12 +973,27 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
     }
 
-    setCustomerProfiles(prev => {
-      const existing = prev[phone] || { phone, hasCurrentAccount: false };
-      const nextProfile = { ...existing, hasCurrentAccount: !existing.hasCurrentAccount };
-      upsertCustomerProfile(nextProfile).catch(console.error);
-      return { ...prev, [phone]: nextProfile };
-    });
+    // Snapshot existing state for rollback
+    const existingProfiles = customerProfiles;
+    const existing = existingProfiles[phone] || { phone, hasCurrentAccount: false };
+    const nextProfile = { ...existing, hasCurrentAccount: !existing.hasCurrentAccount };
+
+    // Optimistic update
+    setCustomerProfiles(prev => ({ ...prev, [phone]: nextProfile }));
+
+    // Persist to DB — await so we can rollback on failure
+    const result = await upsertCustomerProfile(nextProfile);
+    if (!result.success) {
+      console.error('[toggleCurrentAccount] Failed to persist hasCurrentAccount for', phone, result.error);
+      // Rollback optimistic update
+      setCustomerProfiles(prev => ({ ...prev, [phone]: existing }));
+      return {
+        success: false,
+        message: `Error al guardar cambio de cuenta corriente: ${
+          result.error?.message || result.error?.details || JSON.stringify(result.error) || 'Error desconocido'
+        }`
+      };
+    }
 
     return { success: true };
   };

@@ -835,8 +835,8 @@ export const Customers: React.FC = () => {
                   <div className="flex items-center justify-between mb-4">
                     <h4 className="text-[11px] font-black text-on-surface-variant uppercase tracking-wider">Cuenta Corriente</h4>
                     <button
-                      onClick={() => {
-                        const res = toggleCurrentAccount(currentCustomer.phone);
+                      onClick={async () => {
+                        const res = await toggleCurrentAccount(currentCustomer.phone);
                         if (!res.success) setCcError(res.message || 'Error al modificar cuenta');
                       }}
                       className={`px-3 py-1 rounded-full text-[10px] font-bold transition-colors ${currentCustomer.hasCurrentAccount ? 'bg-green-100 text-green-700' : 'bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest'}`}

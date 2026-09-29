@@ -496,6 +496,37 @@ async function processPendingMessages() {
         const errorMsg = sendError.message || String(sendError);
         logger.error(`❌ Falló el envío del mensaje #${msg.id} a +${msg.phone}:`, errorMsg);
 
+        // Detectar errores de contexto Puppeteer destruido → reconectar cliente
+        const isContextDestroyed = (
+          errorMsg.includes('detached Frame') ||
+          errorMsg.includes('Execution context was destroyed') ||
+          errorMsg.includes('Session closed') ||
+          errorMsg.includes('Target closed') ||
+          errorMsg.includes('Protocol error')
+        );
+
+        if (isContextDestroyed) {
+          logger.warn('⚠️ El contexto de Puppeteer fue destruido. Restaurando cliente de WhatsApp...');
+          // Revertir mensaje a "pending" para que se reintente después de reconectar
+          await supabase
+            .from('whatsapp_messages')
+            .update({ status: 'pending', error_message: `Contexto destruido, reintentando tras reconexión: ${errorMsg}` })
+            .eq('id', msg.id);
+
+          isReady = false;
+          if (workerLoopInterval) {
+            clearInterval(workerLoopInterval);
+            workerLoopInterval = null;
+          }
+          // Reconectar en background sin bloquear el loop actual
+          setTimeout(async () => {
+            logger.info('🔄 Reconectando cliente de WhatsApp tras error de contexto...');
+            try { await client.destroy(); } catch {}
+            await start();
+          }, 5000);
+          break; // Salir del loop de mensajes, se retomarán post-reconexión
+        }
+
         const isFinalFailure = nextAttempt >= 3;
         await supabase
           .from('whatsapp_messages')
