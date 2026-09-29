@@ -617,18 +617,67 @@ export const productsService = {
         p_etiqueta_margen: params.etiquetaMargen || null
       };
 
-      const { data, error } = await supabase.rpc('save_replenishment_evaluation', payload);
-      if (!error && Array.isArray(data) && data.length > 0) {
-        return data[0];
-      }
+      // 1. Intentar con RPC en Supabase
+      try {
+        const { data, error } = await supabase.rpc('save_replenishment_evaluation', payload);
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return {
+            saved_id: (data[0] as any).saved_id || params.productId,
+            ...data[0]
+          };
+        }
+      } catch (_) {}
 
-      const response = await api.post<ReplenishmentEvaluationResult[]>('/rpc/save_replenishment_evaluation', payload);
-      if (Array.isArray(response.data) && response.data.length > 0) {
-        return response.data[0];
+      // 2. Si el RPC no está disponible o da 404 en el servidor, persistir directamente en product_replenishment_state
+      try {
+        const { data: existingState } = await supabase
+          .from('product_replenishment_state')
+          .select('status')
+          .eq('product_id', params.productId)
+          .maybeSingle();
+
+        const prevStatus = existingState?.status || 'OK';
+        const shouldNotify = !['REPOSICION', 'SIN_STOCK'].includes(prevStatus) && ['REPOSICION', 'SIN_STOCK'].includes(params.status);
+
+        const upsertPayload: any = {
+          product_id: params.productId,
+          status: params.status,
+          previous_status: prevStatus,
+          stock_at_evaluation: params.stockActual ?? 0,
+          punto_reposicion: params.puntoReposicion ?? 0,
+          stock_objetivo: (params.puntoReposicion || 0) + (params.sugeridoReposicion || 0),
+          cantidad_recomendada: params.sugeridoReposicion ?? 0,
+          dias_cobertura: params.diasCobertura ?? 999,
+          etiqueta_margen: params.etiquetaMargen || null,
+          last_evaluated_at: new Date().toISOString()
+        };
+        if (shouldNotify) {
+          upsertPayload.alert_sent_at = new Date().toISOString();
+        }
+
+        await supabase
+          .from('product_replenishment_state')
+          .upsert(upsertPayload, { onConflict: 'product_id' });
+
+        if (params.queueId) {
+          await supabase
+            .from('replenishment_queue')
+            .update({ status: 'completed', processed_at: new Date().toISOString(), last_error: null })
+            .eq('id', params.queueId);
+        }
+
+        return {
+          saved_id: params.productId,
+          should_notify_whatsapp: shouldNotify,
+          previous_status: prevStatus,
+          new_status: params.status
+        };
+      } catch (directErr) {
+        console.warn('Error en guardado directo de evaluación de reposición:', directErr);
+        return null;
       }
-      return null;
     } catch (err) {
-      console.error('Error saving replenishment evaluation:', err);
+      console.warn('Error guardando evaluación de reposición:', err);
       return null;
     }
   },
