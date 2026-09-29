@@ -445,8 +445,14 @@ const getCachedOffers = async (): Promise<Offer[]> => {
 const saveOffersToSettings = async (offersList: Offer[]): Promise<void> => {
   try {
     localStorage.setItem('la_martina_offers', JSON.stringify(offersList));
+    await settingsRepository.setSetting('admin_offers', offersList);
   } catch (err) { console.error('JSON/Storage Error:', err); }
-  await saveSetting('admin_offers', offersList);
+  try {
+    await saveSetting('admin_offers', offersList);
+  } catch (err) {
+    // Si la sesión actual no tiene permiso de admin en settings (RLS 42501), la caché local ya preserva los datos
+    console.warn('[saveOffersToSettings] No se pudo persistir en settings remoto:', err);
+  }
 };
 
 export const fetchOffers = async (): Promise<Offer[]> => {
@@ -484,7 +490,11 @@ export const fetchOffers = async (): Promise<Offer[]> => {
           limit_strategy: dbOffer.limit_strategy || dbOffer.limit_strategy || 'discount_only'
         };
       });
-      saveOffersToSettings(mapped);
+      // Cachear en almacenamiento local sin disparar escrituras no autorizadas a Supabase
+      try {
+        localStorage.setItem('la_martina_offers', JSON.stringify(mapped));
+        settingsRepository.setSetting('admin_offers', mapped).catch(() => {});
+      } catch (_) {}
       return mapped;
     }
   } catch (err) {
@@ -782,7 +792,11 @@ export const saveSetting = async <T>(key: string, value: T): Promise<void> => {
     { onConflict: 'key, branch_id' }
   );
   if (error) {
-    console.error(`Error saving setting ${key} to Supabase:`, error);
+    console.warn(`[saveSetting] No se pudo guardar ${key} en settings de Supabase:`, error.message);
+    // Si es restricción de RLS (42501 / permisos de rol), el valor ya quedó preservado en IndexedDB/local
+    if (error.code === '42501' || error.message?.includes('row-level security')) {
+      return;
+    }
     throw error;
   }
 };
