@@ -324,18 +324,18 @@ export function PublicInvoice() {
         className="w-full max-w-4xl bg-white text-black p-4 sm:p-8 rounded-lg shadow-2xl print:shadow-none print:m-0 print:p-4 print:max-w-none print:w-full border border-neutral-300 print:border-none"
       >
         {/* ENCABEZADO SUPERIOR */}
-        <div className="border border-black mb-3">
-          <div className="grid grid-cols-12 relative">
+        <div className="border border-black mb-3 relative overflow-hidden bg-white">
+          <div className="grid grid-cols-1 sm:grid-cols-2 relative">
             {/* Mitad Izquierda: Emisor */}
-            <div className="col-span-12 sm:col-span-5 p-3 sm:p-4 flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-black">
+            <div className="p-3 sm:p-5 sm:pr-14 flex flex-col justify-between border-b sm:border-b-0 border-black">
               <div>
                 <h1 className="text-xl sm:text-2xl font-black tracking-tight text-neutral-900 uppercase">
-                  {emitter?.fantasyName || 'LA MARTINA'}
+                  {emitter?.fantasyName || 'SUPERMERCADO LA MARTINA'}
                 </h1>
                 <p className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider">
                   Supermercado y Autoservicio
                 </p>
-                <div className="mt-2 text-[11px] space-y-0.5 text-neutral-800">
+                <div className="mt-2.5 text-[11px] space-y-0.5 text-neutral-800">
                   <p className="font-semibold">{emitter?.businessName || 'MARTINA SUPERMERCADO S.R.L.'}</p>
                   <p>{emitter?.fiscalAddress || 'Av. Libertador 1234, San Luis, Argentina'}</p>
                   <p className="font-semibold text-neutral-900">IVA {emitter?.taxCondition || 'Responsable Inscripto'}</p>
@@ -343,21 +343,22 @@ export function PublicInvoice() {
               </div>
             </div>
 
-            {/* Recuadro Central: Letra del Comprobante */}
-            <div className="hidden sm:flex absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-16 bg-white flex-col items-center justify-start border-l border-r border-black pt-1 z-10">
+            {/* Recuadro Central: Letra del Comprobante (Eje central exacto al 50%) */}
+            <div className="hidden sm:flex absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-16 bg-white flex-col items-center justify-start border-l border-r border-black pt-1.5 z-10">
               <div className="w-12 h-11 border border-black flex items-center justify-center font-black text-3xl bg-neutral-50 shadow-inner">
                 {invoice.invoice_type.replace(/[^ABC]/g, '') || invoice.invoice_type}
               </div>
-              <span className="text-[9px] font-black mt-0.5">
+              <span className="text-[9px] font-black mt-1 text-center leading-none">
                 COD. {String(invoice.invoice_type_code || 6).padStart(3, '0')}
               </span>
-              <span className="text-[8px] tracking-tighter uppercase font-bold text-neutral-500 mt-1">
+              <span className="text-[8px] tracking-tight uppercase font-bold text-neutral-600 mt-1">
                 ORIGINAL
               </span>
+              <div className="w-px flex-1 bg-black mt-1.5" />
             </div>
 
             {/* Mitad Derecha: Datos del Comprobante */}
-            <div className="col-span-12 sm:col-span-7 p-3 sm:p-4 sm:pl-10 flex flex-col justify-between">
+            <div className="p-3 sm:p-5 sm:pl-14 flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between sm:justify-start gap-3">
                   <h2 className="text-lg sm:text-xl font-black uppercase text-neutral-900 tracking-wide">
@@ -368,7 +369,7 @@ export function PublicInvoice() {
                   </span>
                 </div>
 
-                <div className="mt-2 text-xs space-y-1">
+                <div className="mt-2.5 text-xs space-y-1">
                   <p className="font-mono text-sm font-bold">
                     Punto de Venta: <span className="font-black">{pvStr}</span> &nbsp; Comp. Nro: <span className="font-black">{numStr}</span>
                   </p>
